@@ -1,8 +1,8 @@
 /**
  * PreferencesManager — 全局 preferences.json 读写
  *
- * 统一管理用户级全局配置（favorites、bridge、agent 排序等），
- * 以及 primaryAgent 偏好。从 Engine 提取，避免 route 穿透私有字段。
+ * 统一管理用户级全局配置（favorites、bridge、agent 排序等）。
+ * 从 Engine 提取，避免 route 穿透私有字段。
  */
 import fs from "fs";
 import path from "path";
@@ -123,18 +123,6 @@ export class PreferencesManager {
     this.savePreferences(prefs);
   }
 
-  /** 读取 primary agent ID */
-  getPrimaryAgent() {
-    return this.getPreferences().primaryAgent || null;
-  }
-
-  /** 保存 primary agent ID */
-  savePrimaryAgent(agentId) {
-    const prefs = this.getPreferences();
-    prefs.primaryAgent = agentId;
-    this.savePreferences(prefs);
-  }
-
   /**
    * 找到 agents/ 目录下第一个合法的 agent
    * @returns {string|null}
@@ -142,12 +130,16 @@ export class PreferencesManager {
   findFirstAgent() {
     try {
       const entries = fs.readdirSync(this._agentsDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        if (fs.existsSync(path.join(this._agentsDir, entry.name, "config.yaml"))) {
-          return entry.name;
-        }
-      }
+      const ids = entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .filter((id) => fs.existsSync(path.join(this._agentsDir, id, "config.yaml")));
+      if (!ids.length) return null;
+      // 首次/未指定时优先回到主助手 hanako，避免受文件系统顺序影响默认到其他助手。
+      if (ids.includes("hanako")) return "hanako";
+      // 其余情况使用稳定排序，避免不同平台 readdir 顺序不一致。
+      ids.sort((a, b) => a.localeCompare(b));
+      return ids[0] || null;
     } catch {}
     return null;
   }

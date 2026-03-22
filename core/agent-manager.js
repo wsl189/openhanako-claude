@@ -125,12 +125,10 @@ export class AgentManager {
     }
 
     const prefs = this._d.getPrefs();
-    const primaryId = prefs.getPrimaryAgent();
     const order = prefs.getPreferences()?.agentOrder || [];
 
     const agents = this._agentListCache.raw.map(a => ({
       ...a,
-      isPrimary: a.id === primaryId,
       isCurrent: a.id === this._activeAgentId,
     }));
 
@@ -307,7 +305,6 @@ export class AgentManager {
     const hub = this._d.getHub();
     hub?.resumeAfterAgentSwitch();
     this._d.getSkills().syncAgentSkills(this.agent);
-    this._d.getPrefs().savePrimaryAgent(agentId);
     await this._d.getSessionCoordinator().createSession();
     log.log(`已切换到助手: ${this.agent.agentName} (${agentId})`);
   }
@@ -349,11 +346,6 @@ export class AgentManager {
     await fsp.rm(agentDir, { recursive: true, force: true });
 
     const prefs = this._d.getPrefs();
-    const primaryId = prefs.getPrimaryAgent();
-    if (primaryId === agentId) {
-      prefs.savePrimaryAgent(this._activeAgentId);
-    }
-
     const order = prefs.getPreferences()?.agentOrder || [];
     const newOrder = order.filter(id => id !== agentId);
     if (newOrder.length !== order.length) {
@@ -367,14 +359,6 @@ export class AgentManager {
   }
 
   // ── Utility ──
-
-  setPrimaryAgent(agentId) {
-    const agentDir = path.join(this._d.agentsDir, agentId);
-    if (!fs.existsSync(path.join(agentDir, "config.yaml"))) {
-      throw new Error(t("error.agentNotExists", { id: agentId }));
-    }
-    this._d.getPrefs().savePrimaryAgent(agentId);
-  }
 
   agentIdFromSessionPath(sessionPath) {
     const rel = path.relative(this._d.agentsDir, sessionPath);

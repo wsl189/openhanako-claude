@@ -155,25 +155,12 @@ function titleBarOpts(trafficLight = { x: 16, y: 16 }) {
 
 /**
  * 获取当前 agent ID（不依赖 server）
- * 优先读 user/preferences.json，fallback 扫描 agents/ 第一个有效目录
+ * 直接扫描 agents/ 第一个有效目录
  */
 function getCurrentAgentId() {
-  const prefsPath = path.join(hanakoHome, "user", "preferences.json");
   const agentsDir = path.join(hanakoHome, "agents");
 
-  // 1. 读 preferences
-  try {
-    const prefs = JSON.parse(fs.readFileSync(prefsPath, "utf-8"));
-    if (prefs.primaryAgent) {
-      // 确认这个 agent 真的存在（可能已被删除）
-      const agentDir = path.join(agentsDir, prefs.primaryAgent);
-      if (fs.existsSync(path.join(agentDir, "config.yaml"))) {
-        return prefs.primaryAgent;
-      }
-    }
-  } catch {}
-
-  // 2. 扫描 agents/ 目录，返回第一个有效 agent
+  // 扫描 agents/ 目录，返回第一个有效 agent
   try {
     const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -183,7 +170,7 @@ function getCurrentAgentId() {
     }
   } catch {}
 
-  // 3. 没有任何 agent（首次启动 first-run 还没跑，或全被删了）
+  // 没有任何 agent（首次启动 first-run 还没跑，或全被删了）
   return null;
 }
 

@@ -62,7 +62,7 @@ export class HanaEngine {
     this._models = new ModelManager({ hanakoHome });
 
     // 确定启动时焦点 agent
-    const startId = agentId || this._prefs.getPrimaryAgent() || this._prefs.findFirstAgent();
+    const startId = agentId || this._prefs.findFirstAgent();
     if (!startId) throw new Error(t("error.noAgentsFound"));
 
     // ── Channel Manager ──
@@ -178,7 +178,6 @@ export class HanaEngine {
   async createAgent(opts) { return this._agentMgr.createAgent(opts); }
   async switchAgent(agentId) { return this._agentMgr.switchAgent(agentId); }
   async deleteAgent(agentId) { return this._agentMgr.deleteAgent(agentId); }
-  setPrimaryAgent(agentId) { return this._agentMgr.setPrimaryAgent(agentId); }
   agentIdFromSessionPath(p) { return this._agentMgr.agentIdFromSessionPath(p); }
   async createSessionForAgent(agentId, cwd, mem) { return this._agentMgr.createSessionForAgent(agentId, cwd, mem); }
 
@@ -587,8 +586,6 @@ export class HanaEngine {
 
   _readPreferences() { return this._prefs.getPreferences(); }
   _writePreferences(prefs) { return this._prefs.savePreferences(prefs); }
-  _readPrimaryAgent() { return this._prefs.getPrimaryAgent(); }
-  _savePrimaryAgent(agentId) { return this._prefs.savePrimaryAgent(agentId); }
 
   // ════════════════════════════
   //  巡检工具白名单（向后兼容静态引用）

@@ -4,7 +4,7 @@
     "chatTab": "聊天",
     "empty": "还没有频道 ✿",
     "dmLabel": "私聊",
-    "dmHint": "仅显示主助手的私聊",
+    "dmHint": "仅显示当前助手的私聊",
     "groupLabel": "频道",
     "noMessages": "暂无消息",
     "nameExists": "该频道名已存在",
@@ -494,7 +494,7 @@
       "deleteCancel": "取消",
       "deleted": "{name} 已删除",
       "deleteFailed": "删除失败",
-      "setActive": "设为主助手",
+      "setActive": "切换到此助手",
       "lastAgent": "至少保留一个助手",
       "yuan": "元",
       "yuanHint": "「元」是助手的先天思维方式，你可以选择它更理性还是更感性\n以此为基础搭建你独一无二的伙伴"
@@ -682,7 +682,7 @@
         "importing": "正在导入...",
         "empty": "还没有记忆",
         "invalidFile": "无效的记忆文件",
-        "activeOnly": "请先将此助手设为主助手"
+        "activeOnly": "请先切换到此助手"
       },
       "unknownDate": "未知日期",
       "threshold": {
@@ -690,7 +690,7 @@
         "hint": "有多少记忆能被记住由你决定。有一些杂音是可以的，大语言模型可以很好的识别",
         "stats": "记住 {remembered} 条 / 共 {total} 条记忆"
       },
-      "activeOnly": "请先将此助手设为主助手"
+      "activeOnly": "请先切换到此助手"
     },
     "pins": {
       "title": "置顶记忆",

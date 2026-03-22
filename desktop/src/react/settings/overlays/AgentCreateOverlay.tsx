@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
-import { switchToAgent } from '../actions';
+import { browseAgent, loadAgents } from '../actions';
 
 const platform = (window as any).platform;
 
@@ -44,7 +44,8 @@ export function AgentCreateOverlay() {
       close();
       showToast(t('settings.agent.created', { name: data.name }), 'success');
       platform?.settingsChanged?.('agent-created', { agentId: data.id, name: data.name });
-      await switchToAgent(data.id);
+      await loadAgents();
+      await browseAgent(data.id);
     } catch (err: any) {
       showToast(t('settings.agent.createFailed') + ': ' + err.message, 'error');
     } finally {

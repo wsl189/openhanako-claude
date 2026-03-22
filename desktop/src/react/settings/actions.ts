@@ -3,9 +3,6 @@
  */
 import { useSettingsStore } from './store';
 import { hanaFetch, hanaUrl } from './api';
-import { t } from './helpers';
-
-const platform = (window as any).platform;
 
 export async function loadAgents() {
   const store = useSettingsStore.getState();
@@ -14,10 +11,12 @@ export async function loadAgents() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     const agents = data.agents || [];
+    const idSet = new Set(agents.map((a: any) => a.id));
     let currentAgentId = store.currentAgentId;
-    if (!currentAgentId) {
-      const primary = agents.find((a: any) => a.isPrimary) || agents[0];
-      if (primary) currentAgentId = primary.id;
+    if (!currentAgentId || !idSet.has(currentAgentId)) {
+      const currentFromServer = agents.find((a: any) => a.isCurrent)?.id || null;
+      const hanakoId = agents.find((a: any) => a.id === 'hanako')?.id || null;
+      currentAgentId = currentFromServer || hanakoId || agents[0]?.id || null;
     }
     const currentAgent = agents.find((a: any) => a.id === currentAgentId);
     store.set({
@@ -107,32 +106,4 @@ export async function browseAgent(agentId: string) {
   useSettingsStore.setState({ settingsAgentId: agentId });
   await loadSettingsConfig();
   await loadAgents();
-}
-
-export async function switchToAgent(agentId: string) {
-  const store = useSettingsStore.getState();
-  try {
-    const res = await hanaFetch('/api/agents/switch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: agentId }),
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-
-    store.set({
-      settingsAgentId: null,
-      currentAgentId: data.agent.id,
-      agentName: data.agent.name,
-    });
-    platform?.settingsChanged?.('agent-switched', {
-      agentName: data.agent.name,
-      agentId: data.agent.id,
-    });
-    await loadSettingsConfig();
-    await loadAgents();
-    store.showToast(t('settings.agent.switched', { name: data.agent.name }), 'success');
-  } catch (err: any) {
-    store.showToast(t('settings.agent.switchFailed') + ': ' + err.message, 'error');
-  }
 }

@@ -16,7 +16,6 @@ export interface Agent {
   id: string;
   name: string;
   yuan: string;
-  isPrimary: boolean;
   hasAvatar?: boolean;
 }
 

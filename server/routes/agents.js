@@ -3,9 +3,7 @@
  *
  * GET    /api/agents              — 列出所有助手
  * POST   /api/agents              — 创建新助手
- * POST   /api/agents/switch       — 切换到指定助手
  * DELETE /api/agents/:id          — 删除助手
- * PUT    /api/agents/primary      — 设置主助手
  * GET    /api/agents/:id/avatar   — 获取指定助手的头像
  * POST   /api/agents/:id/avatar   — 上传指定助手的头像
  * GET    /api/agents/:id/config   — 读取指定助手的 config
@@ -53,7 +51,7 @@ function mask(key) {
 export default async function agentsRoute(app, { engine }) {
 
   // ════════════════════════════
-  //  列表 / 创建 / 切换 / 删除 / 主助手
+  //  列表 / 创建 / 删除
   // ════════════════════════════
 
   app.get("/api/agents", async (req, reply) => {
@@ -80,27 +78,6 @@ export default async function agentsRoute(app, { engine }) {
     }
   });
 
-  app.post("/api/agents/switch", async (req, reply) => {
-    try {
-      const { id } = req.body || {};
-      if (!id?.trim() || !validateId(id)) {
-        reply.code(400);
-        return { error: "invalid id" };
-      }
-      await engine.switchAgent(id);
-      return {
-        ok: true,
-        agent: {
-          id: engine.currentAgentId,
-          name: engine.agentName,
-        },
-      };
-    } catch (err) {
-      reply.code(500);
-      return { error: err.message };
-    }
-  });
-
   app.delete("/api/agents/:id", async (req, reply) => {
     try {
       const { id } = req.params;
@@ -112,21 +89,6 @@ export default async function agentsRoute(app, { engine }) {
         : err.message.includes("不存在") ? 404
         : 500;
       reply.code(code);
-      return { error: err.message };
-    }
-  });
-
-  app.put("/api/agents/primary", async (req, reply) => {
-    try {
-      const { id } = req.body || {};
-      if (!id?.trim()) {
-        reply.code(400);
-        return { error: "id is required" };
-      }
-      engine.setPrimaryAgent(id);
-      return { ok: true };
-    } catch (err) {
-      reply.code(500);
       return { error: err.message };
     }
   });

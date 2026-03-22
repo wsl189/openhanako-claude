@@ -252,6 +252,7 @@ const BrowserScreenshot = memo(function BrowserScreenshot({ base64, mimeType }: 
 
 const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, status: initialStatus }: { confirmId?: string; jobData: Record<string, unknown>; status: string }) {
   const [status, setStatus] = useState(initialStatus);
+  const currentSessionPath = useStore(s => s.currentSessionPath);
   const label = (jobData.label as string) || (jobData.prompt as string)?.slice(0, 40) || '';
 
   const handleApprove = async () => {
@@ -268,7 +269,7 @@ const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, stat
         await hanaFetch('/api/desk/cron', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'add', ...jobData }),
+          body: JSON.stringify({ action: 'add', ...jobData, sessionPath: currentSessionPath }),
         });
       }
       setStatus('approved');

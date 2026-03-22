@@ -69,6 +69,17 @@ window.addEventListener('unhandledrejection', (e) => {
   window.__hanaLog?.('error', 'desktop', `unhandledRejection: ${e.reason}`);
 });
 
+async function fetchAutomationCount(sessionPath: string | null): Promise<number | null> {
+  try {
+    const query = sessionPath ? `?sessionPath=${encodeURIComponent(sessionPath)}` : '';
+    const res = await hanaFetch(`/api/desk/cron${query}`);
+    const data = await res.json();
+    return (data.jobs || []).length;
+  } catch {
+    return null;
+  }
+}
+
 // ── 初始化流程 ──
 
 async function init(): Promise<void> {
@@ -142,10 +153,10 @@ async function init(): Promise<void> {
 
   // 14. 任务计划 badge 初始值
   try {
-    const res = await hanaFetch('/api/desk/cron');
-    const data = await res.json();
-    const count = (data.jobs || []).length;
-    useStore.setState({ automationCount: count });
+    const count = await fetchAutomationCount(useStore.getState().currentSessionPath);
+    if (count !== null) {
+      useStore.setState({ automationCount: count });
+    }
   } catch { /* ignore */ }
 
   // 18. 设置快捷键
@@ -159,14 +170,6 @@ async function init(): Promise<void> {
   // 19. 设置变更监听
   platform.onSettingsChanged((type: string, data: any) => {
     switch (type) {
-      case 'agent-switched':
-        applyAgentIdentity({
-          agentName: data.agentName,
-          agentId: data.agentId,
-        });
-        loadSessions();
-        (window as any).__loadDeskSkills?.();
-        break;
       case 'skills-changed':
         (window as any).__loadDeskSkills?.();
         break;
@@ -288,11 +291,14 @@ function App() {
   useSidebarResize();
   // 订阅 locale 变化，驱动整棵树重渲染
   useStore(s => s.locale);
+  const serverPort = useStore(s => s.serverPort);
+  const currentSessionPath = useStore(s => s.currentSessionPath);
   const sidebarOpen = useStore(s => s.sidebarOpen);
   const jianOpen = useStore(s => s.jianOpen);
   const currentTab = useStore(s => s.currentTab);
   const browserRunning = useStore(s => s.browserRunning);
   const { floatCard, show: showFloat, scheduleHide: scheduleFloatHide, cancelHide: cancelFloatHide, hide: hideFloat } = useFloatCard();
+  const automationCountReqRef = useRef(0);
 
   useEffect(() => {
     init().catch((err: unknown) => {
@@ -300,6 +306,17 @@ function App() {
       window.platform?.appReady?.();
     });
   }, []);
+
+  // 切换 session 后，侧边栏任务计划数量应立即同步刷新
+  useEffect(() => {
+    if (!serverPort) return;
+    const reqId = ++automationCountReqRef.current;
+    fetchAutomationCount(currentSessionPath).then((count) => {
+      if (count === null) return;
+      if (reqId !== automationCountReqRef.current) return;
+      useStore.setState({ automationCount: count });
+    });
+  }, [currentSessionPath, serverPort]);
 
   return (
     <ErrorBoundary>

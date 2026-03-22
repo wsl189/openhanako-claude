@@ -126,9 +126,24 @@ export class AuthStore {
           source: "auth-json",
         };
         this._creds.set(providerId, cred);
-        // 同时在 authJsonKey 下存一份别名，让 get("minimax") 也能命中
-        if (authKey !== providerId && !this._creds.has(authKey)) {
-          this._creds.set(authKey, cred);
+        // 同时在 authJsonKey 下存一份别名，让 get("minimax") 也能命中。
+        // 若 authJsonKey 已有 providers.yaml 记录但缺少 apiKey，则用 OAuth token 补齐，
+        // 避免 "provider 缺少完整凭证"（常见于 minimax: providers.yaml + auth.json 并存）。
+        if (authKey !== providerId) {
+          if (!this._creds.has(authKey)) {
+            this._creds.set(authKey, cred);
+          } else {
+            const existing = this._creds.get(authKey);
+            if (!existing?.apiKey) {
+              this._creds.set(authKey, {
+                ...existing,
+                apiKey: cred.apiKey,
+                baseUrl: existing.baseUrl || cred.baseUrl,
+                api: existing.api || cred.api,
+                source: `${existing.source}+auth-json`,
+              });
+            }
+          }
         }
         continue;
       }
@@ -143,8 +158,21 @@ export class AuthStore {
           source: "auth-json",
         };
         this._creds.set(providerId, cred);
-        if (authKey !== providerId && !this._creds.has(authKey)) {
-          this._creds.set(authKey, cred);
+        if (authKey !== providerId) {
+          if (!this._creds.has(authKey)) {
+            this._creds.set(authKey, cred);
+          } else {
+            const existing = this._creds.get(authKey);
+            if (!existing?.apiKey) {
+              this._creds.set(authKey, {
+                ...existing,
+                apiKey: cred.apiKey,
+                baseUrl: existing.baseUrl || cred.baseUrl,
+                api: existing.api || cred.api,
+                source: `${existing.source}+auth-json`,
+              });
+            }
+          }
         }
       }
     }

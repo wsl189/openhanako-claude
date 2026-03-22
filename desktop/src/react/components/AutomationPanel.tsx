@@ -11,22 +11,23 @@ interface CronJob {
   prompt?: string;
   schedule: string | number;
   model?: string;
+  agentId?: string;
+  agentName?: string;
 }
 
 export function AutomationPanel() {
   const activePanel = useStore(s => s.activePanel);
-  const agentAvatarUrl = useStore(s => s.agentAvatarUrl);
-  const agentName = useStore(s => s.agentName);
-  const agentYuan = useStore(s => s.agentYuan);
-  const currentAgentId = useStore(s => s.currentAgentId);
+  const currentSessionPath = useStore(s => s.currentSessionPath);
+  const agents = useStore(s => s.agents);
 
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
 
   const loadData = useCallback(async () => {
     try {
+      const query = currentSessionPath ? `?sessionPath=${encodeURIComponent(currentSessionPath)}` : '';
       const [cronRes, favRes] = await Promise.all([
-        hanaFetch('/api/desk/cron'),
+        hanaFetch(`/api/desk/cron${query}`),
         hanaFetch('/api/favorites'),
       ]);
       const cronData = await cronRes.json();
@@ -38,11 +39,11 @@ export function AutomationPanel() {
     } catch (err) {
       console.error('[automation] load failed:', err);
     }
-  }, []);
+  }, [currentSessionPath]);
 
   useEffect(() => {
     if (activePanel === 'automation') loadData();
-  }, [activePanel, loadData]);
+  }, [activePanel, loadData, currentSessionPath]);
 
   const close = useCallback(() => {
     useStore.getState().setActivePanel(null);
@@ -53,39 +54,39 @@ export function AutomationPanel() {
       await hanaFetch('/api/desk/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'toggle', id: jobId }),
+        body: JSON.stringify({ action: 'toggle', id: jobId, sessionPath: currentSessionPath }),
       });
       await loadData();
     } catch (err) {
       console.error('[automation] toggle failed:', err);
     }
-  }, [loadData]);
+  }, [loadData, currentSessionPath]);
 
   const removeJob = useCallback(async (jobId: string) => {
     try {
       await hanaFetch('/api/desk/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'remove', id: jobId }),
+        body: JSON.stringify({ action: 'remove', id: jobId, sessionPath: currentSessionPath }),
       });
       await loadData();
     } catch (err) {
       console.error('[automation] remove failed:', err);
     }
-  }, [loadData]);
+  }, [loadData, currentSessionPath]);
 
   const updateJob = useCallback(async (jobId: string, fields: Record<string, unknown>) => {
     try {
       await hanaFetch('/api/desk/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update', id: jobId, ...fields }),
+        body: JSON.stringify({ action: 'update', id: jobId, ...fields, sessionPath: currentSessionPath }),
       });
       await loadData();
     } catch (err) {
       console.error('[automation] update failed:', err);
     }
-  }, [loadData]);
+  }, [loadData, currentSessionPath]);
 
   if (activePanel !== 'automation') return null;
 
@@ -110,11 +111,8 @@ export function AutomationPanel() {
                 <AutomationItem
                   key={job.id}
                   job={job}
+                  agents={agents}
                   favorites={favorites}
-                  agentAvatarUrl={agentAvatarUrl}
-                  agentName={agentName}
-                  agentYuan={agentYuan}
-                  currentAgentId={currentAgentId}
                   onToggle={toggleJob}
                   onRemove={removeJob}
                   onUpdate={updateJob}
@@ -134,21 +132,15 @@ function updateBadge(jobs: CronJob[]) {
 
 function AutomationItem({
   job,
+  agents,
   favorites,
-  agentAvatarUrl,
-  agentName,
-  agentYuan,
-  currentAgentId,
   onToggle,
   onRemove,
   onUpdate,
 }: {
   job: CronJob;
+  agents: Array<{ id: string; name: string; yuan: string }>;
   favorites: string[];
-  agentAvatarUrl: string | null;
-  agentName: string;
-  agentYuan: string;
-  currentAgentId: string | null;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, fields: Record<string, unknown>) => void;
@@ -179,7 +171,10 @@ function AutomationItem({
     setEditing(false);
   }, [editValue, labelText, job.id, onUpdate]);
 
-  const avatarSrc = agentAvatarUrl || hanaUrl(`/api/agents/${currentAgentId}/avatar`);
+  const ownerAgent = agents.find(a => a.id === job.agentId);
+  const ownerName = job.agentName || ownerAgent?.name || job.agentId || '';
+  const ownerYuan = ownerAgent?.yuan || 'hanako';
+  const avatarSrc = job.agentId ? hanaUrl(`/api/agents/${job.agentId}/avatar`) : yuanFallbackAvatar(ownerYuan);
 
   // 构建模型选项
   const modelOptions: string[] = [];
@@ -216,9 +211,9 @@ function AutomationItem({
             <img
               className="auto-item-executor-avatar"
               src={avatarSrc}
-              onError={e => { (e.target as HTMLImageElement).onerror = null; (e.target as HTMLImageElement).src = yuanFallbackAvatar(agentYuan); }}
+              onError={e => { (e.target as HTMLImageElement).onerror = null; (e.target as HTMLImageElement).src = yuanFallbackAvatar(ownerYuan); }}
             />
-            <span className="auto-item-executor-name">{agentName}</span>
+            <span className="auto-item-executor-name">{ownerName}</span>
           </div>
           <span className="auto-item-schedule">{cronToHuman(job.schedule)}</span>
           {favorites.length > 0 && (

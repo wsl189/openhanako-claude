@@ -45,7 +45,6 @@ export function ensureFirstRun(hanakoHome, productDir) {
     fs.writeFileSync(
       prefsPath,
       JSON.stringify({
-        primaryAgent: "hanako",
         home_folder: path.join(os.homedir(), "Desktop"),
       }, null, 2) + "\n",
       "utf-8",

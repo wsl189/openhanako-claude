@@ -72,9 +72,12 @@ export async function loadAgents(): Promise<void> {
     const s = useStore.getState();
 
     const patch: Record<string, any> = { agents };
-    if (!s.currentAgentId) {
-      const primary = agents.find((a: any) => a.isPrimary) || agents[0];
-      if (primary) patch.currentAgentId = primary.id;
+    const idSet = new Set(agents.map((a: any) => a.id));
+    if (!s.currentAgentId || !idSet.has(s.currentAgentId)) {
+      const currentFromServer = agents.find((a: any) => a.isCurrent)?.id || null;
+      const hanakoId = agents.find((a: any) => a.id === 'hanako')?.id || null;
+      const fallbackId = currentFromServer || hanakoId || agents[0]?.id || null;
+      if (fallbackId) patch.currentAgentId = fallbackId;
     }
 
     const currentId = patch.currentAgentId ?? s.currentAgentId;

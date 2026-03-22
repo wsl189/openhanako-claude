@@ -66,11 +66,26 @@ export function formatSessionDate(isoStr: string): string {
 
 export function cronToHuman(schedule: number | string): string {
   const t = window.t ?? ((p: string) => p);
+  const toEveryMinutes = (raw: number): number => {
+    if (!Number.isFinite(raw) || raw <= 0) return 1;
+    // 兼容旧数据：5 这类值按“分钟数”理解
+    if (raw < 1000) return Math.max(1, Math.round(raw));
+    return Math.max(1, Math.round(raw / 60000));
+  };
+  const renderEveryByMinutes = (mins: number): string => {
+    if (mins >= 60 && mins % 60 === 0) {
+      return t('cron.everyHours', { n: mins / 60 });
+    }
+    return t('cron.everyMinutes', { n: mins });
+  };
+
   if (typeof schedule === 'number') {
-    const h = Math.round(schedule / 3600000);
-    return h > 0 ? t('cron.everyHours', { n: h }) : t('cron.everyMinutes', { n: Math.round(schedule / 60000) });
+    return renderEveryByMinutes(toEveryMinutes(schedule));
   }
   const s = String(schedule);
+  if (/^\d+$/.test(s)) {
+    return renderEveryByMinutes(toEveryMinutes(parseInt(s, 10)));
+  }
   const parts = s.split(' ');
   if (parts.length !== 5) return s;
   const [min, hour, , , dow] = parts;

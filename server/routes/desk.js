@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { t } from "../i18n.js";
+import { normalizeEverySchedule } from "../../lib/desk/cron-schedule.js";
 
 /** 解析真实路径（跟踪 symlink），失败返回 null */
 function realPath(p) {
@@ -83,6 +84,38 @@ function listWorkspaceFiles(dir) {
 }
 
 export default async function deskRoute(app, { engine, hub }) {
+  function resolveCronTarget(input = {}) {
+    const explicitAgentId = typeof input.agentId === "string" ? input.agentId.trim() : "";
+    if (explicitAgentId) {
+      const agent = engine.getAgent(explicitAgentId);
+      if (agent?.cronStore) {
+        return { store: agent.cronStore, agentId: explicitAgentId, agentName: agent.agentName || explicitAgentId };
+      }
+    }
+
+    const sessionPath = typeof input.sessionPath === "string" ? input.sessionPath : "";
+    if (sessionPath) {
+      const sid = engine.agentIdFromSessionPath(sessionPath);
+      if (sid) {
+        const agent = engine.getAgent(sid);
+        if (agent?.cronStore) {
+          return { store: agent.cronStore, agentId: sid, agentName: agent.agentName || sid };
+        }
+      }
+    }
+
+    const fallbackId = engine.currentAgentId;
+    const fallbackAgent = engine.getAgent(fallbackId) || engine.agent;
+    return {
+      store: fallbackAgent?.cronStore || null,
+      agentId: fallbackId,
+      agentName: fallbackAgent?.agentName || fallbackId,
+    };
+  }
+
+  function withCronOwner(jobs, agentId, agentName) {
+    return (jobs || []).map(job => ({ ...job, agentId, agentName }));
+  }
 
   /** 从所有 agent 的 activityStore 中按 ID 查找 entry */
   function findActivityEntry(activityId) {
@@ -216,48 +249,96 @@ export default async function deskRoute(app, { engine, hub }) {
   // ════════════════════════════
 
   /** 列出 cron 任务 */
-  app.get("/api/desk/cron", async () => {
-    const store = engine.agent.cronStore;
-    if (!store) return { jobs: [] };
-    return { jobs: store.listJobs() };
+  app.get("/api/desk/cron", async (req) => {
+    const { store, agentId, agentName } = resolveCronTarget(req.query || {});
+    if (!store) return { jobs: [], agentId, agentName };
+    return {
+      jobs: withCronOwner(store.listJobs(), agentId, agentName),
+      agentId,
+      agentName,
+    };
   });
 
   /** 操作 cron 任务 */
   app.post("/api/desk/cron", async (req) => {
-    const store = engine.agent.cronStore;
-    if (!store) return { error: "Desk not initialized" };
-
     const { action, ...params } = req.body || {};
+    const { store, agentId, agentName } = resolveCronTarget(params || {});
+    if (!store) return { error: "Desk not initialized" };
 
     switch (action) {
       case "add": {
         if (!params.type || !params.schedule || !params.prompt) {
           return { error: "type, schedule, prompt required" };
         }
-        const job = store.addJob(params);
-        return { ok: true, job, jobs: store.listJobs() };
+        const normalizedSchedule = params.type === "every"
+          ? normalizeEverySchedule(params.schedule)
+          : params.schedule;
+        if (params.type === "every" && !normalizedSchedule) {
+          return { error: t("error.cronEveryMustBeNumber") };
+        }
+        const job = store.addJob({
+          type: params.type,
+          schedule: normalizedSchedule,
+          prompt: params.prompt,
+          label: params.label,
+          model: params.model,
+        });
+        return {
+          ok: true,
+          job: { ...job, agentId, agentName },
+          jobs: withCronOwner(store.listJobs(), agentId, agentName),
+          agentId,
+          agentName,
+        };
       }
 
       case "remove": {
         if (!params.id) return { error: "id required" };
         const ok = store.removeJob(params.id);
         if (!ok) return { error: "not found" };
-        return { ok: true, jobs: store.listJobs() };
+        return { ok: true, jobs: withCronOwner(store.listJobs(), agentId, agentName), agentId, agentName };
       }
 
       case "toggle": {
         if (!params.id) return { error: "id required" };
         const job = store.toggleJob(params.id);
         if (!job) return { error: "not found" };
-        return { ok: true, job, jobs: store.listJobs() };
+        return {
+          ok: true,
+          job: { ...job, agentId, agentName },
+          jobs: withCronOwner(store.listJobs(), agentId, agentName),
+          agentId,
+          agentName,
+        };
       }
 
       case "update": {
         if (!params.id) return { error: "id required" };
         const { id, ...fields } = params;
-        const job = store.updateJob(id, fields);
+        const current = store.getJob(id);
+        if (!current) return { error: "not found" };
+
+        const partial = { ...fields };
+        delete partial.agentId;
+        delete partial.sessionPath;
+
+        if (partial.type === "every" || (current.type === "every" && partial.schedule !== undefined)) {
+          const normalizedSchedule = normalizeEverySchedule(
+            partial.schedule !== undefined ? partial.schedule : current.schedule,
+          );
+          if (!normalizedSchedule) return { error: t("error.cronEveryMustBeNumber") };
+          partial.schedule = normalizedSchedule;
+        }
+
+        const job = store.updateJob(id, partial);
         if (!job) return { error: "not found" };
-        return { ok: true, job, jobs: store.listJobs() };
+        return {
+          ok: true,
+          job: { ...job, agentId, agentName },
+          jobs: withCronOwner(store.listJobs(), agentId, agentName),
+          agentId,
+          agentName,
+        };
       }
 
       default:

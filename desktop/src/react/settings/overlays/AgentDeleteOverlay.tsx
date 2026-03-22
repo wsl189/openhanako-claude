@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
-import { switchToAgent, loadSettingsConfig, loadAgents } from '../actions';
+import { loadSettingsConfig, loadAgents } from '../actions';
 
 const platform = (window as any).platform;
 
@@ -36,11 +36,6 @@ export function AgentDeleteOverlay() {
   const confirmDelete = async () => {
     if (!target || nameInput.trim() !== target.name) return;
     try {
-      if (targetId === currentAgentId) {
-        const other = agents.find(a => a.id !== targetId);
-        if (!other) throw new Error(t('settings.agent.lastAgent'));
-        await switchToAgent(other.id);
-      }
       const res = await hanaFetch(`/api/agents/${targetId}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.error) throw new Error(data.error);

@@ -38,6 +38,22 @@ async function callLlm({ model, api, api_key, base_url, messages, temperature = 
   });
 }
 
+function normalizeTitle(title, isZh) {
+  let clean = String(title || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean) || "";
+  clean = clean
+    .replace(/^#+\s*/, "")
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/[。！？.!?]+$/g, "")
+    .trim();
+  if (!clean) return "";
+  if (isZh) return Array.from(clean).slice(0, 10).join("");
+  return clean.split(/\s+/).filter(Boolean).slice(0, 5).join(" ");
+}
+
 /**
  * 从 .jsonl session 文件提取 user/assistant 文本和工具调用
  */
@@ -115,7 +131,7 @@ Rules:
     const userLabel = isZh ? "用户" : "User";
     const assistantLabel = isZh ? "助手" : "Assistant";
 
-    return await callLlm({
+    const raw = await callLlm({
       model, api, api_key, base_url,
       messages: [
         { role: "system", content: systemContent },
@@ -126,6 +142,8 @@ Rules:
       ],
       max_tokens: 50,
     });
+    const normalized = normalizeTitle(raw, isZh);
+    return normalized || null;
   } catch (err) {
     console.error("[llm-utils] summarizeTitle failed:", err.message);
     return null;

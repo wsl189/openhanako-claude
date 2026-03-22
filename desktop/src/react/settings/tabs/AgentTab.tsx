@@ -3,7 +3,7 @@ import { useSettingsStore } from '../store';
 import { hanaFetch, hanaUrl, yuanFallbackAvatar } from '../api';
 import { t, autoSaveConfig, savePins } from '../helpers';
 import { SelectWidget } from '../widgets/SelectWidget';
-import { browseAgent, switchToAgent, loadSettingsConfig, loadAgents } from '../actions';
+import { browseAgent, loadSettingsConfig, loadAgents } from '../actions';
 
 import kongBannerUrl from '../../../assets/kong-banner.jpg';
 
@@ -175,14 +175,6 @@ export function AgentTab() {
           }}
         >
           <div className="agent-stack-actions">
-            {isViewingOther && (
-              <button
-                className="settings-btn-primary"
-                onClick={() => switchToAgent(settingsAgentId!)}
-              >
-                {t('settings.agent.setActive')}
-              </button>
-            )}
             <button
               className="agent-add-btn"
               title={t('settings.agent.addAgent')}

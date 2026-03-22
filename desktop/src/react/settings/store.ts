@@ -8,7 +8,6 @@ export interface Agent {
   id: string;
   name: string;
   yuan: string;
-  isPrimary: boolean;
 }
 
 export interface SkillInfo {
