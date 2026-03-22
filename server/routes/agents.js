@@ -85,8 +85,10 @@ export default async function agentsRoute(app, { engine }) {
       await engine.deleteAgent(id);
       return { ok: true };
     } catch (err) {
-      const code = err.message.includes("不能删除当前") ? 400
-        : err.message.includes("不存在") ? 404
+      const code = err?.code === "AGENT_DELETE_LAST" ? 400
+        : err.message.includes("不能删除当前") ? 400
+        : err.message.includes("至少保留一个助手") ? 400
+        : err.message.includes("does not exist") || err.message.includes("不存在") ? 404
         : 500;
       reply.code(code);
       return { error: err.message };

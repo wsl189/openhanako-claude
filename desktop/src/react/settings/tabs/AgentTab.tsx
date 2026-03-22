@@ -63,7 +63,8 @@ export function AgentTab() {
     }
   }, [settingsConfig]);
 
-  const isViewingOther = settingsAgentId !== currentAgentId;
+  // 仅在“明确选中了其他助手”时，才显示删除等仅针对非当前助手的操作。
+  const isViewingOther = !!selectedAgentId && selectedAgentId !== currentAgentId;
   const currentYuan = settingsConfig?.agent?.yuan || 'hanako';
 
   // Agent 对话模型
@@ -185,7 +186,7 @@ export function AgentTab() {
                 <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
               </svg>
             </button>
-            {agents.length >= 2 && isViewingOther && (
+            {agents.length >= 2 && !!selectedAgentId && (
               <button
                 className="agent-delete-btn"
                 title={t('settings.agent.deleteBtn')}

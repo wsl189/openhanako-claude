@@ -319,13 +319,27 @@ export class AgentManager {
   // ── Delete ──
 
   async deleteAgent(agentId) {
-    if (agentId === this._activeAgentId) {
-      throw new Error(t("error.agentDeleteActive"));
+    const allIds = [...this._agents.keys()];
+    const remainingIds = allIds.filter((id) => id !== agentId);
+    if (remainingIds.length === 0) {
+      const err = new Error(t("error.agentDeleteLast"));
+      err.code = "AGENT_DELETE_LAST";
+      throw err;
     }
 
     const agentDir = path.join(this._d.agentsDir, agentId);
     if (!fs.existsSync(agentDir)) {
       throw new Error(t("error.agentNotExists", { id: agentId }));
+    }
+
+    // 允许删除当前激活助手：先自动切到其他助手，确保运行态有效。
+    if (agentId === this._activeAgentId) {
+      const fallbackId = remainingIds[0];
+      await this.switchAgentOnly(fallbackId);
+      const hub = this._d.getHub();
+      hub?.resumeAfterAgentSwitch();
+      this._d.getSkills().syncAgentSkills(this.agent);
+      await this._d.getSessionCoordinator().createSession();
     }
 
     const ag = this._agents.get(agentId);
