@@ -11,6 +11,7 @@ import { isImageFile } from '../utils/format';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { ensureSession, loadSessions } from '../stores/session-actions';
+import { loadDeskFiles } from '../stores/desk-actions';
 import { getWebSocket } from '../services/websocket';
 import { SVG_ICONS } from '../utils/icons';
 import type { ThinkingLevel } from '../stores/model-slice';
@@ -192,7 +193,7 @@ function InputAreaInner() {
     setSlashMenuOpen(false);
 
     try {
-      const res = await hanaFetch('/api/diary/write', { method: 'POST' });
+      const res = await hanaFetch('/api/diary/write', { method: 'POST', timeout: 180_000 });
       const data = await res.json();
 
       if (!res.ok || data.error) {
@@ -200,9 +201,12 @@ function InputAreaInner() {
         return;
       }
 
+      // 立即刷新右侧书桌，确保 diary/日记 目录实时出现
+      loadDeskFiles().catch(() => {});
       showSlashResult(t('slash.diaryDone'), 'success');
-    } catch {
-      showSlashResult(t('slash.diaryFailed'), 'error');
+    } catch (err: any) {
+      const timeoutLike = err?.name === 'AbortError';
+      showSlashResult(timeoutLike ? t('slash.diaryTimeout') : t('slash.diaryFailed'), 'error');
     }
   }, [t, showSlashResult]);
 
@@ -211,22 +215,6 @@ function InputAreaInner() {
     setSlashMenuOpen(false);
     await sendAsUser(XING_PROMPT);
   }, [sendAsUser]);
-
-  const executeCompact = useCallback(async () => {
-    setSlashBusy('compact');
-    setInputText('');
-    setSlashMenuOpen(false);
-    try {
-      const ws = getWebSocket();
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'compact' }));
-      }
-    } finally {
-      // compaction_end 事件会通过 WS 回来，这里只需清 busy
-      // 延迟清除，让用户看到执行状态
-      setTimeout(() => setSlashBusy(null), 1500);
-    }
-  }, []);
 
   const slashCommands: SlashCommand[] = useMemo(() => [
     {
@@ -245,15 +233,7 @@ function InputAreaInner() {
       icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
       execute: executeXing,
     },
-    {
-      name: 'compact',
-      label: '/compact',
-      description: t('slash.compact'),
-      busyLabel: t('slash.compactBusy'),
-      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
-      execute: executeCompact,
-    },
-  ], [executeDiary, executeXing, executeCompact, t]);
+  ], [executeDiary, executeXing, t]);
 
   // 过滤匹配的命令
   const filteredCommands = useMemo(() => {
@@ -735,26 +715,22 @@ function ContextRing() {
   const storeCompacting = useStore(s => s.compacting);
 
   useEffect(() => {
-    if (storeContextTokens != null) {
-      setTokens(storeContextTokens);
-      setContextWindow(storeContextWindow);
-      setPercent(storeContextPercent);
-    } else {
-      setTokens(null);
-    }
+    setTokens(storeContextTokens ?? null);
+    setContextWindow(storeContextWindow ?? null);
+    setPercent(storeContextPercent ?? null);
     setCompacting(storeCompacting);
   }, [storeContextTokens, storeContextWindow, storeContextPercent, storeCompacting]);
 
-  const handleClick = useCallback(() => {
+  const handleCompact = useCallback(() => {
     if (compacting) return;
     const ws = getWebSocket();
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'compact' }));
+      ws.send(JSON.stringify({ type: 'compact', sessionPath: useStore.getState().currentSessionPath }));
     }
   }, [compacting]);
 
   const pct = percent ?? 0;
-  if (tokens == null) return null;
+  if (contextWindow == null) return null;
 
   // SVG 圆环参数（更小更粗）
   const r = 6;
@@ -766,8 +742,9 @@ function ContextRing() {
   const yuan = agentYuan || 'hanako';
 
   // token 数量格式化
-  const tokensK = Math.round(tokens / 1000);
-  const windowK = contextWindow != null ? Math.round(contextWindow / 1000) : 0;
+  const tokensK = tokens != null ? Math.round(tokens / 1000) : 0;
+  const windowK = Math.round(contextWindow / 1000);
+  const pctText = Math.round(pct);
 
   return (
     <span className="context-ring-wrap"
@@ -777,7 +754,7 @@ function ContextRing() {
       <button
         className={`context-ring${compacting ? ' compacting' : ''}`}
         data-yuan={yuan}
-        onClick={handleClick}
+        onDoubleClick={handleCompact}
         disabled={compacting}
       >
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
@@ -798,7 +775,7 @@ function ContextRing() {
       {hovered && (
         <div className="context-ring-tooltip">
           <div className="context-ring-tooltip-row">{t('input.contextWindow', { windowK })}</div>
-          <div className="context-ring-tooltip-row">{t('input.tokensUsed', { tokensK, pct: Math.round(pct) })}</div>
+          <div className="context-ring-tooltip-row">{t('input.tokensUsed', { tokensK, pct: pctText })}</div>
         </div>
       )}
     </span>

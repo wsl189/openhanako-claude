@@ -65,6 +65,12 @@ function hasOptimisticCurrentSession(): boolean {
   return !!state.sessions.find((s: any) => s.path === sessionPath && s._optimistic);
 }
 
+function requestContextUsage(sessionPath?: string | null): void {
+  const ws = getWebSocket();
+  if (ws?.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'context_usage', sessionPath: sessionPath || useStore.getState().currentSessionPath || null }));
+}
+
 export function applyStreamingStatus(isStreaming: boolean): void {
   useStore.setState({ isStreaming: !!isStreaming });
   if (isStreaming) {
@@ -137,10 +143,7 @@ export function handleServerMessage(msg: any): void {
     // turn_end 后仍需执行部分通用逻辑（loadSessions、context_usage）
     if (msg.type === 'turn_end') {
       loadSessionsAction();
-      const ws = getWebSocket();
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'context_usage' }));
-      }
+      requestContextUsage(msg.sessionPath || useStore.getState().currentSessionPath);
     }
     // tool_end 后更新 todo
     if (msg.type === 'tool_end' && msg.name === 'todo' && msg.details?.todos) {
@@ -148,15 +151,30 @@ export function handleServerMessage(msg: any): void {
     }
     // compaction_end 后更新 token
     if (msg.type === 'compaction_end') {
-      const patch: Record<string, any> = { compacting: false };
-      if (msg.tokens != null && msg.contextWindow != null) {
-        patch.contextTokens = msg.tokens;
-        patch.contextWindow = msg.contextWindow;
-        patch.contextPercent = msg.percent;
+      const currentSessionPath = useStore.getState().currentSessionPath;
+      if (msg.sessionPath && currentSessionPath && msg.sessionPath !== currentSessionPath) {
+        return;
       }
+      const patch: Record<string, any> = { compacting: false };
+      // SDK 在压缩后可能返回 tokens/percent=null（下一次模型回复前未知），
+      // 这里也要写入，避免 UI 继续显示压缩前的旧值。
+      if ('tokens' in msg) patch.contextTokens = msg.tokens ?? null;
+      if ('contextWindow' in msg) patch.contextWindow = msg.contextWindow ?? null;
+      if ('percent' in msg) patch.contextPercent = msg.percent ?? null;
       useStore.setState(patch);
+      // 压缩结束后多次拉取 context_usage，避免 SDK 统计延迟导致圆环停留在旧值
+      const usagePath = msg.sessionPath || currentSessionPath;
+      requestContextUsage(usagePath);
+      setTimeout(() => requestContextUsage(usagePath), 350);
+      setTimeout(() => requestContextUsage(usagePath), 1200);
+      setTimeout(() => requestContextUsage(usagePath), 2600);
+      setTimeout(() => requestContextUsage(usagePath), 5000);
     }
     if (msg.type === 'compaction_start') {
+      const currentSessionPath = useStore.getState().currentSessionPath;
+      if (msg.sessionPath && currentSessionPath && msg.sessionPath !== currentSessionPath) {
+        return;
+      }
       useStore.setState({ compacting: true });
     }
     // artifact 需要通知 artifacts shim 更新预览
@@ -273,12 +291,16 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'context_usage':
-      if (msg.tokens != null && msg.contextWindow != null) {
-        useStore.setState({
-          contextTokens: msg.tokens,
-          contextWindow: msg.contextWindow,
-          contextPercent: msg.percent,
-        });
+      // 仅在当前会话明确存在且不匹配时忽略；currentSessionPath 为空时允许更新
+      if (msg.sessionPath && state.currentSessionPath && msg.sessionPath !== state.currentSessionPath) {
+        break;
+      }
+      if ('tokens' in msg || 'contextWindow' in msg || 'percent' in msg) {
+        const patch: Record<string, any> = {};
+        if ('tokens' in msg) patch.contextTokens = msg.tokens ?? null;
+        if ('contextWindow' in msg) patch.contextWindow = msg.contextWindow ?? null;
+        if ('percent' in msg) patch.contextPercent = msg.percent ?? null;
+        useStore.setState(patch);
       }
       break;
 

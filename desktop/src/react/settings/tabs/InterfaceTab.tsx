@@ -49,7 +49,7 @@ export function InterfaceTab() {
         <div className="settings-field">
           <label className="settings-field-label">{t('settings.appearance.theme')}</label>
           <div className="theme-options">
-            {VALID_THEMES.map(theme => {
+            {VALID_THEMES.filter(theme => !['absolutely', 'delve', 'deep-think'].includes(theme)).map(theme => {
               const nameKeys: Record<string, string> = {
                 'warm-paper': 'settings.appearance.warmPaper',
                 'midnight': 'settings.appearance.midnight',
@@ -117,34 +117,36 @@ export function InterfaceTab() {
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.locale.title')}</h2>
 
-        <div className="settings-field">
-          <label className="settings-field-label">{t('settings.locale.language')}</label>
-          <SelectWidget
-            options={[
-              { value: 'zh-CN', label: '简体中文' },
-              { value: 'en', label: 'English' },
-            ]}
-            value={localeVal}
-            onChange={async (val) => {
-              await autoSaveConfig({ locale: val }, { silent: true });
-              await i18n?.load(val);
-              if (i18n) i18n.defaultName = useSettingsStore.getState().agentName;
-              useSettingsStore.getState().showToast(t('settings.autoSaved'), 'success');
-              platform?.settingsChanged?.('locale-changed', { locale: val });
-              useSettingsStore.setState({});
-            }}
-          />
-          <span className="settings-field-hint">{t('settings.locale.languageHint')}</span>
-        </div>
+        <div className="settings-row">
+          <div className="settings-field settings-field-half">
+            <label className="settings-field-label">{t('settings.locale.language')}</label>
+            <SelectWidget
+              options={[
+                { value: 'zh-CN', label: '简体中文' },
+                { value: 'en', label: 'English' },
+              ]}
+              value={localeVal}
+              onChange={async (val) => {
+                await autoSaveConfig({ locale: val }, { silent: true });
+                await i18n?.load(val);
+                if (i18n) i18n.defaultName = useSettingsStore.getState().agentName;
+                useSettingsStore.getState().showToast(t('settings.autoSaved'), 'success');
+                platform?.settingsChanged?.('locale-changed', { locale: val });
+                useSettingsStore.setState({});
+              }}
+            />
+            <span className="settings-field-hint">{t('settings.locale.languageHint')}</span>
+          </div>
 
-        <div className="settings-field">
-          <label className="settings-field-label">{t('settings.locale.timezone')}</label>
-          <SelectWidget
-            options={tzOptions}
-            value={currentTz}
-            onChange={(val) => autoSaveConfig({ timezone: val })}
-          />
-          <span className="settings-field-hint">{t('settings.locale.timezoneHint')}</span>
+          <div className="settings-field settings-field-half">
+            <label className="settings-field-label">{t('settings.locale.timezone')}</label>
+            <SelectWidget
+              options={tzOptions}
+              value={currentTz}
+              onChange={(val) => autoSaveConfig({ timezone: val })}
+            />
+            <span className="settings-field-hint">{t('settings.locale.timezoneHint')}</span>
+          </div>
         </div>
       </section>
     </div>

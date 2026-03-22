@@ -85,7 +85,8 @@
     "steer": "插话",
     "stop": "停止",
     "browserScreenshot": "浏览器截图",
-    "compacting": "上下文压缩中"
+    "compacting": "上下文压缩中",
+    "compacted": "已压缩上下文"
   },
   "time": {
     "justNow": "刚刚",
@@ -131,6 +132,7 @@
     "diary": "写今日日记",
     "diaryBusy": "正在写日记...",
     "diaryDone": "日记写入完成，已保存到 diary 文件夹",
+    "diaryTimeout": "日记生成超时（可能仍在后台写入，可稍后查看 diary 文件夹）",
     "diaryFailed": "日记写入失败",
     "xing": "反省当前对话",
     "compact": "压缩上下文",

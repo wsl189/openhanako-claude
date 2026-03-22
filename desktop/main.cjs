@@ -45,6 +45,9 @@ let splashWindow = null;
 let mainWindow = null;
 
 let settingsWindow = null;
+let skillViewerWindow = null;
+let _skillViewerOpenerWindowId = null;
+let _skillViewerPendingData = null;
 
 let browserViewerWindow = null;
 let _browserWebView = null;        // 当前活跃的 WebContentsView
@@ -594,6 +597,7 @@ function createMainWindow() {
       // 不调 app.dock.hide()，Dock 上保留图标和黑点
       // 同时隐藏子窗口
       if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide();
+      if (skillViewerWindow && !skillViewerWindow.isDestroyed()) skillViewerWindow.hide();
       if (browserViewerWindow && !browserViewerWindow.isDestroyed()) browserViewerWindow.hide();
       if (editorWindow && !editorWindow.isDestroyed()) editorWindow.hide();
     }
@@ -604,6 +608,10 @@ function createMainWindow() {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.destroy();
       settingsWindow = null;
+    }
+    if (skillViewerWindow && !skillViewerWindow.isDestroyed()) {
+      skillViewerWindow.destroy();
+      skillViewerWindow = null;
     }
     if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
       browserViewerWindow.destroy();
@@ -680,13 +688,70 @@ function createSettingsWindow(tab, theme) {
   });
 }
 
-// ── Skill 预览 → 主窗口 overlay ──
-function _showSkillViewer(skillInfo) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("show-skill-viewer", skillInfo);
-    mainWindow.show();
-    mainWindow.focus();
+// ── Skill 预览独立窗口 ──
+function _focusSkillViewerOpener() {
+  if (_skillViewerOpenerWindowId == null) return;
+  const opener = BrowserWindow.fromId(_skillViewerOpenerWindowId);
+  _skillViewerOpenerWindowId = null;
+  if (!opener || opener.isDestroyed()) return;
+  try {
+    if (opener.isMinimized()) opener.restore();
+  } catch {}
+  opener.show();
+  opener.focus();
+}
+
+function _showSkillViewer(skillInfo, sourceWin = null) {
+  _skillViewerOpenerWindowId = sourceWin && !sourceWin.isDestroyed() ? sourceWin.id : null;
+
+  if (skillViewerWindow && !skillViewerWindow.isDestroyed()) {
+    skillViewerWindow.show();
+    skillViewerWindow.focus();
+    if (skillViewerWindow.webContents.isLoadingMainFrame()) {
+      _skillViewerPendingData = skillInfo;
+    } else {
+      skillViewerWindow.webContents.send("skill-viewer-load", skillInfo);
+    }
+    return;
   }
+
+  _skillViewerPendingData = skillInfo;
+
+  skillViewerWindow = new BrowserWindow({
+    width: 1100,
+    height: 760,
+    minWidth: 760,
+    minHeight: 560,
+    title: "Skill Viewer",
+    // 统一用自绘标题区，去掉系统黑条
+    ...titleBarOpts({ x: 16, y: 14 }),
+    autoHideMenuBar: true,
+    show: false,
+    parent: sourceWin && !sourceWin.isDestroyed() ? sourceWin : undefined,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  loadWindowURL(skillViewerWindow, "skill-viewer");
+
+  skillViewerWindow.webContents.on("did-finish-load", () => {
+    if (!skillViewerWindow || skillViewerWindow.isDestroyed()) return;
+    if (_skillViewerPendingData) {
+      skillViewerWindow.webContents.send("skill-viewer-load", _skillViewerPendingData);
+      _skillViewerPendingData = null;
+    }
+    skillViewerWindow.show();
+    skillViewerWindow.focus();
+  });
+
+  skillViewerWindow.on("closed", () => {
+    skillViewerWindow = null;
+    _skillViewerPendingData = null;
+    _focusSkillViewerOpener();
+  });
 }
 
 /** 递归扫描目录，返回文件树 */
@@ -1513,8 +1578,11 @@ ipcMain.handle("select-skill", async (event) => {
 });
 
 // ── Skill 预览窗口 IPC ──
-ipcMain.handle("open-skill-viewer", (_event, data) => {
+ipcMain.handle("open-skill-viewer", (event, data) => {
   if (!data) return;
+
+  const sourceWin = BrowserWindow.fromWebContents(event.sender) || null;
+  const showSkillViewer = (skillInfo) => _showSkillViewer(skillInfo, sourceWin);
 
   // .skill / .zip 文件 → 优先查找已安装目录，否则解压临时目录
   if (data.skillPath && path.isAbsolute(data.skillPath)) {
@@ -1525,7 +1593,7 @@ ipcMain.handle("open-skill-viewer", (_event, data) => {
       // 先检查同名 skill 是否已安装在 skills 目录
       const installedDir = path.join(hanakoHome, "skills", baseName);
       if (fs.existsSync(path.join(installedDir, "SKILL.md"))) {
-        _showSkillViewer({ name: baseName, baseDir: installedDir, installed: false });
+        showSkillViewer({ name: baseName, baseDir: installedDir, installed: false });
         return;
       }
 
@@ -1563,7 +1631,7 @@ ipcMain.handle("open-skill-viewer", (_event, data) => {
         const nameMatch = fmMatch?.[1]?.match(/^name:\s*(.+)$/m);
         const name = nameMatch ? nameMatch[1].trim().replace(/^["']|["']$/g, "") : baseName;
 
-        _showSkillViewer({ name, baseDir: skillDir, installed: false });
+        showSkillViewer({ name, baseDir: skillDir, installed: false });
       } catch (err) {
         console.error("[skill-viewer] Failed to extract .skill file:", err.message);
       }
@@ -1572,7 +1640,7 @@ ipcMain.handle("open-skill-viewer", (_event, data) => {
   }
 
   if (!data.baseDir || !path.isAbsolute(data.baseDir)) return;
-  _showSkillViewer(data);
+  showSkillViewer(data);
 });
 
 ipcMain.handle("skill-viewer-list-files", (_event, baseDir) => {
@@ -1597,8 +1665,14 @@ ipcMain.handle("skill-viewer-read-file", (_event, filePath) => {
   }
 });
 
-// close-skill-viewer: overlay 模式下由渲染进程 setState 关闭，保留 handler 避免 preload 报错
-ipcMain.handle("close-skill-viewer", () => {});
+// close-skill-viewer: 独立窗口由渲染进程主动关闭
+ipcMain.handle("close-skill-viewer", () => {
+  if (skillViewerWindow && !skillViewerWindow.isDestroyed()) {
+    skillViewerWindow.close();
+    return;
+  }
+  _focusSkillViewerOpener();
+});
 
 // 在系统文件管理器中打开文件夹（限制为目录且为绝对路径）
 ipcMain.handle("open-folder", (_event, folderPath) => {

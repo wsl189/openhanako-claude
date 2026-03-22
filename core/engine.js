@@ -531,6 +531,7 @@ export class HanaEngine {
       userName: this.agent.userName,
       agentName: this.agent.agentName,
       cwd: this.homeCwd || process.cwd(),
+      currentSessionPath: currentPath || null,
       activityStore: this.activityStore,
     });
   }

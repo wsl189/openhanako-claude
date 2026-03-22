@@ -23,3 +23,12 @@ export const CompactionNotice = memo(function CompactionNotice({ yuan }: Props) 
     </div>
   );
 });
+
+export const CompactionDoneDivider = memo(function CompactionDoneDivider() {
+  const t = window.t ?? ((p: string) => p);
+  return (
+    <div className="compaction-done-divider" role="separator" aria-label={t('chat.compacted')}>
+      <span>{t('chat.compacted')}</span>
+    </div>
+  );
+});

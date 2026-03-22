@@ -2568,6 +2568,29 @@ html[data-platform="linux"] .tb-toggle-right {
     50% { opacity: 0.6; }
 }
 
+.compaction-done-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    margin: var(--space-md) 0;
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    letter-spacing: 0.02em;
+    opacity: 0.82;
+}
+
+.compaction-done-divider::before,
+.compaction-done-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: color-mix(in srgb, var(--text-muted) 28%, transparent);
+}
+
+.compaction-done-divider > span {
+    white-space: nowrap;
+}
+
 /* ═══ Bridge 接入设置 ═══ */
 
 .bridge-platform-header {
@@ -3070,6 +3093,7 @@ html[data-platform="linux"] .tb-toggle-right {
     padding: 0 16px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    -webkit-app-region: drag;
 }
 
 .sv-close {
@@ -3085,6 +3109,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
     transition: background 0.12s, color 0.12s;
     flex-shrink: 0;
+    -webkit-app-region: no-drag;
 }
 
 .sv-close:hover {
@@ -3115,6 +3140,20 @@ html[data-platform="linux"] .tb-toggle-right {
     gap: 6px;
     flex-shrink: 0;
     margin-left: 8px;
+    -webkit-app-region: no-drag;
+}
+
+/* macOS 原生红绿灯位于左上角，给技能窗口标题留出安全区，避免遮挡 */
+html[data-platform="darwin"] .sv-topbar {
+    padding-left: 88px;
+}
+
+html[data-platform="darwin"] .sv-close {
+    display: none;
+}
+
+html[data-platform="darwin"] .sv-topbar-title {
+    margin-left: 0;
 }
 
 .sv-btn {

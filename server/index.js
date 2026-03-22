@@ -174,7 +174,7 @@ app.register(fsRoute, { engine });
 app.register(preferencesRoute, { engine });
 app.register(bridgeRoute, { engine, bridgeManager });
 app.register(authRoute, { engine });
-app.register(diaryRoute, { engine });
+app.register(diaryRoute, { engine, hub });
 app.register(confirmRoute, { confirmStore, engine });
 
 // 健康检查 + 身份信息

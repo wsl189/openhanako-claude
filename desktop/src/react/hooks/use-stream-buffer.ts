@@ -360,9 +360,14 @@ class StreamBufferManager {
         break;
 
       case 'compaction_end':
-        // 移除 compaction notice（遍历找到最后一个 compaction item 删掉）
-        useStore.getState().updateLastMessage(sessionPath, m => m); // no-op，触发重渲染
-        // TODO: 可以加一个 removeLastCompaction action
+        // 移除 compaction notice
+        useStore.getState().clearCompactionNotices(sessionPath);
+        if (msg.success !== false) {
+          useStore.getState().appendItem(sessionPath, {
+            type: 'compaction_done',
+            id: `compaction-done-${Date.now()}`,
+          });
+        }
         break;
 
       case 'turn_end':

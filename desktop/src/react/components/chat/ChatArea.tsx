@@ -9,7 +9,7 @@ import { memo, useRef, useEffect, useState, useCallback } from 'react';
 import { useStore } from '../../stores';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
-import { CompactionNotice } from './CompactionNotice';
+import { CompactionNotice, CompactionDoneDivider } from './CompactionNotice';
 import type { ChatListItem } from '../../stores/chat-types';
 
 const MAX_ALIVE = 5;
@@ -186,6 +186,9 @@ const ItemView = memo(function ItemView({ item, prevItem }: {
 }) {
   if (item.type === 'compaction') {
     return <CompactionNotice yuan={item.yuan} />;
+  }
+  if (item.type === 'compaction_done') {
+    return <CompactionDoneDivider />;
   }
   const msg = item.data;
   const prevRole = prevItem?.type === 'message' ? prevItem.data.role : null;

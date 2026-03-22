@@ -115,6 +115,7 @@ export async function switchSession(path: string): Promise<void> {
     useStore.setState({
       currentSessionPath: path,
       pendingNewSession: false,
+      welcomeVisible: false,
       selectedFolder: null,
       selectedAgentId: null,
       memoryEnabled: data.memoryEnabled !== false,

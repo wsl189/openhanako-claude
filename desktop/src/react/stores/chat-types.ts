@@ -67,7 +67,8 @@ export interface ChatMessage {
 
 export type ChatListItem =
   | { type: 'message'; data: ChatMessage }
-  | { type: 'compaction'; id: string; yuan: string };
+  | { type: 'compaction'; id: string; yuan: string }
+  | { type: 'compaction_done'; id: string };
 
 // ── Per-session 消息状态 ──
 

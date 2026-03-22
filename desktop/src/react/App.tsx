@@ -5,7 +5,7 @@
  * 所有初始化逻辑从 app.js / bridge.ts 迁移至此。
  */
 
-import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from './stores';
 import type { ActivePanel } from './types';
 import { hanaFetch } from './hooks/use-hana-fetch';
@@ -14,7 +14,6 @@ import { ActivityPanel } from './components/ActivityPanel';
 import { AutomationPanel } from './components/AutomationPanel';
 import { BridgePanel } from './components/BridgePanel';
 
-const SkillViewerOverlay = lazy(() => import('./components/SkillViewerOverlay').then(m => ({ default: m.SkillViewerOverlay })));
 import { PreviewPanel } from './components/PreviewPanel';
 import { BrowserCard } from './components/BrowserCard';
 import { DeskSection } from './components/DeskSection';
@@ -202,12 +201,7 @@ async function init(): Promise<void> {
     }
   });
 
-  // 20. Skill Viewer overlay（主进程 / 设置窗口 → 渲染进程）
-  (window as any).hana?.onShowSkillViewer?.((data: any) => {
-    useStore.setState({ skillViewerData: data });
-  });
-
-  // 21. 通知 app ready
+  // 20. 通知 app ready
   platform.appReady();
 }
 
@@ -539,9 +533,6 @@ function App() {
       <div className="agent-create-overlay" id="channelCreateOverlay">
         <ChannelCreate />
       </div>
-
-      {/* Skill viewer overlay */}
-      <Suspense fallback={null}><SkillViewerOverlay /></Suspense>
 
       {/* Float preview card */}
       {floatCard && (

@@ -8,10 +8,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import { useI18n } from '../hooks/use-i18n';
 
 import { getMdWithOpts } from '../utils/markdown';
-
-declare function t(key: string, vars?: Record<string, string | number>): string;
 
 interface SkillInfo {
   name: string;
@@ -30,7 +29,11 @@ interface TreeItem {
 const md = getMdWithOpts({ html: true, linkify: true, breaks: true });
 
 export function SkillViewerOverlay() {
+  const { t } = useI18n();
   const data = useStore(s => s.skillViewerData) as SkillInfo | null;
+  const [isDarwin, setIsDarwin] = useState<boolean>(() => (
+    document.documentElement.getAttribute('data-platform') === 'darwin'
+  ));
   const [files, setFiles] = useState<TreeItem[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -41,6 +44,8 @@ export function SkillViewerOverlay() {
 
   const close = useCallback(() => {
     useStore.setState({ skillViewerData: null });
+    const platform = (window as any).platform || (window as any).hana;
+    void platform?.closeSkillViewer?.();
   }, []);
 
   // 加载文件树
@@ -51,13 +56,25 @@ export function SkillViewerOverlay() {
       const items = await hana?.listSkillFiles?.(data.baseDir);
       const tree = items || [];
       setFiles(tree);
-      const allDirs = collectDirPaths(tree);
-      setExpandedDirs(Object.fromEntries(allDirs.map((p) => [p, true])));
+      // 默认折叠，用户按需展开。
+      setExpandedDirs({});
       const mdPath = data.filePath || (data.baseDir + '/SKILL.md');
       loadFile(mdPath, 'SKILL.md');
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.baseDir]);
+
+  useEffect(() => {
+    const platform = (window as any).platform || (window as any).hana;
+    (async () => {
+      try {
+        const plat = await platform?.getPlatform?.();
+        if (plat) setIsDarwin(plat === 'darwin');
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
 
   async function loadFile(filePath: string, name: string) {
     setActiveFile(filePath);
@@ -124,11 +141,13 @@ export function SkillViewerOverlay() {
       <div className="sv-container">
         {/* 顶栏 */}
         <div className="sv-topbar">
-          <button className="sv-close" onClick={close}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+          {!isDarwin && (
+            <button className="sv-close" onClick={close}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
           <div className="sv-topbar-title">
             <span className="sv-skill-name">{data.name || 'Skill'}</span>
             <span> / {fileName}</span>
@@ -298,7 +317,7 @@ function parseFmDescription(fm: string): string {
     }
     const ci = full.indexOf(q);
     if (ci !== -1) full = full.slice(0, ci);
-    return full.trim();
+    return decodeEscapedNewlines(full.trim());
   }
 
   if (value === '|' || value === '>' || value === '|+' || value === '>+') {
@@ -307,12 +326,19 @@ function parseFmDescription(fm: string): string {
       if (/^\S/.test(lines[i])) break;
       block += lines[i].replace(/^ {2,}/, '') + '\n';
     }
-    return block.trim();
+    return decodeEscapedNewlines(block.trim());
   }
 
-  return value.trim();
+  return decodeEscapedNewlines(value.trim());
 }
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function decodeEscapedNewlines(text: string): string {
+  return text
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n');
 }

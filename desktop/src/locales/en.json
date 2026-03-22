@@ -85,7 +85,8 @@
     "steer": "Steer",
     "stop": "Stop",
     "browserScreenshot": "Browser screenshot",
-    "compacting": "Compacting context"
+    "compacting": "Compacting context",
+    "compacted": "Context compacted"
   },
   "time": {
     "justNow": "Just now",
@@ -131,6 +132,7 @@
     "diary": "Write today's diary",
     "diaryBusy": "Writing diary...",
     "diaryDone": "Diary saved to diary folder",
+    "diaryTimeout": "Diary request timed out (it may still finish in background; check the diary folder shortly)",
     "diaryFailed": "Failed to write diary",
     "xing": "Reflect on this conversation",
     "compact": "Compact context",

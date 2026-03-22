@@ -137,6 +137,7 @@ export default defineConfig({
         splash: path.resolve(__dirname, 'desktop/src/splash.html'),
         'browser-viewer': path.resolve(__dirname, 'desktop/src/browser-viewer.html'),
         'editor-window': path.resolve(__dirname, 'desktop/src/editor-window.html'),
+        'skill-viewer': path.resolve(__dirname, 'desktop/src/skill-viewer.html'),
       },
     },
   },

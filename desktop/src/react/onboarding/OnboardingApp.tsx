@@ -62,7 +62,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
 
 const OB_THEMES = [
   'warm-paper', 'midnight', 'auto', 'high-contrast', 'grass-aroma',
-  'contemplation', 'absolutely', 'delve', 'deep-think',
+  'contemplation',
 ] as const;
 
 function themeKey(id: string): string {

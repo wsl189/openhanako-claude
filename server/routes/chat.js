@@ -37,6 +37,7 @@ export default async function chatRoute(app, { engine, hub }) {
   let disconnectAbortTimer = null;
   const DISCONNECT_ABORT_GRACE_MS = 15_000;
   const sessionState = new Map(); // sessionPath -> shared stream state
+  const autoCompactionBeforeTokens = new Map(); // sessionPath -> tokens before auto-compaction
 
   function cancelDisconnectAbort() {
     if (disconnectAbortTimer) {
@@ -94,6 +95,58 @@ export default async function chatRoute(app, { engine, hub }) {
     }
   }
 
+  function getUsageBySessionPath(sessionPath) {
+    const session = sessionPath ? engine.getSessionByPath(sessionPath) : engine.session;
+    return session?.getContextUsage?.() || null;
+  }
+
+  async function getUsageWithRetry(sessionPath, beforeTokens = null) {
+    let usage = getUsageBySessionPath(sessionPath);
+    for (let i = 0; i < 4; i++) {
+      const hasNumbers = usage?.tokens != null && usage?.contextWindow != null;
+      const looksUpdated = beforeTokens == null || usage?.tokens == null || usage.tokens < beforeTokens;
+      if (hasNumbers && looksUpdated) return usage;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      usage = getUsageBySessionPath(sessionPath);
+    }
+    return usage;
+  }
+
+  function followupContextUsage(sessionPath, beforeTokens = null) {
+    if (!sessionPath) return;
+    const maxAttempts = 18; // ~7.2s
+    const intervalMs = 400;
+    let attempts = 0;
+    let lastSig = null;
+
+    const tick = () => {
+      const usage = getUsageBySessionPath(sessionPath);
+      const hasNumbers = usage?.tokens != null && usage?.contextWindow != null;
+      if (hasNumbers) {
+        const sig = `${usage.tokens}|${usage.contextWindow}|${usage.percent ?? ""}`;
+        const improved = beforeTokens == null || usage.tokens < beforeTokens;
+        const finalTry = attempts >= maxAttempts;
+        if (sig !== lastSig && (improved || finalTry)) {
+          lastSig = sig;
+          broadcast({
+            type: "context_usage",
+            sessionPath,
+            tokens: usage.tokens,
+            contextWindow: usage.contextWindow,
+            percent: usage.percent ?? null,
+          });
+        }
+        if (improved || finalTry) return;
+      } else if (attempts >= maxAttempts) {
+        return;
+      }
+      attempts += 1;
+      setTimeout(tick, intervalMs);
+    };
+
+    setTimeout(tick, intervalMs);
+  }
+
   // 浏览器缩略图 30s 定时刷新（browser 活跃时）
   let _browserThumbTimer = null;
   function startBrowserThumbPoll() {
@@ -148,7 +201,7 @@ export default async function chatRoute(app, { engine, hub }) {
   }
 
   // 单订阅：事件只写入一次，再按需广播到所有连接中的客户端。
-  hub.subscribe((event, sessionPath) => {
+  hub.subscribe(async (event, sessionPath) => {
     const isActive = sessionPath === engine.currentSessionPath;
     const ss = sessionPath ? getState(sessionPath) : null;
 
@@ -316,6 +369,8 @@ export default async function chatRoute(app, { engine, hub }) {
       }
     } else if (event.type === "jian_update") {
       broadcast({ type: "jian_update", content: event.content });
+    } else if (event.type === "desk_changed") {
+      broadcast({ type: "desk_changed" });
     } else if (event.type === "devlog") {
       broadcast({ type: "devlog", text: event.text, level: event.level });
     } else if (event.type === "browser_bg_status") {
@@ -476,16 +531,25 @@ export default async function chatRoute(app, { engine, hub }) {
         maybeGenerateFirstTurnTitle(sessionPath, ss);
       }
     } else if (event.type === "auto_compaction_start") {
-      if (isActive) broadcast({ type: "compaction_start" });
+      if (sessionPath) {
+        const before = getUsageBySessionPath(sessionPath);
+        autoCompactionBeforeTokens.set(sessionPath, before?.tokens ?? null);
+      }
+      if (isActive) broadcast({ type: "compaction_start", sessionPath });
     } else if (event.type === "auto_compaction_end") {
       if (isActive) {
-        const usage = engine.session?.getContextUsage?.();
+        const beforeTokens = sessionPath ? autoCompactionBeforeTokens.get(sessionPath) ?? null : null;
+        if (sessionPath) autoCompactionBeforeTokens.delete(sessionPath);
+        const usage = await getUsageWithRetry(sessionPath, beforeTokens);
         broadcast({
           type: "compaction_end",
+          sessionPath,
+          success: true,
           tokens: usage?.tokens ?? null,
           contextWindow: usage?.contextWindow ?? null,
           percent: usage?.percent ?? null,
         });
+        followupContextUsage(sessionPath, beforeTokens);
       }
     }
   });
@@ -563,9 +627,11 @@ export default async function chatRoute(app, { engine, hub }) {
       }
 
       if (msg.type === "context_usage") {
-        const usage = engine.session?.getContextUsage?.();
+        const targetPath = msg.sessionPath || engine.currentSessionPath;
+        const usage = getUsageBySessionPath(targetPath);
         wsSend(ws, {
           type: "context_usage",
+          sessionPath: targetPath || null,
           tokens: usage?.tokens ?? null,
           contextWindow: usage?.contextWindow ?? null,
           percent: usage?.percent ?? null,
@@ -574,7 +640,8 @@ export default async function chatRoute(app, { engine, hub }) {
       }
 
       if (msg.type === "compact") {
-        const session = engine.session;
+        const targetPath = msg.sessionPath || engine.currentSessionPath;
+        const session = targetPath ? engine.getSessionByPath(targetPath) : engine.session;
         if (!session) {
           wsSend(ws, { type: "error", message: t("error.noActiveSession") });
           return;
@@ -588,23 +655,36 @@ export default async function chatRoute(app, { engine, hub }) {
           wsSend(ws, { type: "error", message: t("error.waitForReply") });
           return;
         }
-        broadcast({ type: "compaction_start" });
+        const beforeUsage = getUsageBySessionPath(targetPath);
+        broadcast({ type: "compaction_start", sessionPath: targetPath || null });
         try {
           await session.compact();
-          const usage = session.getContextUsage?.();
+          const usage = await getUsageWithRetry(targetPath, beforeUsage?.tokens ?? null);
           broadcast({
             type: "compaction_end",
+            sessionPath: targetPath || null,
+            success: true,
             tokens: usage?.tokens ?? null,
             contextWindow: usage?.contextWindow ?? null,
             percent: usage?.percent ?? null,
           });
+          followupContextUsage(targetPath, beforeUsage?.tokens ?? null);
         } catch (err) {
           // Already compacted / Nothing to compact 不算错误
           const msg = err.message || "";
           if (msg.includes("Already compacted") || msg.includes("Nothing to compact")) {
-            broadcast({ type: "compaction_end" });
+            const usage = getUsageBySessionPath(targetPath);
+            broadcast({
+              type: "compaction_end",
+              sessionPath: targetPath || null,
+              success: false,
+              tokens: usage?.tokens ?? null,
+              contextWindow: usage?.contextWindow ?? null,
+              percent: usage?.percent ?? null,
+            });
+            followupContextUsage(targetPath, beforeUsage?.tokens ?? null);
           } else {
-            broadcast({ type: "compaction_end" });
+            broadcast({ type: "compaction_end", sessionPath: targetPath || null, success: false });
             wsSend(ws, { type: "error", message: t("error.compactFailed", { msg }) });
           }
         }
