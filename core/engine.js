@@ -13,7 +13,6 @@
  *   - SkillManager        — 技能注册 / 同步
  */
 import fs from "fs";
-import os from "os";
 import path from "path";
 import {
   DefaultResourceLoader,
@@ -22,15 +21,6 @@ import {
   findTool,
   lsTool,
 } from "@mariozechner/pi-coding-agent";
-
-/** 已知的外部 AI 工具技能目录（相对 $HOME） */
-const WELL_KNOWN_SKILL_PATHS = [
-  { suffix: ".claude/skills",     label: "Claude Code" },
-  { suffix: ".codex/skills",      label: "Codex" },
-  { suffix: ".openclaw/skills",   label: "OpenClaw" },
-  { suffix: ".pi/agent/skills",   label: "Pi" },
-  { suffix: ".agents/skills",     label: "Agents" },
-];
 
 const allBuiltInTools = [...codingTools, grepTool, findTool, lsTool];
 
@@ -133,6 +123,7 @@ export class HanaEngine {
       getPrefs: () => this._prefs,
       getSkills: () => this._skills,
       getSession: () => this._sessionCoord.session,
+      getSessions: () => this._sessionCoord.sessions,
       getHub: () => this._hub,
       emitEvent: (e, sp) => this._emitEvent(e, sp),
       emitDevLog: (t, l) => this.emitDevLog(t, l),
@@ -318,8 +309,8 @@ export class HanaEngine {
   _syncAgentSkills() { this._skills.syncAgentSkills(this.agent); }
   _syncAllAgentSkills() { for (const ag of this._agentMgr.agents.values()) this._skills.syncAgentSkills(ag); }
   getAllSkills(agentId) {
-    const ag = agentId ? this._agentMgr.getAgent(agentId) : this.agent;
-    return this._skills.getAllSkills(ag || this.agent);
+    const ag = agentId ? this._agentMgr.getAgent(agentId) : null;
+    return this._skills.getAllSkills(ag || null);
   }
   _getSkillsForAgent(ag) { return this._skills.getSkillsForAgent(ag); }
   get skillsDir() { return this._skills.skillsDir; }
@@ -333,65 +324,6 @@ export class HanaEngine {
     this._resourceLoader.getSystemPrompt = () => this.agent.systemPrompt;
     this._resourceLoader.getSkills = () => this._getSkillsForAgent(this.agent);
     this._syncAllAgentSkills();
-  }
-
-  /** 获取外部技能路径配置（供 API 使用） */
-  getExternalSkillPaths() {
-    // 刷新 exists 状态，检测运行期间新增的目录
-    let newDirAppeared = false;
-    for (const d of this._discoveredExternalPaths || []) {
-      const nowExists = fs.existsSync(d.dirPath);
-      if (nowExists && !d.exists) newDirAppeared = true;
-      d.exists = nowExists;
-    }
-    // 运行期间有新目录出现：重新集成到 SkillManager（watcher + 扫描）
-    if (newDirAppeared) {
-      const merged = this._mergeExternalPaths(this._prefs.getExternalSkillPaths());
-      this._skills.setExternalPaths(merged);
-      this.reloadSkills().then(() => {
-        this._emitEvent({ type: "skills-changed" }, null);
-      }).catch(() => {});
-    }
-    return {
-      configured: this._prefs.getExternalSkillPaths(),
-      discovered: this._discoveredExternalPaths || [],
-    };
-  }
-
-  /** 更新外部技能路径 + 同步 ResourceLoader + 重载 */
-  async setExternalSkillPaths(paths) {
-    this._prefs.setExternalSkillPaths(paths);
-    const merged = this._mergeExternalPaths(paths);
-    // 1. 更新 SkillManager（数据 + watcher，不 reload）
-    this._skills.setExternalPaths(merged);
-    // 2. 统一 reload（外部技能由 SkillManager 扫描，不走 ResourceLoader）
-    await this.reloadSkills();
-    // 3. 通知前端
-    this._emitEvent({ type: "skills-changed" }, null);
-  }
-
-  /** 合并自动发现 + 用户配置的外部路径（去重） */
-  _mergeExternalPaths(userConfiguredPaths) {
-    // 每次合并时重新检测目录是否存在（不依赖初始化快照）
-    for (const d of this._discoveredExternalPaths || []) {
-      d.exists = fs.existsSync(d.dirPath);
-    }
-    const discovered = (this._discoveredExternalPaths || [])
-      .filter(d => d.exists)
-      .map(d => ({ dirPath: d.dirPath, label: d.label }));
-    const userParsed = (userConfiguredPaths || []).map(p => ({
-      dirPath: path.resolve(p),
-      label: path.basename(path.dirname(p)),
-    }));
-    const merged = [...discovered];
-    const seen = new Set(merged.map(m => m.dirPath));
-    for (const up of userParsed) {
-      if (!seen.has(up.dirPath)) {
-        merged.push(up);
-        seen.add(up.dirPath);
-      }
-    }
-    return merged;
   }
 
   // ════════════════════════════
@@ -434,16 +366,7 @@ export class HanaEngine {
     const skillsDir = path.join(this.hanakoHome, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });
 
-    // 解析外部兼容技能路径
-    const homeDir = os.homedir();
-    this._discoveredExternalPaths = WELL_KNOWN_SKILL_PATHS.map(w => ({
-      dirPath: path.join(homeDir, w.suffix),
-      label: w.label,
-      exists: fs.existsSync(path.join(homeDir, w.suffix)),
-    }));
-    const externalPaths = this._mergeExternalPaths(this._prefs.getExternalSkillPaths());
-
-    this._skills = new SkillManager({ skillsDir, externalPaths });
+    this._skills = new SkillManager({ skillsDir, agentsDir: this.agentsDir });
     this._resourceLoader = new DefaultResourceLoader({
       systemPromptOverride: () => this.agent.systemPrompt,
       agentsFilesOverride: () => ({ agentsFiles: [] }),
@@ -456,8 +379,7 @@ export class HanaEngine {
 
     const HIDDEN_SKILLS = new Set(["canvas-design", "skill-creator", "skills-translate-temp"]);
     this._skills.init(this._resourceLoader, this._agentMgr.agents, HIDDEN_SKILLS);
-    const extCount = this._skills.allSkills.filter(s => s.source === "external").length;
-    log(`[init] 3/5 ResourceLoader 完成 (${Date.now() - t_rl}ms, ${this._skills.allSkills.length} skills${extCount ? `, ${extCount} external` : ""})`);
+    log(`[init] 3/5 ResourceLoader 完成 (${Date.now() - t_rl}ms, ${this._skills.allSkills.length} skills)`);
 
     this._resourceLoader.getSystemPrompt = () => this.agent.systemPrompt;
     this._resourceLoader.getSkills = () => this._getSkillsForAgent(this.agent);

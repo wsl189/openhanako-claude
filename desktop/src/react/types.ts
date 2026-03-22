@@ -96,6 +96,10 @@ export interface SessionAgent {
 export type ActivePanel = 'activity' | 'automation' | 'bridge' | null;
 export type TabType = 'chat' | 'channels';
 
+export type SkillViewerOptions =
+  | { skillPath: string }
+  | { name: string; baseDir: string; filePath?: string; installed?: boolean };
+
 // ── Platform API 类型声明 ──
 export interface PlatformApi {
   getServerPort(): Promise<string>;
@@ -119,7 +123,7 @@ export interface PlatformApi {
   openExternal(url: string): void;
   showInFinder(path: string): void;
   browserEmergencyStop?(): void;
-  openSkillViewer?(opts: { skillPath: string }): void;
+  openSkillViewer?(opts: SkillViewerOptions): void;
   settingsChanged(event: string, payload?: unknown): void;
   onSettingsChanged(callback: (event: string, payload: unknown) => void): void;
   onSwitchTab?(callback: (tab: string) => void): void;

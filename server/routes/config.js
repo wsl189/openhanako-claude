@@ -70,8 +70,6 @@ export default async function configRoute(app, { engine }) {
       if (globalLocale) config.locale = globalLocale;
       const globalTz = engine.getTimezone();
       if (globalTz) config.timezone = globalTz;
-      if (!config.capabilities) config.capabilities = {};
-      config.capabilities.learn_skills = engine.getLearnSkills();
 
       return config;
     } catch (err) {
@@ -112,13 +110,6 @@ export default async function configRoute(app, { engine }) {
       if (partial.sandbox !== undefined) {
         engine.setSandbox(partial.sandbox);
         delete partial.sandbox;
-      }
-
-      // capabilities.learn_skills → 全局 preferences
-      if (partial.capabilities?.learn_skills !== undefined) {
-        engine.setLearnSkills(partial.capabilities.learn_skills);
-        delete partial.capabilities.learn_skills;
-        if (partial.capabilities && Object.keys(partial.capabilities).length === 0) delete partial.capabilities;
       }
 
       // desk.home_folder

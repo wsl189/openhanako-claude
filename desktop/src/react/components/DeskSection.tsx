@@ -753,336 +753,244 @@ function DeskDropZone({ children, onShowMenu }: { children: React.ReactNode; onS
   );
 }
 
-// ── 项目技能（CWD Skills） ──
+// ── Agent 技能 ──
 
-type CwdSkill = import('../stores/desk-slice').CwdSkillInfo;
+type AgentSkill = import('../stores/desk-slice').DeskSkillInfo;
 
-/** 加载 CWD skills（可从任何组件调用） */
-async function loadCwdSkills() {
-  const s = useStore.getState();
-  if (!s.deskBasePath) return;
+function resolveDeskSkillsAgentId(state = useStore.getState()): string | null {
+  if (state.pendingNewSession) {
+    return state.selectedAgentId || state.currentAgentId || null;
+  }
+  if (state.currentSessionPath) {
+    const cur = state.sessions.find(s => s.path === state.currentSessionPath);
+    if (cur?.agentId) return cur.agentId;
+  }
+  return state.selectedAgentId || state.currentAgentId || null;
+}
+
+function useDeskSkillsAgentId() {
+  const pendingNewSession = useStore(s => s.pendingNewSession);
+  const selectedAgentId = useStore(s => s.selectedAgentId);
+  const currentAgentId = useStore(s => s.currentAgentId);
+  const currentSessionPath = useStore(s => s.currentSessionPath);
+  const currentSessionAgentId = useStore(s => {
+    if (!s.currentSessionPath) return null;
+    return s.sessions.find(it => it.path === s.currentSessionPath)?.agentId || null;
+  });
+  return useMemo(() => {
+    if (pendingNewSession) {
+      return selectedAgentId || currentAgentId || null;
+    }
+    return currentSessionAgentId || selectedAgentId || currentAgentId || null;
+  }, [pendingNewSession, selectedAgentId, currentAgentId, currentSessionPath, currentSessionAgentId]);
+}
+
+let _loadAgentSkillsSeq = 0;
+
+async function loadAgentSkills(targetAgentId?: string | null) {
+  const agentId = targetAgentId || resolveDeskSkillsAgentId();
+  if (!agentId) {
+    useStore.getState().setDeskSkills([]);
+    return;
+  }
+  const seq = ++_loadAgentSkillsSeq;
   try {
-    const res = await hanaFetch(
-      `/api/desk/skills?dir=${encodeURIComponent(s.deskBasePath)}`,
-    );
+    const res = await hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}`);
     const data = await res.json();
-    useStore.setState({ cwdSkills: data.skills || [] });
-  } catch {}
+    if (seq !== _loadAgentSkillsSeq) return;
+    if (resolveDeskSkillsAgentId() !== agentId) return;
+    const all = (data.skills || []) as Array<{
+      name: string;
+      enabled: boolean;
+      hidden?: boolean;
+      description?: string;
+      baseDir?: string;
+      filePath?: string;
+      readonly?: boolean;
+    }>;
+    useStore.getState().setDeskSkills(
+      all.filter(s => !s.hidden).map(s => ({
+        name: s.name,
+        enabled: s.enabled,
+        description: s.description,
+        baseDir: s.baseDir,
+        filePath: s.filePath,
+        readonly: s.readonly,
+      })),
+    );
+  } catch {
+    if (seq !== _loadAgentSkillsSeq) return;
+    if (resolveDeskSkillsAgentId() !== agentId) return;
+    useStore.getState().setDeskSkills([]);
+  }
 }
 
-function useCwdSkillsOpen() {
-  const cwdSkills = useStore(s => s.cwdSkills);
-  const cwdSkillsOpen = useStore(s => s.cwdSkillsOpen);
-  return {
-    open: cwdSkillsOpen,
-    skills: cwdSkills,
-    toggle: () => useStore.getState().toggleCwdSkillsOpen(),
-    setSkills: (skills: CwdSkill[]) => useStore.setState({ cwdSkills: skills }),
-  };
+async function saveAgentEnabledSkills(skills: AgentSkill[], targetAgentId?: string | null) {
+  const agentId = targetAgentId || resolveDeskSkillsAgentId() || '';
+  if (!agentId) return;
+  const enabled = skills.filter(s => s.enabled).map(s => s.name);
+  await hanaFetch(`/api/agents/${agentId}/skills`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
 }
 
-function DeskCwdSkillsButton() {
-  const deskBasePath = useStore(s => s.deskBasePath);
-  const { open, skills, toggle } = useCwdSkillsOpen();
-  const loadedRef = useRef('');
+function DeskAgentSkillsButton() {
+  const skillsAgentId = useDeskSkillsAgentId();
+  const open = useStore(s => s.agentSkillsOpen);
+  const skills = useStore(s => s.deskSkills);
+  const toggle = useStore(s => s.toggleAgentSkillsOpen);
+  const enabledCount = skills.filter(s => s.enabled).length;
+  const t = window.t ?? ((p: string) => p);
 
   useEffect(() => {
-    if (deskBasePath && deskBasePath !== loadedRef.current) {
-      loadCwdSkills().then(() => { loadedRef.current = deskBasePath; });
-    }
-  }, [deskBasePath]);
+    loadAgentSkills(skillsAgentId);
+  }, [skillsAgentId]);
 
   const handleClick = useCallback(() => {
-    if (!open) loadCwdSkills();
+    if (!open) loadAgentSkills(skillsAgentId);
     toggle();
-  }, [open, toggle]);
+  }, [open, toggle, skillsAgentId]);
 
-  if (!deskBasePath) return null;
-
-  const t = window.t ?? ((p: string) => p);
-  const label = skills.length > 0
-    ? `${t('desk.cwdSkills')} · ${skills.length}`
-    : t('desk.cwdSkills');
+  if (!skillsAgentId) return null;
 
   return (
-    <button
-      className={`desk-cwd-btn${open ? ' active' : ''}`}
-      onClick={handleClick}
-    >
+    <button className={`desk-cwd-btn${open ? ' active' : ''}`} onClick={handleClick}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
       </svg>
-      <span>{label}</span>
+      <span>{`${t('desk.agentSkills')} · ${enabledCount}`}</span>
     </button>
   );
 }
 
-function DeskCwdSkillsPanel() {
-  const { open, skills } = useCwdSkillsOpen();
+function DeskAgentSkillsPanel() {
+  const open = useStore(s => s.agentSkillsOpen);
+  const skillsAgentId = useDeskSkillsAgentId();
+  const skills = useStore(s => s.deskSkills);
+  const setDeskSkills = useStore(s => s.setDeskSkills);
   const t = window.t ?? ((p: string) => p);
   const [visible, setVisible] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
       setVisible(true);
       setClosing(false);
     } else if (visible) {
+      setPickerOpen(false);
       setClosing(true);
       const timer = setTimeout(() => { setVisible(false); setClosing(false); }, 80);
       return () => clearTimeout(timer);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [dragging, setDragging] = useState(false);
-  const [cmPos, setCmPos] = useState<{ x: number; y: number } | null>(null);
-  const [cmSkill, setCmSkill] = useState<CwdSkill | null>(null);
+  useEffect(() => {
+    (window as any).__loadDeskSkills = loadAgentSkills;
+    return () => { delete (window as any).__loadDeskSkills; };
+  }, []);
 
   useEffect(() => {
-    if (!cmPos) return;
-    const close = () => { setCmPos(null); setCmSkill(null); };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [cmPos]);
+    if (open) loadAgentSkills(skillsAgentId);
+  }, [open, skillsAgentId]);
 
-  const deleteSkill = useCallback(async (skill: CwdSkill) => {
-    if (!skill.baseDir) return;
+  const updateEnabled = useCallback(async (name: string, enabled: boolean) => {
+    const prev = useStore.getState().deskSkills;
+    const next = prev.map(s => s.name === name ? { ...s, enabled } : s);
+    setDeskSkills(next);
     try {
-      await hanaFetch('/api/desk/delete-skill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skillDir: skill.baseDir }),
-      });
-      await loadCwdSkills();
-    } catch (err) {
-      console.error('[cwd-skills] delete failed:', err);
+      await saveAgentEnabledSkills(next, skillsAgentId);
+    } catch {
+      setDeskSkills(prev);
     }
-  }, []);
+  }, [setDeskSkills, skillsAgentId]);
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length === 0) return;
-    const dir = useStore.getState().deskBasePath;
-    console.log('[cwd-skills] drop: files=', files.length, 'dir=', dir);
-    if (!dir) return;
-    let installed = false;
-    for (const file of files) {
-      const filePath = (window as any).platform?.getFilePath?.(file);
-      console.log('[cwd-skills] filePath=', filePath, 'file.name=', file.name);
-      if (!filePath) continue;
-      try {
-        const res = await hanaFetch('/api/desk/install-skill', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filePath, dir }),
-        });
-        const data = await res.json();
-        if (data.error) {
-          console.warn('[cwd-skills] install failed:', data.error);
-        } else {
-          console.log('[cwd-skills] installed:', data.name);
-          installed = true;
-        }
-      } catch (err) {
-        console.error('[cwd-skills] install failed:', err);
-      }
-    }
-    if (installed) await loadCwdSkills();
-    (window as any).__loadDeskSkills?.();
-  }, []);
+  if (!visible || !skillsAgentId) return null;
 
-  if (!visible) return null;
-
-  const grouped: Record<string, CwdSkill[]> = {};
-  for (const s of skills) {
-    (grouped[s.source] ??= []).push(s);
-  }
+  const enabledSkills = skills.filter(s => s.enabled);
+  const availableSkills = skills.filter(s => !s.enabled);
 
   return (
     <div className={`desk-cwd-panel-wrap${closing ? ' closing' : ''}`}>
-      <div
-        className={`desk-cwd-panel${dragging ? ' drag-over' : ''}`}
-        onMouseDown={(e) => e.stopPropagation()}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setCmPos({ x: e.clientX, y: e.clientY });
-        }}
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { handleDrop(e); }}
-      >
+      <div className="desk-cwd-panel" onMouseDown={(e) => e.stopPropagation()}>
         <div className="desk-cwd-desc-line">
           <span className="desk-cwd-desc-deco" />
-          <span className="desk-cwd-desc-text">{t('desk.cwdSkillsDesc')}</span>
-          <span className="desk-cwd-desc-deco" />
+          <span className="desk-cwd-desc-text">{t('desk.agentSkillsDesc')}</span>
+          <button
+            className="settings-icon-btn desk-agent-add-btn"
+            title={t('settings.skills.add')}
+            onClick={() => setPickerOpen(v => !v)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
         </div>
 
-        {skills.length === 0 ? (
-          <>
-            <p className="desk-cwd-empty">{t('desk.cwdSkillsEmpty')}</p>
-            <p className="desk-cwd-hint">{t('desk.cwdSkillsDrop')}</p>
-          </>
-        ) : (
-          <>
-            {Object.entries(grouped).map(([source, items]) => (
-              <div key={source}>
-                <div className="desk-cwd-group-label">{source}</div>
-                {items.map(s => {
-                  let desc = s.description || '';
-                  if (desc.length > 60) desc = desc.slice(0, 60) + '…';
-                  return (
-                    <div
-                      className="desk-cwd-skill-item"
-                      key={s.name}
-                      onDoubleClick={() => {
-                        (window as any).platform?.openSkillViewer?.({
-                          name: s.name,
-                          baseDir: s.baseDir,
-                          filePath: s.filePath,
-                          installed: false,
-                        });
-                      }}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setCmPos({ x: e.clientX, y: e.clientY });
-                        setCmSkill(s);
-                      }}
-                    >
-                      <span className="desk-cwd-skill-name">{s.name}</span>
-                      {desc && <span className="desk-cwd-skill-desc">{desc}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-            <p className="desk-cwd-hint">{t('desk.cwdSkillsDrop')}</p>
-          </>
-        )}
-        {cmPos && (
-          <div className="desk-cwd-ctx-menu" style={{ position: 'fixed', left: cmPos.x, top: cmPos.y, zIndex: 9999 }}>
-            <button onClick={() => {
-              const target = cmSkill?.baseDir || (useStore.getState().deskBasePath + '/.agents/skills');
-              (window as any).platform?.showInFinder?.(target);
-              setCmPos(null);
-            }}>
-              {t('desk.openInFinder')}
-            </button>
-            {cmSkill && (
-              <button className="desk-cwd-ctx-danger" onClick={() => {
-                deleteSkill(cmSkill);
-                setCmPos(null);
-              }}>
-                {t('desk.deleteSkill')}
-              </button>
+        {pickerOpen && (
+          <div style={{ marginBottom: 8 }}>
+            {availableSkills.length === 0 ? (
+              <p className="desk-cwd-empty">{t('desk.noAvailableSkills')}</p>
+            ) : (
+              <>
+                <p className="desk-cwd-hint">{t('desk.doubleClickAdd')}</p>
+                {availableSkills.map(s => (
+                  <div
+                    className="desk-cwd-skill-item"
+                    key={`add-${s.name}`}
+                    onDoubleClick={() => updateEnabled(s.name, true)}
+                  >
+                    <span className="desk-cwd-skill-name">{s.name}</span>
+                    {s.description && <span className="desk-cwd-skill-desc">{s.description}</span>}
+                  </div>
+                ))}
+              </>
             )}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
 
-// ── 技能快捷区 ──
+        {pickerOpen && <div className="desk-cwd-divider" />}
 
-const DESK_SKILLS_KEY = 'hana-desk-skills-collapsed';
-
-function DeskSkillsSection() {
-  const skills = useStore(s => s.deskSkills);
-  const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem(DESK_SKILLS_KEY) === '1',
-  );
-
-  const loadDeskSkillsFn = useCallback(async () => {
-    try {
-      const res = await hanaFetch('/api/skills');
-      const data = await res.json();
-      const all = (data.skills || []) as Array<{
-        name: string; enabled: boolean; hidden?: boolean;
-        source?: string; externalLabel?: string | null;
-      }>;
-      useStore.getState().setDeskSkills(
-        all.filter(s => !s.hidden).map(s => ({
-          name: s.name,
-          enabled: s.enabled,
-          source: s.source,
-          externalLabel: s.externalLabel,
-        })),
-      );
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    loadDeskSkillsFn();
-    (window as any).__loadDeskSkills = loadDeskSkillsFn;
-    return () => { delete (window as any).__loadDeskSkills; };
-  }, [loadDeskSkillsFn]);
-
-  const toggleCollapse = useCallback(() => {
-    setCollapsed(prev => {
-      const next = !prev;
-      localStorage.setItem(DESK_SKILLS_KEY, next ? '1' : '0');
-      return next;
-    });
-  }, []);
-
-  const toggleSkill = useCallback(async (name: string, enable: boolean) => {
-    const prev = useStore.getState().deskSkills;
-    useStore.getState().setDeskSkills(
-      prev.map(s => s.name === name ? { ...s, enabled: enable } : s),
-    );
-    const enabledList = prev.map(s => s.name === name ? { ...s, enabled: enable } : s)
-      .filter(s => s.enabled).map(s => s.name);
-    try {
-      const agentId = useStore.getState().currentAgentId || '';
-      await hanaFetch(`/api/agents/${agentId}/skills`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: enabledList }),
-      });
-    } catch {
-      useStore.getState().setDeskSkills(prev);
-    }
-  }, []);
-
-  const enabledCount = skills.filter(s => s.enabled).length;
-  const t = window.t ?? ((p: string) => p);
-
-  if (skills.length === 0) return null;
-
-  return (
-    <div className="desk-skills-section">
-      <button className="desk-skills-header" onClick={toggleCollapse}>
-        <span>{t('desk.skills')}</span>
-        <span className="desk-skills-count">{enabledCount}</span>
-        <svg
-          className={`desk-skills-chevron${collapsed ? '' : ' open'}`}
-          width="10" height="10" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-        >
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-      </button>
-      {!collapsed && (
-        <div className="desk-skills-list">
-          {skills.map(s => (
-            <div className="desk-skill-item" key={s.name}>
-              <span className="desk-skill-name">{s.name}</span>
-              {s.externalLabel && (
-                <span className="desk-skill-source">{s.externalLabel}</span>
-              )}
-              <button
-                className={`hana-toggle mini${s.enabled ? ' on' : ''}`}
-                onClick={() => toggleSkill(s.name, !s.enabled)}
-              />
+        {enabledSkills.length === 0 ? (
+          <p className="desk-cwd-empty">{t('desk.agentSkillsEmpty')}</p>
+        ) : (
+          enabledSkills.map(s => (
+            <div
+              className="desk-cwd-skill-item is-enabled"
+              key={s.name}
+              onDoubleClick={() => {
+                if (s.baseDir) {
+                  (window as any).platform?.openSkillViewer?.({
+                    name: s.name,
+                    baseDir: s.baseDir,
+                    filePath: s.filePath,
+                    installed: true,
+                  });
+                }
+              }}
+            >
+              <div className="desk-cwd-skill-row">
+                <span className="desk-cwd-skill-name">{s.name}</span>
+                <button
+                  className="desk-cwd-skill-remove"
+                  title={t('desk.removeFromAgent')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateEnabled(s.name, false);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              {s.description && <span className="desk-cwd-skill-desc">{s.description}</span>}
             </div>
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -1113,11 +1021,10 @@ export function DeskSection() {
       <DeskDropZone onShowMenu={handleShowMenu}>
         <div className="jian-desk-header">
           <div className="jian-section-title">{t('desk.title')}</div>
-          <DeskCwdSkillsButton />
+          <DeskAgentSkillsButton />
         </div>
         <DeskOpenButton />
-        <DeskCwdSkillsPanel />
-        <DeskSkillsSection />
+        <DeskAgentSkillsPanel />
         <div className="jian-desk-toolbar">
           <DeskBreadcrumb />
           <DeskSortButton sortMode={sortMode} onSort={setSortMode} onShowMenu={handleShowMenu} />

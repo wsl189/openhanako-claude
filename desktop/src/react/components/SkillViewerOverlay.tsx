@@ -32,6 +32,7 @@ const md = getMdWithOpts({ html: true, linkify: true, breaks: true });
 export function SkillViewerOverlay() {
   const data = useStore(s => s.skillViewerData) as SkillInfo | null;
   const [files, setFiles] = useState<TreeItem[]>([]);
+  const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileName, setFileName] = useState('SKILL.md');
   const [content, setContent] = useState<string | null>(null);
@@ -48,7 +49,10 @@ export function SkillViewerOverlay() {
     (async () => {
       const hana = (window as any).hana;
       const items = await hana?.listSkillFiles?.(data.baseDir);
-      setFiles(items || []);
+      const tree = items || [];
+      setFiles(tree);
+      const allDirs = collectDirPaths(tree);
+      setExpandedDirs(Object.fromEntries(allDirs.map((p) => [p, true])));
       const mdPath = data.filePath || (data.baseDir + '/SKILL.md');
       loadFile(mdPath, 'SKILL.md');
     })();
@@ -83,6 +87,19 @@ export function SkillViewerOverlay() {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 2000);
   }
+
+  const expandAll = useCallback(() => {
+    const allDirs = collectDirPaths(files);
+    setExpandedDirs(Object.fromEntries(allDirs.map((p) => [p, true])));
+  }, [files]);
+
+  const collapseAll = useCallback(() => {
+    setExpandedDirs({});
+  }, []);
+
+  const toggleDir = useCallback((dirPath: string) => {
+    setExpandedDirs(prev => ({ ...prev, [dirPath]: !prev[dirPath] }));
+  }, []);
 
   if (!data) return null;
 
@@ -129,8 +146,22 @@ export function SkillViewerOverlay() {
         <div className="sv-body">
           {/* 文件树 */}
           <div className="sv-sidebar">
+            <div className="sv-sidebar-header">
+              <span className="sv-sidebar-title">{t('skillViewer.structure')}</span>
+              <div className="sv-sidebar-actions">
+                <button className="sv-sidebar-btn" onClick={expandAll}>{t('skillViewer.expandAll')}</button>
+                <button className="sv-sidebar-btn" onClick={collapseAll}>{t('skillViewer.collapseAll')}</button>
+              </div>
+            </div>
             {files.map((item, i) => (
-              <TreeNode key={i} item={item} activeFile={activeFile} onSelect={loadFile} />
+              <TreeNode
+                key={i}
+                item={item}
+                activeFile={activeFile}
+                onSelect={loadFile}
+                expandedDirs={expandedDirs}
+                onToggleDir={toggleDir}
+              />
             ))}
           </div>
 
@@ -163,30 +194,40 @@ export function SkillViewerOverlay() {
 
 // ── 文件树节点 ──
 
-function TreeNode({ item, activeFile, onSelect }: {
+function TreeNode({ item, activeFile, onSelect, expandedDirs, onToggleDir }: {
   item: TreeItem;
   activeFile: string | null;
   onSelect: (path: string, name: string) => void;
+  expandedDirs: Record<string, boolean>;
+  onToggleDir: (dirPath: string) => void;
 }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const dirPath = item.path || '';
+  const expanded = !!expandedDirs[dirPath];
 
   if (item.isDir) {
     return (
       <div className="sv-tree-folder">
-        <div className="sv-tree-item" onClick={() => setCollapsed(c => !c)}>
+        <div className="sv-tree-item" onClick={() => dirPath && onToggleDir(dirPath)}>
           <span className="sv-icon sv-chevron">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              {collapsed
+              {!expanded
                 ? <polyline points="9 18 15 12 9 6" />
                 : <polyline points="6 9 12 15 18 9" />}
             </svg>
           </span>
           <span className="sv-label">{item.name}</span>
         </div>
-        {!collapsed && (
+        {expanded && (
           <div className="sv-tree-children">
             {item.children?.map((child, i) => (
-              <TreeNode key={i} item={child} activeFile={activeFile} onSelect={onSelect} />
+              <TreeNode
+                key={i}
+                item={child}
+                activeFile={activeFile}
+                onSelect={onSelect}
+                expandedDirs={expandedDirs}
+                onToggleDir={onToggleDir}
+              />
             ))}
           </div>
         )}
@@ -224,6 +265,21 @@ function TreeNode({ item, activeFile, onSelect }: {
 }
 
 // ── 工具函数 ──
+
+function collectDirPaths(items: TreeItem[]): string[] {
+  const out: string[] = [];
+  const walk = (arr: TreeItem[]) => {
+    for (const item of arr) {
+      if (!item.isDir) continue;
+      if (item.path) out.push(item.path);
+      if (Array.isArray(item.children) && item.children.length > 0) {
+        walk(item.children);
+      }
+    }
+  };
+  walk(items);
+  return out;
+}
 
 function parseFmDescription(fm: string): string {
   const idx = fm.search(/^description:/m);

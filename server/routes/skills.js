@@ -2,16 +2,25 @@
  * Skills 管理路由
  *
  * GET    /api/skills              — 列出所有可用 skill（含当前 agent 的 enabled 状态）
- * PUT    /api/agents/:id/skills   — 更新指定 agent 的 enabled skills 列表
+ * PUT    /api/agents/:id/skills   — 同步指定 agent 的 skills 目录（按 enabled 列表复制/移除）
  * POST   /api/skills/install      — 安装用户技能（文件夹路径 / .zip / .skill）
+ * POST   /api/skills/clawhub/search  — 通过 ClawHub 搜索技能
+ * POST   /api/skills/clawhub/install — 通过 ClawHub 安装技能
  * DELETE /api/skills/:name        — 删除用户技能
  */
 import path from "path";
 import fs from "fs";
+import { spawn } from "child_process";
 import { extractZip } from "../../lib/extract-zip.js";
 import { saveConfig } from "../../lib/memory/config-loader.js";
-import { sanitizeSkillName, safetyReview } from "../../lib/tools/install-skill.js";
+import { sanitizeSkillName } from "../../lib/tools/install-skill.js";
 import { t } from "../i18n.js";
+
+const CLAWHUB_JOB_KEEP_MS = 30 * 60_000;
+const CLAWHUB_STARS_CACHE_TTL_MS = 15 * 60_000;
+const CLAWHUB_STARS_CACHE_FAIL_TTL_MS = 2 * 60_000;
+const clawhubInstallJobs = new Map();
+const clawhubStarsCache = new Map();
 
 function validateId(id) {
   return id && !id.includes("..") && !id.includes("/") && !id.includes("\\");
@@ -34,6 +43,76 @@ function parseSkillName(skillMdPath) {
   }
 }
 
+function parseSkillNameFromContent(content) {
+  if (!content) return null;
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (fmMatch) {
+    const nameMatch = fmMatch[1].match(/^name:\s*(.+)$/mi);
+    if (nameMatch) return nameMatch[1].trim().replace(/^["']|["']$/g, "");
+  }
+  const commentMatch = content.match(/<!--\s*name:\s*(.+?)\s*-->/i);
+  if (commentMatch) return commentMatch[1].trim();
+  const headingMatch = content.match(/^#\s+(.+?)$/m);
+  if (headingMatch) return headingMatch[1].trim();
+  return null;
+}
+
+function guessSkillDescription(content, fallback = "Imported skill") {
+  if (!content) return fallback;
+  const noCode = content.replace(/```[\s\S]*?```/g, "\n");
+  const lines = noCode.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (line.startsWith("#")) continue;
+    if (line.startsWith("---")) continue;
+    if (/^name:\s*/i.test(line)) continue;
+    if (line.length < 4) continue;
+    return line.slice(0, 200);
+  }
+  return fallback;
+}
+
+function yamlQuote(v) {
+  return String(v || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, " ")
+    .trim();
+}
+
+/**
+ * 兼容无 frontmatter 的第三方 SKILL.md：
+ * 自动补齐最小 frontmatter，确保资源加载器可识别。
+ */
+function ensureSkillFrontmatter(skillMdPath, fallbackNameRaw) {
+  try {
+    if (!fs.existsSync(skillMdPath)) return null;
+    const content = fs.readFileSync(skillMdPath, "utf-8");
+    const fallbackName = sanitizeSkillName(fallbackNameRaw || "") || "imported-skill";
+    const candidateName = parseSkillNameFromContent(content) || fallbackName;
+    const safeName = sanitizeSkillName(candidateName) || fallbackName;
+    const desc = guessSkillDescription(content, safeName);
+
+    const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+    if (fmMatch) {
+      const fmBody = fmMatch[1];
+      const hasValidName = !!(fmBody.match(/^name:\s*(.+)$/mi)?.[1]?.trim()
+        && sanitizeSkillName(fmBody.match(/^name:\s*(.+)$/mi)[1].trim().replace(/^["']|["']$/g, "")));
+      if (hasValidName) return safeName;
+      const body = content.slice(fmMatch[0].length);
+      const nextFm = `${fmBody.trim()}\nname: "${yamlQuote(safeName)}"`;
+      const rewritten = `---\n${nextFm}\n---\n\n${body}`;
+      fs.writeFileSync(skillMdPath, rewritten, "utf-8");
+      return safeName;
+    }
+
+    const normalized = `---\nname: "${yamlQuote(safeName)}"\ndescription: "${yamlQuote(desc)}"\n---\n\n${content}`;
+    fs.writeFileSync(skillMdPath, normalized, "utf-8");
+    return safeName;
+  } catch {
+    return null;
+  }
+}
+
 /** 递归复制目录 */
 function copyDirSync(src, dst) {
   fs.mkdirSync(dst, { recursive: true });
@@ -51,6 +130,493 @@ function copyDirSync(src, dst) {
 /** 递归删除目录 */
 function rmDirSync(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+function parseSkillLine(line) {
+  // 输出示例: "code  Code  (3.634)"
+  const m = line.trim().match(/^([^\s]+)\s+(.+?)\s+\(([-+]?\d+(?:\.\d+)?)\)$/);
+  if (!m) return null;
+  return {
+    slug: m[1],
+    name: m[2],
+    score: Number(m[3]),
+  };
+}
+
+function safeRealpath(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+function findLoadedSkill(engine, { name, baseDir }) {
+  const all = engine.getAllSkills();
+  const targetDir = baseDir ? safeRealpath(baseDir) : null;
+  if (targetDir) {
+    const byDir = all.find((s) => {
+      const skillDir = s.baseDir || (s.filePath ? path.dirname(s.filePath) : null);
+      if (!skillDir) return false;
+      const real = safeRealpath(skillDir);
+      return !!real && real === targetDir;
+    });
+    if (byDir) return byDir;
+  }
+  if (name) {
+    const byName = all.find((s) => s.name === name);
+    if (byName) return byName;
+  }
+  return null;
+}
+
+function scanSkillDirs(baseDir, maxDepth = 5) {
+  const results = [];
+  const seen = new Set();
+  function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    if (fs.existsSync(path.join(dir, "SKILL.md"))) {
+      const real = fs.realpathSync(dir);
+      if (!seen.has(real)) {
+        seen.add(real);
+        results.push(dir);
+      }
+      return;
+    }
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith(".")) continue;
+      walk(path.join(dir, entry.name), depth + 1);
+    }
+  }
+  walk(baseDir, 0);
+  return results;
+}
+
+function runNpxClawhub(args, opts = {}) {
+  const {
+    cwd = process.cwd(),
+    timeoutMs = 90_000,
+    onStdoutLine,
+    onStderrLine,
+  } = opts;
+
+  const bin = process.platform === "win32" ? "npx.cmd" : "npx";
+  const registry =
+    process.env.npm_config_registry
+    || process.env.NPM_CONFIG_REGISTRY
+    || "https://registry.npmmirror.com";
+
+  const env = {
+    ...process.env,
+    npm_config_registry: registry,
+    NPM_CONFIG_REGISTRY: registry,
+  };
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let stdoutRest = "";
+    let stderrRest = "";
+
+    const flushLine = (line, cb) => {
+      const text = String(line || "").trim();
+      if (!text || !cb) return;
+      cb(text);
+    };
+    const appendChunk = (chunk, rest, cb) => {
+      const text = String(chunk || "");
+      const normalized = (rest + text).replace(/\r/g, "\n");
+      const parts = normalized.split("\n");
+      const tail = parts.pop() || "";
+      for (const part of parts) flushLine(part, cb);
+      return tail;
+    };
+    const onOut = (buf) => {
+      const text = String(buf);
+      stdout += text;
+      stdoutRest = appendChunk(text, stdoutRest, onStdoutLine);
+    };
+    const onErr = (buf) => {
+      const text = String(buf);
+      stderr += text;
+      stderrRest = appendChunk(text, stderrRest, onStderrLine);
+    };
+    child.stdout.on("data", onOut);
+    child.stderr.on("data", onErr);
+
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("clawhub command timeout"));
+    }, timeoutMs);
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      flushLine(stdoutRest, onStdoutLine);
+      flushLine(stderrRest, onStderrLine);
+      const out = stdout.trim();
+      const err = stderr.trim();
+      if (code === 0) {
+        resolve({ stdout: out, stderr: err });
+        return;
+      }
+      reject(new Error(err || out || `clawhub exited with code ${code}`));
+    });
+  });
+}
+
+function parseClawhubJsonOutput(raw) {
+  const text = String(raw || "").trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryDelayMs(msg) {
+  const m = String(msg || "").match(/retry in\s+(\d+)(?:\.\d+)?s/i);
+  if (!m) return null;
+  const seconds = Number(m[1]);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return seconds * 1000;
+}
+
+async function runNpxClawhubWithRetry(args, opts = {}) {
+  const retries = Math.max(0, Number(opts.retries ?? 3));
+  const onRetry = typeof opts.onRetry === "function" ? opts.onRetry : null;
+  let lastErr = null;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await runNpxClawhub(args, opts);
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err?.message || "");
+      if (i >= retries) break;
+      const shouldRetry = /rate limit/i.test(msg) || /network/i.test(msg);
+      if (!shouldRetry) break;
+      const waitMs = parseRetryDelayMs(msg) ?? 1200;
+      onRetry?.({ attempt: i + 1, retries, waitMs, message: msg });
+      await sleep(waitMs);
+    }
+  }
+  throw lastErr || new Error("clawhub command failed");
+}
+
+function createClawhubInstallJob(slug) {
+  const id = `clawhub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const now = Date.now();
+  const job = {
+    id,
+    slug,
+    status: "queued",
+    progress: 0,
+    message: "queued",
+    error: null,
+    skill: null,
+    createdAt: now,
+    updatedAt: now,
+    finishedAt: null,
+  };
+  clawhubInstallJobs.set(id, job);
+  return job;
+}
+
+function getActiveClawhubInstallJob(slug) {
+  for (const job of clawhubInstallJobs.values()) {
+    if (job.slug !== slug) continue;
+    if (job.status === "queued" || job.status === "running") return job;
+  }
+  return null;
+}
+
+function updateClawhubInstallJob(jobId, patch = {}) {
+  const job = clawhubInstallJobs.get(jobId);
+  if (!job) return null;
+  const next = { ...job, ...patch, updatedAt: Date.now() };
+  clawhubInstallJobs.set(jobId, next);
+  return next;
+}
+
+function finishClawhubInstallJob(jobId, patch = {}) {
+  const now = Date.now();
+  const next = updateClawhubInstallJob(jobId, { ...patch, finishedAt: now });
+  if (!next) return null;
+  setTimeout(() => {
+    const cur = clawhubInstallJobs.get(jobId);
+    if (!cur) return;
+    const terminal = cur.status === "succeeded" || cur.status === "failed";
+    if (!terminal) return;
+    if ((cur.finishedAt || 0) + CLAWHUB_JOB_KEEP_MS > Date.now()) return;
+    clawhubInstallJobs.delete(jobId);
+  }, CLAWHUB_JOB_KEEP_MS + 1000);
+  return next;
+}
+
+function parseClawhubInstallPhase(line = "") {
+  const text = String(line || "").trim();
+  if (!text) return null;
+  if (/rate limit/i.test(text)) return { progress: 38, message: text };
+  if (/resolving/i.test(text)) return { progress: 24, message: text };
+  if (/fetching|downloading/i.test(text)) return { progress: 38, message: text };
+  if (/extracting|writing|copying|installing/i.test(text)) return { progress: 52, message: text };
+  if (/done|completed|success/i.test(text)) return { progress: 68, message: text };
+  return { progress: 20, message: text };
+}
+
+function clampProgress(n, fallback = 0) {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(0, Math.min(100, num));
+}
+
+function mapLimit(items, limit, mapper) {
+  const list = Array.isArray(items) ? items : [];
+  const max = Math.max(1, Number(limit) || 1);
+  const out = new Array(list.length);
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(max, list.length) }, async () => {
+    while (true) {
+      const cur = idx++;
+      if (cur >= list.length) break;
+      out[cur] = await mapper(list[cur], cur);
+    }
+  });
+  return Promise.all(workers).then(() => out);
+}
+
+async function getClawhubStars(slug) {
+  const key = String(slug || "").trim();
+  if (!key) return null;
+  const cached = clawhubStarsCache.get(key);
+  if (cached && cached.expireAt > Date.now()) return cached.value;
+  try {
+    const res = await runNpxClawhubWithRetry([
+      "--yes",
+      "clawhub@latest",
+      "inspect",
+      key,
+      "--json",
+    ], {
+      timeoutMs: 45_000,
+      retries: 1,
+    });
+    const json = parseClawhubJsonOutput(res.stdout);
+    const starsRaw = json?.skill?.stats?.stars;
+    const stars = Number.isFinite(Number(starsRaw)) ? Number(starsRaw) : null;
+    clawhubStarsCache.set(key, {
+      value: stars,
+      expireAt: Date.now() + CLAWHUB_STARS_CACHE_TTL_MS,
+    });
+    return stars;
+  } catch {
+    clawhubStarsCache.set(key, {
+      value: null,
+      expireAt: Date.now() + CLAWHUB_STARS_CACHE_FAIL_TTL_MS,
+    });
+    return null;
+  }
+}
+
+async function installByClawhubInspect(slug, tmpDir, onProgress) {
+  const inspectArgs = [
+    "--yes",
+    "clawhub@latest",
+    "inspect",
+    slug,
+    "--files",
+    "--json",
+  ];
+  onProgress?.(70, "Using inspect fallback");
+  const inspectRes = await runNpxClawhubWithRetry(inspectArgs, {
+    timeoutMs: 180_000,
+    retries: 2,
+    onRetry: ({ waitMs, message }) => {
+      onProgress?.(72, `Inspect retry in ${Math.ceil(waitMs / 1000)}s: ${message}`);
+    },
+  });
+  const inspectJson = parseClawhubJsonOutput(inspectRes.stdout);
+  const files = (inspectJson?.version?.files || [])
+    .map((f) => String(f?.path || ""))
+    .filter(Boolean);
+  if (!files.includes("SKILL.md")) {
+    throw new Error("inspect missing SKILL.md");
+  }
+
+  const slugLeaf = sanitizeSkillName(String(slug).split("/").pop() || "") || "inspect-skill";
+  const installRoot = path.join(tmpDir, ".inspect-download", slugLeaf);
+  fs.mkdirSync(installRoot, { recursive: true });
+
+  for (const relPath of files) {
+    const fileArgs = [
+      "--yes",
+      "clawhub@latest",
+      "inspect",
+      slug,
+      "--file",
+      relPath,
+      "--json",
+    ];
+    const fileRes = await runNpxClawhubWithRetry(fileArgs, {
+      timeoutMs: 180_000,
+      retries: 2,
+      onRetry: ({ waitMs, message }) => {
+        onProgress?.(76, `Inspect file retry in ${Math.ceil(waitMs / 1000)}s: ${message}`);
+      },
+    });
+    const fileJson = parseClawhubJsonOutput(fileRes.stdout);
+    const content = fileJson?.file?.content;
+    if (typeof content !== "string") {
+      throw new Error(`inspect file content missing: ${relPath}`);
+    }
+    const dst = path.resolve(installRoot, relPath);
+    if (!(dst === installRoot || dst.startsWith(installRoot + path.sep))) {
+      throw new Error(`invalid inspect file path: ${relPath}`);
+    }
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.writeFileSync(dst, content, "utf-8");
+    onProgress?.(80, `Fetched ${relPath}`);
+  }
+
+  return installRoot;
+}
+
+async function installClawhubSkill({ engine, skillSlug, onProgress }) {
+  const userDir = engine.userSkillsDir || engine.skillsDir;
+  let tmpDir = null;
+  try {
+    fs.mkdirSync(userDir, { recursive: true });
+    onProgress?.(6, "Preparing install workspace");
+    tmpDir = fs.mkdtempSync(path.join(userDir, ".tmp-clawhub-install-"));
+
+    const onLine = (line) => {
+      const phase = parseClawhubInstallPhase(line);
+      if (!phase) return;
+      onProgress?.(phase.progress, phase.message);
+    };
+    const onRetry = ({ waitMs, message }) => {
+      onProgress?.(40, `Retrying in ${Math.ceil(waitMs / 1000)}s: ${message}`);
+    };
+
+    const argsPrimary = [
+      "--yes",
+      "clawhub@latest",
+      "install",
+      skillSlug,
+      "--workdir",
+      tmpDir,
+      "--dir",
+      ".",
+      "--no-input",
+      "--force",
+    ];
+    const argsFallback = [
+      "--yes",
+      "clawhub@latest",
+      "install",
+      skillSlug,
+      "--workdir",
+      tmpDir,
+      "--dir",
+      "skills",
+      "--no-input",
+      "--force",
+    ];
+
+    onProgress?.(14, "Installing from ClawHub");
+    try {
+      await runNpxClawhubWithRetry(argsPrimary, {
+        timeoutMs: 180_000,
+        retries: 3,
+        onStdoutLine: onLine,
+        onStderrLine: onLine,
+        onRetry,
+      });
+    } catch (_primaryErr) {
+      onProgress?.(58, "Retry install path: skills/");
+      try {
+        await runNpxClawhubWithRetry(argsFallback, {
+          timeoutMs: 180_000,
+          retries: 3,
+          onStdoutLine: onLine,
+          onStderrLine: onLine,
+          onRetry,
+        });
+      } catch (_fallbackErr) {
+        onProgress?.(66, "Falling back to inspect download");
+        await installByClawhubInspect(skillSlug, tmpDir, onProgress);
+      }
+    }
+
+    onProgress?.(82, "Scanning installed files");
+    const candidates = scanSkillDirs(tmpDir, 10);
+    if (!candidates.length) {
+      throw new Error("clawhub install succeeded but no SKILL.md found");
+    }
+
+    const slugLeaf = skillSlug.split("/").pop()?.toLowerCase() || skillSlug.toLowerCase();
+    candidates.sort((a, b) => {
+      const an = path.basename(a).toLowerCase();
+      const bn = path.basename(b).toLowerCase();
+      const as = an === slugLeaf ? 1 : 0;
+      const bs = bn === slugLeaf ? 1 : 0;
+      if (as !== bs) return bs - as;
+      return a.length - b.length;
+    });
+
+    const skillDir = candidates[0];
+    const skillMdPath = path.join(skillDir, "SKILL.md");
+    ensureSkillFrontmatter(skillMdPath, skillSlug.split("/").pop() || path.basename(skillDir));
+    const rawName = parseSkillName(skillMdPath) || path.basename(skillDir);
+    const safeName = sanitizeSkillName(rawName) || sanitizeSkillName(path.basename(skillDir));
+    if (!safeName) {
+      throw new Error(t("error.skillNameInvalid", { name: rawName }));
+    }
+
+    const dstDir = path.join(userDir, safeName);
+    onProgress?.(88, "Writing skill files");
+    if (fs.existsSync(dstDir)) rmDirSync(dstDir);
+    copyDirSync(skillDir, dstDir);
+
+    onProgress?.(94, "Reloading skills");
+    await engine.reloadSkills();
+    const skill = findLoadedSkill(engine, { name: safeName, baseDir: dstDir });
+    if (!skill) {
+      if (fs.existsSync(dstDir)) rmDirSync(dstDir);
+      await engine.reloadSkills();
+      throw new Error("skill format is incompatible or missing valid YAML frontmatter");
+    }
+    onProgress?.(100, "Install complete");
+    return skill;
+  } finally {
+    if (tmpDir && fs.existsSync(tmpDir)) {
+      rmDirSync(tmpDir);
+    }
+  }
 }
 
 export default async function skillsRoute(app, { engine }) {
@@ -78,13 +644,80 @@ export default async function skillsRoute(app, { engine }) {
         return { error: "enabled must be an array of skill names" };
       }
 
-      const partial = { skills: { enabled } };
-      const configPath = path.join(engine.agentsDir, id, "config.yaml");
-      saveConfig(configPath, partial);
+      const normalized = [];
+      const seen = new Set();
+      for (const raw of enabled) {
+        const name = sanitizeSkillName(String(raw || ""));
+        if (!name) {
+          reply.code(400);
+          return { error: `invalid skill name: ${raw}` };
+        }
+        if (!seen.has(name)) {
+          seen.add(name);
+          normalized.push(name);
+        }
+      }
 
-      // active agent 需要额外触发 skill 同步
+      const catalog = engine.getAllSkills();
+      const catalogMap = new Map();
+      for (const s of catalog) {
+        if (!s?.name) continue;
+        const baseDir = s.baseDir || (s.filePath ? path.dirname(s.filePath) : null);
+        if (!baseDir || !fs.existsSync(baseDir)) continue;
+        catalogMap.set(s.name, baseDir);
+      }
+
+      const agentSkillsDir = path.join(engine.agentsDir, id, "skills");
+      fs.mkdirSync(agentSkillsDir, { recursive: true });
+
+      // 先校验：所有要启用的技能都必须能在全局仓库找到
+      const copyPlan = [];
+      for (const name of normalized) {
+        const dstDir = path.join(agentSkillsDir, name);
+        const srcDir = catalogMap.get(name);
+        if (!srcDir) {
+          // 允许保留“仅本地 skill”（已存在于该 agent 私有目录）
+          if (fs.existsSync(path.join(dstDir, "SKILL.md"))) {
+            continue;
+          }
+          reply.code(400);
+          return { error: `skill not found in global repository: ${name}` };
+        }
+        copyPlan.push({ name, srcDir, dstDir });
+      }
+
+      // 复制新增技能到 agent 私有目录（已存在则保留，不覆盖）
+      for (const item of copyPlan) {
+        if (!fs.existsSync(item.dstDir)) {
+          copyDirSync(item.srcDir, item.dstDir);
+        }
+      }
+
+      // 删除已移除技能（agent 私有目录中不在 enabled 列表里的目录）
+      const keepSet = new Set(normalized);
+      for (const entry of fs.readdirSync(agentSkillsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith(".")) continue;
+        if (keepSet.has(entry.name)) continue;
+        rmDirSync(path.join(agentSkillsDir, entry.name));
+      }
+
+      // 重新加载：让运行时扫描各 agent 的私有 skills
+      await engine.reloadSkills();
+
+      // 兼容保留：同步写入 config.skills.enabled，避免旧逻辑读取不到
+      const partial = { skills: { enabled: normalized } };
       if (id === engine.currentAgentId) {
         await engine.updateConfig(partial);
+      } else {
+        const targetAgent = engine.getAgent?.(id);
+        if (targetAgent?.updateConfig) {
+          targetAgent.updateConfig(partial);
+          engine._skills?.syncAgentSkills?.(targetAgent);
+        } else {
+          const configPath = path.join(engine.agentsDir, id, "config.yaml");
+          saveConfig(configPath, partial);
+        }
       }
 
       return { ok: true };
@@ -156,8 +789,11 @@ export default async function skillsRoute(app, { engine }) {
         }
       }
 
+      const skillMdPath = path.join(skillDir, "SKILL.md");
+      // 兼容第三方无 frontmatter 的 SKILL.md，自动补齐最小 frontmatter
+      ensureSkillFrontmatter(skillMdPath, path.basename(skillDir));
       // 解析技能名称
-      const skillName = parseSkillName(path.join(skillDir, "SKILL.md"));
+      const skillName = parseSkillName(skillMdPath);
       if (!skillName) {
         // 清理临时目录
         if (skillDir !== srcPath) rmDirSync(path.dirname(skillDir) === userDir ? skillDir : path.join(userDir, ".tmp-install-" + Date.now()));
@@ -195,28 +831,19 @@ export default async function skillsRoute(app, { engine }) {
         }
       }
 
-      // 重新加载 skills 并自动启用
+      // 重新加载 skills
       await engine.reloadSkills();
 
-      // 将新技能加入当前 agent 的 enabled 列表
-      const agentId = engine.currentAgentId;
-      if (agentId) {
-        const configPath = path.join(engine.agentsDir, agentId, "config.yaml");
-        if (fs.existsSync(configPath)) {
-          const { loadConfig } = await import("../../lib/memory/config-loader.js");
-          const cfg = loadConfig(configPath);
-          const enabled = new Set(cfg?.skills?.enabled || []);
-          enabled.add(safeName);
-          saveConfig(configPath, { skills: { enabled: [...enabled] } });
-          // 同步 engine 内存状态
-          await engine.updateConfig({ skills: { enabled: [...enabled] } });
-        }
+      const skill = findLoadedSkill(engine, { name: safeName, baseDir: dstDir });
+      if (!skill) {
+        if (fs.existsSync(dstDir)) rmDirSync(dstDir);
+        await engine.reloadSkills();
+        reply.code(400);
+        return { error: "skill format is incompatible or missing valid YAML frontmatter" };
       }
-
-      const skill = engine.getAllSkills().find(s => s.name === safeName);
       return {
         ok: true,
-        skill: skill || { name: safeName, type: "user" },
+        skill,
       };
     } catch (err) {
       reply.code(500);
@@ -224,39 +851,146 @@ export default async function skillsRoute(app, { engine }) {
     }
   });
 
-  // ── 外部兼容技能路径 ──
-  app.get("/api/skills/external-paths", async (_req, reply) => {
+  // ── ClawHub 搜索技能 ──
+  app.post("/api/skills/clawhub/search", async (req, reply) => {
     try {
-      return engine.getExternalSkillPaths();
+      const { query, limit } = req.body || {};
+      const q = String(query || "").trim();
+      if (!q) {
+        reply.code(400);
+        return { error: "query is required" };
+      }
+
+      const qParts = q.split(/\s+/).filter(Boolean);
+      const finalLimit = Math.max(1, Math.min(Number(limit) || 12, 50));
+      const args = [
+        "--yes",
+        "clawhub@latest",
+        "search",
+        ...qParts,
+        "--limit",
+        String(finalLimit),
+      ];
+      const { stdout } = await runNpxClawhubWithRetry(args, {
+        timeoutMs: 60_000,
+        retries: 2,
+      });
+
+      const results = [];
+      const seen = new Set();
+      for (const rawLine of stdout.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("-")) continue;
+        const parsed = parseSkillLine(line);
+        if (!parsed) continue;
+        if (seen.has(parsed.slug)) continue;
+        seen.add(parsed.slug);
+        results.push(parsed);
+      }
+
+      const inspectCap = Math.min(results.length, 12);
+      const enrichedHead = await mapLimit(results.slice(0, inspectCap), 3, async (item) => {
+        const stars = await getClawhubStars(item.slug);
+        return { ...item, stars };
+      });
+      const enrichedTail = results.slice(inspectCap).map((item) => ({ ...item, stars: null }));
+      return { ok: true, results: [...enrichedHead, ...enrichedTail] };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
     }
   });
 
-  app.put("/api/skills/external-paths", async (req, reply) => {
+  // ── ClawHub 安装技能（异步任务 + 进度查询） ──
+  app.post("/api/skills/clawhub/install", async (req, reply) => {
     try {
-      const { paths } = req.body || {};
-      if (!Array.isArray(paths)) {
+      const { slug } = req.body || {};
+      const skillSlug = String(slug || "").trim();
+      if (!skillSlug) {
         reply.code(400);
-        return { error: "paths must be an array" };
+        return { error: "slug is required" };
       }
-      for (const p of paths) {
-        if (!path.isAbsolute(p)) {
-          reply.code(400);
-          return { error: t("error.skillPathMustBeAbsolute", { path: p }) };
-        }
-        if (path.resolve(p) === path.resolve(engine.skillsDir)) {
-          reply.code(400);
-          return { error: t("error.skillCannotAddSelfDir") };
-        }
+      if (/\s/.test(skillSlug) || skillSlug.includes("..")) {
+        reply.code(400);
+        return { error: "invalid slug" };
       }
-      await engine.setExternalSkillPaths(paths);
-      return { ok: true };
+
+      const active = getActiveClawhubInstallJob(skillSlug);
+      if (active) {
+        return {
+          ok: true,
+          jobId: active.id,
+          job: active,
+          reused: true,
+        };
+      }
+
+      const job = createClawhubInstallJob(skillSlug);
+      updateClawhubInstallJob(job.id, {
+        status: "running",
+        progress: 4,
+        message: "Task created",
+      });
+
+      // fire-and-forget 后台任务
+      void (async () => {
+        try {
+          const skill = await installClawhubSkill({
+            engine,
+            skillSlug,
+            onProgress: (progress, message) => {
+              const prev = clawhubInstallJobs.get(job.id);
+              const nextProgress = clampProgress(progress, prev?.progress || 0);
+              updateClawhubInstallJob(job.id, {
+                status: "running",
+                progress: Math.max(prev?.progress || 0, nextProgress),
+                message: message || prev?.message || "",
+                error: null,
+              });
+            },
+          });
+          finishClawhubInstallJob(job.id, {
+            status: "succeeded",
+            progress: 100,
+            message: "Install complete",
+            skill,
+            error: null,
+          });
+        } catch (err) {
+          const prev = clawhubInstallJobs.get(job.id);
+          finishClawhubInstallJob(job.id, {
+            status: "failed",
+            progress: clampProgress(prev?.progress, 0),
+            message: "Install failed",
+            error: String(err?.message || err || "unknown install error"),
+          });
+        }
+      })();
+
+      return {
+        ok: true,
+        jobId: job.id,
+        job: clawhubInstallJobs.get(job.id),
+      };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
     }
+  });
+
+  app.get("/api/skills/clawhub/install/:jobId", async (req, reply) => {
+    const { jobId } = req.params || {};
+    const key = String(jobId || "").trim();
+    if (!key) {
+      reply.code(400);
+      return { error: "jobId is required" };
+    }
+    const job = clawhubInstallJobs.get(key);
+    if (!job) {
+      reply.code(404);
+      return { error: "job not found" };
+    }
+    return { ok: true, job };
   });
 
   // ── 删除技能 ──
@@ -276,16 +1010,12 @@ export default async function skillsRoute(app, { engine }) {
         return { error: t("error.skillExternalCannotDelete") };
       }
 
-      // 优先查用户技能目录，再查 agent 自学目录
+      // 只允许删除 .hanako/skills 下的安装技能
       const userSkillPath = path.join(engine.skillsDir, name);
-      const agentDir = engine.agent?.agentDir;
-      const learnedSkillPath = agentDir ? path.join(agentDir, "learned-skills", name) : null;
 
       let skillPath;
       if (fs.existsSync(userSkillPath)) {
         skillPath = userSkillPath;
-      } else if (learnedSkillPath && fs.existsSync(learnedSkillPath)) {
-        skillPath = learnedSkillPath;
       } else {
         reply.code(404);
         return { error: t("error.skillNotExists") };
@@ -294,11 +1024,17 @@ export default async function skillsRoute(app, { engine }) {
       // 删除目录
       rmDirSync(skillPath);
 
-      // 从所有 agent 的 enabled 列表中移除
+      // 从所有 agent 的私有 skills 目录中移除，并兼容清理 enabled 列表
       const agentsDir = engine.agentsDir;
       for (const agentName of fs.readdirSync(agentsDir)) {
         const configPath = path.join(agentsDir, agentName, "config.yaml");
         if (!fs.existsSync(configPath)) continue;
+
+        const agentSkillPath = path.join(agentsDir, agentName, "skills", name);
+        if (fs.existsSync(agentSkillPath)) {
+          rmDirSync(agentSkillPath);
+        }
+
         try {
           const { loadConfig } = await import("../../lib/memory/config-loader.js");
           const cfg = loadConfig(configPath);

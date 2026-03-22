@@ -3,16 +3,11 @@ import type { DeskFile } from '../types';
 export interface DeskSkillInfo {
   name: string;
   enabled: boolean;
+  description?: string;
+  baseDir?: string;
+  filePath?: string;
+  readonly?: boolean;
   source?: string;
-  externalLabel?: string | null;
-}
-
-export interface CwdSkillInfo {
-  name: string;
-  description: string;
-  source: string;
-  filePath: string;
-  baseDir: string;
 }
 
 export interface DeskSlice {
@@ -21,11 +16,9 @@ export interface DeskSlice {
   deskCurrentPath: string;
   deskJianContent: string | null;
   deskSkills: DeskSkillInfo[];
-  cwdSkills: CwdSkillInfo[];
-  cwdSkillsOpen: boolean;
-  setCwdSkills: (skills: CwdSkillInfo[]) => void;
-  setCwdSkillsOpen: (open: boolean) => void;
-  toggleCwdSkillsOpen: () => void;
+  agentSkillsOpen: boolean;
+  setAgentSkillsOpen: (open: boolean) => void;
+  toggleAgentSkillsOpen: () => void;
   setDeskFiles: (files: DeskFile[]) => void;
   setDeskBasePath: (path: string) => void;
   setDeskCurrentPath: (path: string) => void;
@@ -42,11 +35,9 @@ export const createDeskSlice = (
   deskCurrentPath: '',
   deskJianContent: null,
   deskSkills: [],
-  cwdSkills: [],
-  cwdSkillsOpen: false,
-  setCwdSkills: (skills) => set({ cwdSkills: skills }),
-  setCwdSkillsOpen: (open) => set({ cwdSkillsOpen: open }),
-  toggleCwdSkillsOpen: () => set({ cwdSkillsOpen: !get?.().cwdSkillsOpen }),
+  agentSkillsOpen: false,
+  setAgentSkillsOpen: (open) => set({ agentSkillsOpen: open }),
+  toggleAgentSkillsOpen: () => set({ agentSkillsOpen: !get?.().agentSkillsOpen }),
   setDeskFiles: (files) => set({ deskFiles: files }),
   setDeskBasePath: (path) => set({ deskBasePath: path }),
   setDeskCurrentPath: (path) => set({ deskCurrentPath: path }),

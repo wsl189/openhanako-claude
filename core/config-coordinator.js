@@ -41,6 +41,7 @@ export class ConfigCoordinator {
    * @param {() => import('./preferences-manager.js').PreferencesManager} deps.getPrefs
    * @param {() => import('./skill-manager.js').SkillManager} deps.getSkills
    * @param {() => object|null} deps.getSession - 当前 session
+   * @param {() => Map|null} [deps.getSessions] - 已缓存 session Map
    * @param {() => object|null} deps.getHub
    * @param {(event, sp) => void} deps.emitEvent
    * @param {(text, level?) => void} deps.emitDevLog
@@ -331,6 +332,33 @@ export class ConfigCoordinator {
 
     if (partial.skills) {
       this._d.getSkills().syncAgentSkills(agent);
+      // AgentSession 内部会缓存 _baseSystemPrompt。仅更新 agent.systemPrompt 不足以让
+      // 会话立即生效，需要显式触发重建。
+      const refreshed = new Set();
+      const refreshPrompt = (session, reason = "skills update") => {
+        if (!session?.setActiveToolsByName || !session?.getActiveToolNames) return;
+        if (refreshed.has(session)) return;
+        try {
+          session.setActiveToolsByName(session.getActiveToolNames());
+          refreshed.add(session);
+        } catch (err) {
+          log.warn(`refresh session prompt after ${reason} failed: ${err.message}`);
+        }
+      };
+
+      // 先刷新当前焦点会话
+      const session = this._d.getSession?.();
+      refreshPrompt(session);
+
+      // 再刷新当前 agent 的其余缓存会话，避免跨会话发送时读到旧 prompt
+      const activeAgentId = path.basename(agent.agentDir || "");
+      const sessions = this._d.getSessions?.();
+      if (sessions?.values) {
+        for (const entry of sessions.values()) {
+          if (entry?.agentId !== activeAgentId) continue;
+          refreshPrompt(entry.session, "skills update (cached session)");
+        }
+      }
     }
 
     if (partial.desk) {

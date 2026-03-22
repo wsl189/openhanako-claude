@@ -252,9 +252,6 @@ export default async function agentsRoute(app, { engine }) {
       if (globalLocale) config.locale = globalLocale;
       const globalTz = engine.getTimezone();
       if (globalTz) config.timezone = globalTz;
-      // learn_skills → 全局 preferences（覆盖 agent config 中的值）
-      if (!config.capabilities) config.capabilities = {};
-      config.capabilities.learn_skills = engine.getLearnSkills();
       config.thinking_level = engine.getThinkingLevel();
 
       // 供应商列表
@@ -318,13 +315,6 @@ export default async function agentsRoute(app, { engine }) {
       if (partial.timezone !== undefined) {
         engine.setTimezone(partial.timezone);
         delete partial.timezone;
-      }
-
-      // capabilities.learn_skills → 全局 preferences
-      if (partial.capabilities?.learn_skills) {
-        engine.setLearnSkills(partial.capabilities.learn_skills);
-        delete partial.capabilities.learn_skills;
-        if (Object.keys(partial.capabilities).length === 0) delete partial.capabilities;
       }
 
       // desk.home_folder

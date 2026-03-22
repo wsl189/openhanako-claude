@@ -25,7 +25,6 @@ import { createDmTool } from "../lib/tools/dm-tool.js";
 import { createBrowserTool } from "../lib/tools/browser-tool.js";
 import { createPinnedMemoryTools } from "../lib/tools/pinned-memory.js";
 import { createExperienceTools } from "../lib/tools/experience.js";
-import { createInstallSkillTool } from "../lib/tools/install-skill.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
 import { createUpdateSettingsTool } from "../lib/tools/update-settings-tool.js";
 import { createDelegateTool } from "../lib/tools/delegate-tool.js";
@@ -296,24 +295,7 @@ export class Agent {
       });
     }
 
-    // 10. install_skill 工具（需要 agentDir + config + engine.resolveUtilityConfig）
-    this._installSkillTool = createInstallSkillTool({
-      agentDir: this.agentDir,
-      getConfig: () => {
-        const cfg = { ...this._config };
-        // learn_skills 从全局 preferences 注入（覆盖 agent config 中的值）
-        const globalLearn = this._engine?.getLearnSkills?.() || {};
-        if (!cfg.capabilities) cfg.capabilities = {};
-        cfg.capabilities = { ...cfg.capabilities, learn_skills: globalLearn };
-        return cfg;
-      },
-      resolveUtilityConfig: () => this._engine?.resolveUtilityConfig?.(),
-      onInstalled: async (skillName) => {
-        await this._onInstallCallback?.(skillName);
-      },
-    });
-
-    // 11. delegate 工具（sub-agent 委派）
+    // 10. delegate 工具（sub-agent 委派）
     this._delegateTool = createDelegateTool({
       executeIsolated: (prompt, opts) => {
         if (!this._engine) throw new Error("delegate 调用失败：engine 未初始化");
@@ -398,7 +380,6 @@ export class Agent {
       this._askAgentTool,
       this._dmTool,
       this._browserTool,
-      this._installSkillTool,
       this._notifyTool,
       this._updateSettingsTool,
       this._delegateTool,
@@ -616,7 +597,7 @@ export class Agent {
       }
     }
 
-    // Skills 注入（用 SDK 原版 formatSkillsForPrompt）
+    // Skills 注入：仅注入当前 Agent 已启用的技能（available_skills）
     if (this._enabledSkills?.length > 0) {
       parts.push(formatSkillsForPrompt(this._enabledSkills));
     }
@@ -646,42 +627,6 @@ export class Agent {
         "When the user mentions changing settings without specifying a particular application, assume they mean this application.\n" +
         "When the user asks to change preferences (including but not limited to: appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory), use the update_settings tool. Do not search the web or edit config files. When intent is clear, apply directly; when unsure, search first."
     );
-
-    // 主动技能获取引导（仅在 allow_github_fetch 开启时注入）
-    // learn_skills 从全局 preferences 读取
-    const learnCfg = this._engine?.getLearnSkills?.() || this._config?.capabilities?.learn_skills || {};
-    if (learnCfg.enabled && learnCfg.allow_github_fetch) {
-      parts.push(isZh
-        ? "\n## 主动技能获取\n\n" +
-          "遇到专业领域任务且你没有对应技能时，主动搜索并安装。\n\n" +
-          "### 搜索\n\n" +
-          "1. `site:clawhub.ai {关键词}` 或 `site:github.com/openclaw/skills {关键词}`\n" +
-          "2. GitHub 上其他含 SKILL.md 的仓库\n" +
-          "3. install_skill 安装：用 github_url 参数\n\n" +
-          "### 判断\n\n" +
-          "- 已有相关技能则直接使用，不重复搜索\n" +
-          "- 仅专业领域任务搜索，日常对话不搜\n" +
-          "- 安装应能显著提升输出质量\n\n" +
-          "### 行为\n\n" +
-          "- 找到后简要告知用户，直接安装并立即应用\n" +
-          "- 安装失败则尝试自己完成\n" +
-          "- 搜索无果正常完成，不反复尝试"
-        : "\n## Proactive Skill Acquisition\n\n" +
-          "When you encounter specialized tasks and lack a matching skill, proactively search and install one.\n\n" +
-          "### Search\n\n" +
-          "1. `site:clawhub.ai {keywords}` or `site:github.com/openclaw/skills {keywords}`\n" +
-          "2. Other GitHub repos containing SKILL.md\n" +
-          "3. install_skill: use github_url parameter\n\n" +
-          "### When\n\n" +
-          "- If you already have a relevant skill, use it directly — don't search again\n" +
-          "- Only search for specialized domain tasks, not daily conversations\n" +
-          "- Install should significantly improve output quality\n\n" +
-          "### Behavior\n\n" +
-          "- Briefly inform the user, install, and apply immediately\n" +
-          "- If installation fails, attempt the task yourself\n" +
-          "- If nothing found, complete normally — don't retry"
-      );
-    }
 
     // 书桌 = 当前工作目录（注入实际路径）
     const cwdPath = this._engine?.cwd || "";

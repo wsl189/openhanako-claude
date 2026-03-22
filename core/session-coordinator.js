@@ -114,6 +114,14 @@ export class SessionCoordinator {
     this._sessionStarted = false;
     // 会话切到新 cwd 后，立即重建 system prompt，避免 cwd 文案滞后
     creatingAgent.refreshSystemPrompt?.();
+    // AgentSession 维护独立的 _baseSystemPrompt 缓存，需要同步刷新。
+    if (session?.setActiveToolsByName && session?.getActiveToolNames) {
+      try {
+        session.setActiveToolsByName(session.getActiveToolNames());
+      } catch (err) {
+        log.warn(`createSession prompt rebuild failed: ${err.message}`);
+      }
+    }
 
     // 事件转发
     const sessionPath = session.sessionManager?.getSessionFile?.();
@@ -153,6 +161,7 @@ export class SessionCoordinator {
     if (targetAgentId && targetAgentId !== this._d.getActiveAgentId()) {
       // Phase 1: 跨 agent 切换只切指针，不清旧 session
       await this._d.switchAgentOnly(targetAgentId);
+      this._d.getSkills()?.syncAgentSkills?.(this._d.getAgent());
     }
 
     // 从 session-meta.json 恢复记忆开关
@@ -185,6 +194,13 @@ export class SessionCoordinator {
       targetAgent.setMemoryEnabled(memoryEnabled);
       // 命中缓存会话时也要刷新，确保 prompt 中 cwd 与当前会话一致
       targetAgent.refreshSystemPrompt?.();
+      if (existing.session?.setActiveToolsByName && existing.session?.getActiveToolNames) {
+        try {
+          existing.session.setActiveToolsByName(existing.session.getActiveToolNames());
+        } catch (err) {
+          log.warn(`switchSession prompt rebuild failed: ${err.message}`);
+        }
+      }
       return existing.session;
     }
 
