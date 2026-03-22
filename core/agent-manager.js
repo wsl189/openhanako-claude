@@ -441,13 +441,6 @@ export class AgentManager {
   }
 
   async _generateAgentId(name) {
-    let utilConfig;
-    try {
-      utilConfig = this._d.resolveUtilityConfig();
-    } catch {
-      // utility 模型未配置（新用户常见），直接走兜底 ID
-      return `agent-${Date.now().toString(36)}`;
-    }
-    return _generateAgentId(utilConfig, name, this._d.agentsDir);
+    return _generateAgentId(null, name, this._d.agentsDir);
   }
 }

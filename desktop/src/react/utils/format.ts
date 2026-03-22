@@ -89,6 +89,9 @@ export function cronToHuman(schedule: number | string): string {
   const parts = s.split(' ');
   if (parts.length !== 5) return s;
   const [min, hour, , , dow] = parts;
+  if (min === '*' && hour === '*' && dow === '*') {
+    return t('cron.everyMinutes', { n: 1 });
+  }
   if (min.startsWith('*/') && hour === '*' && dow === '*') {
     return t('cron.everyMinutes', { n: min.slice(2) });
   }

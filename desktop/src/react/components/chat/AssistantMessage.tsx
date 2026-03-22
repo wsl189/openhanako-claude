@@ -15,6 +15,7 @@ import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
 import { openFilePreview, openSkillPreview } from '../../utils/file-preview';
 import { openPreview } from '../../stores/artifact-actions';
+import { normalizeAgentDisplayName } from '../../utils/agent-helpers';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -28,10 +29,25 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const agentYuan = useStore(s => s.agentYuan) || 'hanako';
   const agentAvatarUrl = useStore(s => s.agentAvatarUrl);
   const sessionAgent = useStore(s => s.sessionAgent);
+  const agents = useStore(s => s.agents);
   const [avatarFailed, setAvatarFailed] = useState(false);
 
   // 非主 agent session 用 sessionAgent 信息
-  const displayName = sessionAgent?.name || agentName;
+  const rawDisplayName = sessionAgent?.name || agentName;
+  const knownAgentNames = useMemo(() => {
+    const names: string[] = [];
+    for (const a of agents || []) {
+      if (a?.id) names.push(String(a.id));
+      if (a?.name) names.push(String(a.name));
+    }
+    if (agentName) names.push(agentName);
+    if (sessionAgent?.name) names.push(sessionAgent.name);
+    return names;
+  }, [agents, agentName, sessionAgent?.name]);
+  const displayName = useMemo(
+    () => normalizeAgentDisplayName(rawDisplayName, knownAgentNames),
+    [rawDisplayName, knownAgentNames],
+  );
   const displayYuan = sessionAgent?.yuan || agentYuan;
   const fallbackAvatar = useMemo(() => {
     const types = (window as any).t?.('yuan.types') || {};

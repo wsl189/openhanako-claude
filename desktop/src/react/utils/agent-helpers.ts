@@ -33,3 +33,19 @@ export function yuanPlaceholder(yuan?: string): string {
   const yuanPh = t(`yuan.placeholder.${y}`);
   return (yuanPh && !yuanPh.startsWith('yuan.')) ? yuanPh : t('input.placeholder');
 }
+
+export function normalizeAgentDisplayName(name?: string | null, candidates: string[] = []): string {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+
+  const squashed = raw.replace(/\s+/g, '');
+  if (squashed === raw) return raw;
+
+  const lower = squashed.toLowerCase();
+  const normalizedCandidates = candidates
+    .map(v => String(v || '').trim())
+    .filter(Boolean);
+
+  const hit = normalizedCandidates.find(v => v.toLowerCase() === lower);
+  return hit || raw;
+}

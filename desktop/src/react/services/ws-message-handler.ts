@@ -131,25 +131,6 @@ export function handleServerMessage(msg: any): void {
           browserToolSessionPath: null,
         });
       }
-
-      // 需求：提示关闭后，后台浏览器也自动关闭（当前 session）。
-      if (sameCurrentSession) {
-        const latest = useStore.getState();
-        const shouldAutoCloseBrowser = !!latest.browserRunning && latest.browserSessionPath === msg.sessionPath;
-        if (shouldAutoCloseBrowser) {
-          useStore.setState({
-            browserRunning: false,
-            browserSessionPath: null,
-            browserUrl: null,
-            browserThumbnail: null,
-          });
-          hanaFetch('/api/browser/close-session', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionPath: msg.sessionPath }),
-          }).catch(() => {});
-        }
-      }
     }
 
     streamBufferManager.handle(msg);
@@ -347,6 +328,29 @@ export function handleServerMessage(msg: any): void {
       // 渲染层：只有焦点 session 才影响 UI
       if (!sp || sp === state.currentSessionPath) {
         applyStreamingStatus(msg.isStreaming);
+      }
+
+      // 浏览器自动收尾：
+      // 仅在当前会话本轮真正结束（status=false）后关闭，避免 tool-use 中间轮次误关。
+      if (!msg.isStreaming && sp && sp === state.currentSessionPath) {
+        const latest = useStore.getState();
+        const shouldAutoCloseBrowser =
+          !!latest.browserRunning &&
+          latest.browserSessionPath === sp &&
+          !latest.browserToolActive;
+        if (shouldAutoCloseBrowser) {
+          useStore.setState({
+            browserRunning: false,
+            browserSessionPath: null,
+            browserUrl: null,
+            browserThumbnail: null,
+          });
+          hanaFetch('/api/browser/close-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionPath: sp }),
+          }).catch(() => {});
+        }
       }
       break;
     }

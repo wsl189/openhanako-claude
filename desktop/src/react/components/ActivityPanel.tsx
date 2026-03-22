@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { formatSessionDate, injectCopyButtons, parseMoodFromContent } from '../utils/format';
-import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import { normalizeAgentDisplayName, yuanFallbackAvatar } from '../utils/agent-helpers';
 import { getMd } from '../utils/markdown';
 
 // ── 稳定头像时间戳（避免每次渲染生成新 URL） ──
@@ -175,7 +175,7 @@ function ActivityCard({
   onOpen,
 }: {
   activity: ActivityItem;
-  agents: { id: string; yuan: string }[];
+  agents: { id: string; name?: string; yuan: string }[];
   currentAgentId: string | null;
   agentName: string;
   onOpen: (id: string) => void;
@@ -188,6 +188,10 @@ function ActivityCard({
   const typeText = a.type === 'heartbeat' ? t('activity.heartbeat')
     : a.type === 'delegate' ? t('activity.delegate')
     : (a.label || t('activity.cron'));
+  const displayAgentName = normalizeAgentDisplayName(
+    a.agentName || agentName,
+    agents.flatMap(x => [x.id, x.name || '']),
+  );
 
   let durationText = '';
   if (a.finishedAt && a.startedAt) {
@@ -211,7 +215,7 @@ function ActivityCard({
           onError={e => { (e.target as HTMLImageElement).onerror = null; (e.target as HTMLImageElement).src = yuanFallbackAvatar(ag?.yuan); }}
           draggable={false}
         />
-        <span className="act-card-agent-name">{a.agentName || agentName}</span>
+        <span className="act-card-agent-name">{displayAgentName}</span>
         <span className="act-card-badge">{typeText}</span>
         <span className="act-card-time">
           {a.startedAt ? formatSessionDate(new Date(a.startedAt).toISOString()) : ''}

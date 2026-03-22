@@ -308,9 +308,54 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
  * @param {string} agentsDir - agents 根目录（检查冲突）
  */
 export async function generateAgentId(utilConfig, name, agentsDir) {
+  const raw = String(name || "").trim();
+  const localMap = {
+    "花子": "hanako",
+    "ミク": "miku",
+    "明": "ming",
+  };
+
+  const normalizeBase = (input) =>
+    String(input || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/['"`’]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/-+/g, "-")
+      .slice(0, 12)
+      .replace(/-+$/g, "");
+
+  const pickUniqueId = (base) => {
+    const cleanBase = normalizeBase(base);
+    if (cleanBase.length >= 2 && !fs.existsSync(path.join(agentsDir, cleanBase))) {
+      return cleanBase;
+    }
+    for (let i = 2; i < 1000; i++) {
+      const suffix = `-${i}`;
+      const maxBase = 12 - suffix.length;
+      if (maxBase < 2) break;
+      const head = cleanBase.slice(0, maxBase).replace(/-+$/g, "");
+      if (head.length < 2) continue;
+      const cand = `${head}${suffix}`;
+      if (!fs.existsSync(path.join(agentsDir, cand))) return cand;
+    }
+    return null;
+  };
+
+  // 先走本地快速路径（无网络调用）
+  const mapped = localMap[raw];
+  const localBase = mapped || normalizeBase(raw);
+  const localId = localBase ? pickUniqueId(localBase) : null;
+  if (localId) return localId;
+
   try {
     const isZh = getLocale().startsWith("zh");
     const { utility: model, api_key, base_url, api } = utilConfig;
+    if (!model || !api_key || !base_url || !api) {
+      return `agent-${Date.now().toString(36)}`;
+    }
     const text = await callLlm({
       model, api, api_key, base_url,
       messages: [
@@ -348,10 +393,8 @@ Examples:
     });
 
     if (text) {
-      const id = text.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 12);
-      if (id.length >= 2 && !fs.existsSync(path.join(agentsDir, id))) {
-        return id;
-      }
+      const llmId = pickUniqueId(text);
+      if (llmId) return llmId;
     }
   } catch (err) {
     console.error("[llm-utils] generateAgentId LLM failed:", err.message);

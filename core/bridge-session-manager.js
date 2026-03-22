@@ -154,11 +154,13 @@ export class BridgeSessionManager {
       }
 
       let sessionOpts;
+      // Bridge 媒体协议：让模型通过 MEDIA:<url|file://|绝对路径> 返回媒体项。
+      const mediaInstruction = "当你需要发送媒体文件（图片、视频、音频、文件）时，在回复中单独一行写 MEDIA:<url>，例如：\nMEDIA:https://example.com/photo.jpg\n不要把 MEDIA: 写在代码块里。一行一个。";
       if (opts.guest) {
         // guest 模式：yuan + public-ishiki + contextTag，主模型，无工具
         const yuanBase = agent.yuanPrompt;
         const pubIshiki = agent.publicIshiki;
-        const parts = [yuanBase, pubIshiki, opts.contextTag].filter(Boolean);
+        const parts = [yuanBase, pubIshiki, opts.contextTag, mediaInstruction].filter(Boolean);
         const guestPrompt = parts.join("\n\n");
         const tempResourceLoader = Object.create(this._deps.getResourceLoader());
         tempResourceLoader.getSystemPrompt = () => guestPrompt;
@@ -205,10 +207,18 @@ export class BridgeSessionManager {
           throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: ownerModelId }));
         }
 
+        const baseRL = this._deps.getResourceLoader();
+        const ownerRL = Object.create(baseRL);
+        const baseGetSystemPrompt = baseRL.getSystemPrompt.bind(baseRL);
+        ownerRL.getSystemPrompt = (...args) => {
+          const sp = baseGetSystemPrompt(...args);
+          return `${sp}\n\n${mediaInstruction}`;
+        };
+
         sessionOpts = {
           model: ownerModel,
           thinkingLevel: mm.resolveThinkingLevel(prefs?.thinking_level || "auto"),
-          resourceLoader: this._deps.getResourceLoader(),
+          resourceLoader: ownerRL,
           tools: bridgeTools,
           customTools: bridgeCustomTools,
           settingsManager: this._createSettings(ownerModel),
@@ -239,7 +249,8 @@ export class BridgeSessionManager {
       });
 
       try {
-        await session.prompt(prompt);
+        const promptOpts = opts.images?.length ? { images: opts.images } : undefined;
+        await session.prompt(prompt, promptOpts);
       } finally {
         unsub?.();
         this._activeSessions.delete(sessionKey);

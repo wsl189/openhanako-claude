@@ -57,6 +57,46 @@ describe("model sync related routes", () => {
     await app.close();
   });
 
+  it("provider + models updates apply config first and skip eager sync", async () => {
+    const { default: configRoute } = await import("../server/routes/config.js");
+    const app = Fastify();
+    const engine = {
+      config: {},
+      setHomeFolder: vi.fn(),
+      updateConfig: vi.fn().mockResolvedValue(undefined),
+      syncModelsAndRefresh: vi.fn().mockResolvedValue(true),
+    };
+
+    await configRoute(app, { engine });
+
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/config",
+      payload: {
+        providers: {
+          dashscope: {
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api: "openai-completions",
+            api_key: "sk-test",
+            models: ["qwen-plus"],
+          },
+        },
+        models: {
+          chat: "qwen-plus",
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(saveGlobalProviders).toHaveBeenCalledTimes(1);
+    expect(clearConfigCache).toHaveBeenCalledTimes(1);
+    expect(engine.updateConfig).toHaveBeenCalledTimes(1);
+    expect(engine.updateConfig).toHaveBeenCalledWith({ models: { chat: "qwen-plus" } });
+    expect(engine.syncModelsAndRefresh).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
   it("shared model preference updates trigger model registry sync", async () => {
     const { default: preferencesRoute } = await import("../server/routes/preferences.js");
     const app = Fastify();

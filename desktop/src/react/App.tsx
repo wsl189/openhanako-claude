@@ -296,7 +296,6 @@ function App() {
   const sidebarOpen = useStore(s => s.sidebarOpen);
   const jianOpen = useStore(s => s.jianOpen);
   const currentTab = useStore(s => s.currentTab);
-  const browserRunning = useStore(s => s.browserRunning);
   const { floatCard, show: showFloat, scheduleHide: scheduleFloatHide, cancelHide: cancelFloatHide, hide: hideFloat } = useFloatCard();
   const automationCountReqRef = useRef(0);
 
@@ -412,14 +411,6 @@ function App() {
                 </svg>
                 <span>{t('automation.title')}</span>
                 <AutomationBadge />
-              </button>
-              <button className={`sidebar-activity-bar browser-bg-bar${browserRunning ? '' : ' hidden'}`} id="browserBgBar" title={t('browser.backgroundHint')} onClick={() => window.platform?.openBrowserViewer?.()}>
-                <svg className="browser-bg-globe" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="2" y1="12" x2="22" y2="12"></line>
-                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-                </svg>
-                <span>{t('browser.background')}</span>
               </button>
               <div className="session-list" id="sessionList">
                 <SessionList />

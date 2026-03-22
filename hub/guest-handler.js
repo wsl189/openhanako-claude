@@ -45,6 +45,7 @@ export class GuestHandler {
       agentId: opts.agentId,
       contextTag,
       onDelta: opts.onDelta,
+      images: opts.images,
     });
   }
 }

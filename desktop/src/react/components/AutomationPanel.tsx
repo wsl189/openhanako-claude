@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { cronToHuman } from '../utils/format';
-import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import { normalizeAgentDisplayName, yuanFallbackAvatar } from '../utils/agent-helpers';
 
 interface CronJob {
   id: string;
@@ -172,7 +172,11 @@ function AutomationItem({
   }, [editValue, labelText, job.id, onUpdate]);
 
   const ownerAgent = agents.find(a => a.id === job.agentId);
-  const ownerName = job.agentName || ownerAgent?.name || job.agentId || '';
+  const rawOwnerName = job.agentName || ownerAgent?.name || job.agentId || '';
+  const ownerName = normalizeAgentDisplayName(
+    rawOwnerName,
+    agents.flatMap(a => [a.id, a.name]),
+  );
   const ownerYuan = ownerAgent?.yuan || 'hanako';
   const avatarSrc = job.agentId ? hanaUrl(`/api/agents/${job.agentId}/avatar`) : yuanFallbackAvatar(ownerYuan);
 

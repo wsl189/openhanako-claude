@@ -1321,6 +1321,12 @@ ipcMain.handle("browser-emergency-stop", () => {
     _browserWebView = null;
     _currentBrowserSession = null;
   }
+  // 同步给 server：主进程已强制停止浏览器，避免 server 侧 running 状态失真
+  if (serverProcess && !serverProcess.killed) {
+    try {
+      serverProcess.send({ type: "browser-state-sync", running: false, url: null, reason: "emergency-stop" });
+    } catch {}
+  }
   if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
     browserViewerWindow.webContents.send("browser-update", { running: false });
   }

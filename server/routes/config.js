@@ -182,21 +182,29 @@ export default async function configRoute(app, { engine }) {
         }
       }
 
-      // providers 变更后确保运行时刷新（先同步模型目录，再处理后续配置）
-      if (providersChanged) {
+      // providers 变更后确保运行时刷新
+      // 当同一请求同时提交 models 时，先应用完整 partial，避免先刷新再被模型配置覆盖。
+      const needsModelSync = providersChanged && !partial.models;
+      if (providersChanged && Object.keys(partial).length === 0) {
         clearConfigCache();
         await engine.updateConfig({});
-        try { await engine.syncModelsAndRefresh(); } catch (e) {
-          debugLog()?.warn("api", `syncModelsAndRefresh after provider change: ${e.message}`);
+        if (needsModelSync) {
+          try { await engine.syncModelsAndRefresh(); } catch (e) {
+            debugLog()?.warn("api", `syncModelsAndRefresh after provider change: ${e.message}`);
+          }
         }
-      }
-
-      if (Object.keys(partial).length === 0) {
         return { ok: true };
       }
 
+      if (Object.keys(partial).length === 0) return { ok: true };
       debugLog()?.log("api", `PUT /api/config keys=[${Object.keys(partial).join(",")}]`);
+      if (providersChanged) clearConfigCache();
       await engine.updateConfig(partial);
+      if (needsModelSync) {
+        try { await engine.syncModelsAndRefresh(); } catch (e) {
+          debugLog()?.warn("api", `syncModelsAndRefresh after config update: ${e.message}`);
+        }
+      }
       return { ok: true };
     } catch (err) {
       debugLog()?.error("api", `PUT /api/config failed: ${err.message}`);

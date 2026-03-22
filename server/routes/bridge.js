@@ -221,11 +221,19 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
         const msg = line.message;
         if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
 
-        const content = Array.isArray(msg.content)
-          ? msg.content.filter(b => b.type === "text" && b.text).map(b => b.text).join("")
-          : (typeof msg.content === "string" ? msg.content : "");
+        let textContent = "";
+        let imageCount = 0;
+        if (Array.isArray(msg.content)) {
+          for (const b of msg.content) {
+            if (b.type === "text" && b.text) textContent += b.text;
+            if (b.type === "image") imageCount++;
+          }
+        } else if (typeof msg.content === "string") {
+          textContent = msg.content;
+        }
 
-        if (!content) continue;
+        if (!textContent && imageCount === 0) continue;
+        const content = textContent || `[图片 x${imageCount}]`;
         messages.push({ role: msg.role, content });
       }
 
@@ -249,6 +257,58 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
     engine.saveBridgeIndex(index);
 
     return { ok: true };
+  });
+
+  /** 发送媒体到 bridge 平台（桌面端推送文件） */
+  app.post("/api/bridge/send-media", async (req, reply) => {
+    const { platform, chatId, filePath } = req.body || {};
+    if (!platform || !chatId || !filePath) {
+      reply.code(400);
+      return { error: "platform, chatId, filePath required" };
+    }
+
+    const hanaHome = path.resolve(engine.hanakoHome);
+    const deskHome = engine.agent?.deskManager?.homePath;
+    const rawRoots = [hanaHome, deskHome ? path.resolve(deskHome) : null].filter(Boolean);
+    const allowedRoots = rawRoots.map((root) => {
+      try { return fs.realpathSync(root); }
+      catch { return root; }
+    });
+
+    const resolved = path.resolve(filePath);
+    if (!fs.existsSync(resolved)) {
+      reply.code(404);
+      return { error: "file not found" };
+    }
+
+    let realPath;
+    try { realPath = fs.realpathSync(resolved); }
+    catch { return reply.code(404).send({ error: "file not found" }); }
+
+    const isSafe = allowedRoots.some(root =>
+      realPath === root || realPath.startsWith(root + path.sep)
+    );
+    if (!isSafe) {
+      reply.code(403);
+      return { error: "path outside allowed roots" };
+    }
+
+    const MAX_MEDIA_SIZE = 50 * 1024 * 1024;
+    try {
+      const stat = fs.statSync(realPath);
+      if (stat.size > MAX_MEDIA_SIZE) {
+        reply.code(413);
+        return { error: `file too large: ${(stat.size / 1024 / 1024).toFixed(1)}MB (max 50MB)` };
+      }
+    } catch { return reply.code(404).send({ error: "file not found" }); }
+
+    try {
+      await bridgeManager.sendMediaFile(platform, chatId, realPath);
+      return { ok: true };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
   });
 
   /** 测试凭证（不启动轮询） */
