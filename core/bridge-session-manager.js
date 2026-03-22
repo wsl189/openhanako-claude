@@ -101,6 +101,22 @@ export class BridgeSessionManager {
   }
 
   /**
+   * 解析本次消息应使用的 agent：
+   * - 优先使用 opts.agentId
+   * - getAgentById 不可用/异常时回退当前 agent，避免外部会话直接失败
+   */
+  _resolveAgent(agentId) {
+    const fallback = this._deps.getAgent();
+    if (!agentId || !this._deps.getAgentById) return fallback;
+    try {
+      return this._deps.getAgentById(agentId) || fallback;
+    } catch (err) {
+      debugLog()?.error("bridge-session", `getAgentById failed (${agentId}): ${err.message}`);
+      return fallback;
+    }
+  }
+
+  /**
    * 执行外部平台消息：找到或创建持久 session，prompt 并捕获回复文本
    * @param {string} prompt - 格式化后的用户消息
    * @param {string} sessionKey - 会话标识（如 tg_dm_12345）
@@ -110,7 +126,7 @@ export class BridgeSessionManager {
    */
   async executeExternalMessage(prompt, sessionKey, meta, opts = {}) {
     // 优先用调用方传入的 agentId，避免 debounce 窗口内切 agent 导致路由到错误 agent
-    const agent = (opts.agentId && this._deps.getAgentById?.(opts.agentId)) || this._deps.getAgent();
+    const agent = this._resolveAgent(opts.agentId);
     const mm = this._deps.getModelManager();
     const bridgeDir = path.join(agent.sessionDir, "bridge");
     const subDir = opts.guest ? "guests" : "owner";

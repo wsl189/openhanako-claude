@@ -46,6 +46,7 @@ export function AgentTab() {
   // 记忆系统需要 utility 模型才能工作
   const hasUtilityModel = !!(globalModelsConfig?.models?.utility && globalModelsConfig?.models?.utility_large);
   const settingsAgentId = store.getSettingsAgentId();
+  const selectedAgentId = store.settingsAgentId;
 
   const [agentName, setAgentName] = useState('');
   const [identity, setIdentity] = useState('');
@@ -157,7 +158,7 @@ export function AgentTab() {
         <h2 className="settings-section-title">{t('settings.agent.title')}</h2>
         <AgentCardStack
           agents={agents}
-          selectedId={settingsAgentId}
+          selectedId={selectedAgentId}
           currentAgentId={currentAgentId}
           onSelect={(id) => browseAgent(id)}
           onAvatarClick={() => {
@@ -776,7 +777,6 @@ function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, onAvatar
                   </div>
                 )}
               </div>
-              {agent.id === currentAgentId && <div className="agent-card-badge" />}
               <span className="agent-card-name">{agent.name}</span>
             </div>
           );

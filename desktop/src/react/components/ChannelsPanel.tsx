@@ -133,8 +133,16 @@ export function ChannelsPanel() {
   // 初始化：如果 channelsEnabled 但还没加载过，在启动时加载
   useEffect(() => {
     if (channelsEnabled && serverPort) {
-      loadChannels();
-    } else if (!channelsEnabled) {
+      // Sync enabled state to backend on app startup/reconnect.
+      // Otherwise UI may stay "enabled" (localStorage) while backend ticker is still off.
+      hanaFetch('/api/channels/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+      })
+        .then(() => loadChannels())
+        .catch(() => {});
+    } else if (!channelsEnabled && serverPort) {
       // Sync disabled state to backend
       hanaFetch('/api/channels/toggle', {
         method: 'POST',
