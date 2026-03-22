@@ -208,10 +208,7 @@ function runNpxClawhub(args, opts = {}) {
   } = opts;
 
   const bin = process.platform === "win32" ? "npx.cmd" : "npx";
-  const registry =
-    process.env.npm_config_registry
-    || process.env.NPM_CONFIG_REGISTRY
-    || "https://registry.npmmirror.com";
+  const registry = "https://registry.npmjs.org";
 
   const env = {
     ...process.env,

@@ -29,8 +29,8 @@ export function SkillsTab() {
   const [remoteSearched, setRemoteSearched] = useState(false);
   const [remoteDismissed, setRemoteDismissed] = useState(false);
   const [installingSlug, setInstallingSlug] = useState<string | null>(null);
+  const [remoteInstallState, setRemoteInstallState] = useState<Record<string, 'installing' | 'done' | 'failed'>>({});
   const [installProgress, setInstallProgress] = useState<Record<string, number>>({});
-  const [installMessage, setInstallMessage] = useState<Record<string, string>>({});
   const marketRef = useRef<HTMLDivElement | null>(null);
 
   const loadSkills = useCallback(async () => {
@@ -83,27 +83,12 @@ export function SkillsTab() {
 
   const finishInstallProgress = useCallback((slug: string, success: boolean) => {
     if (success) {
+      setRemoteInstallState(prev => ({ ...prev, [slug]: 'done' }));
       setInstallProgress(prev => ({ ...prev, [slug]: 100 }));
-      window.setTimeout(() => {
-        setInstallProgress(prev => {
-          const next = { ...prev };
-          delete next[slug];
-          return next;
-        });
-        setInstallMessage(prev => {
-          const next = { ...prev };
-          delete next[slug];
-          return next;
-        });
-      }, 280);
       return;
     }
+    setRemoteInstallState(prev => ({ ...prev, [slug]: 'failed' }));
     setInstallProgress(prev => {
-      const next = { ...prev };
-      delete next[slug];
-      return next;
-    });
-    setInstallMessage(prev => {
       const next = { ...prev };
       delete next[slug];
       return next;
@@ -220,8 +205,8 @@ export function SkillsTab() {
   const installRemoteSkill = async (slug: string) => {
     if (installingSlug) return;
     setInstallingSlug(slug);
-    setInstallProgress(prev => ({ ...prev, [slug]: 4 }));
-    setInstallMessage(prev => ({ ...prev, [slug]: 'queued' }));
+    setRemoteInstallState(prev => ({ ...prev, [slug]: 'installing' }));
+    setInstallProgress(prev => ({ ...prev, [slug]: 6 }));
     try {
       const startRes = await hanaFetch('/api/skills/clawhub/install', {
         method: 'POST',
@@ -246,11 +231,14 @@ export function SkillsTab() {
           if (pollData.error) throw new Error(pollData.error);
           pollErrors = 0;
           const job = (pollData.job || pollData) as ClawhubInstallJob;
-          const progress = Math.max(0, Math.min(100, Number(job?.progress) || 0));
-          setInstallProgress(prev => ({ ...prev, [slug]: progress }));
-          if (job?.message) {
-            setInstallMessage(prev => ({ ...prev, [slug]: job.message! }));
-          }
+          const raw = Number(job?.progress);
+          setInstallProgress(prev => {
+            const current = prev[slug] ?? 6;
+            const nextValue = Number.isFinite(raw)
+              ? Math.max(6, Math.min(100, raw))
+              : Math.min(94, current + 4);
+            return { ...prev, [slug]: nextValue };
+          });
           if (job.status === 'succeeded' || job.status === 'failed') {
             finalJob = job;
             break;
@@ -279,7 +267,6 @@ export function SkillsTab() {
       finishInstallProgress(slug, true);
     } catch (err: any) {
       finishInstallProgress(slug, false);
-      showToast(t('settings.skills.installError') + ': ' + err.message, 'error');
     } finally {
       setInstallingSlug(null);
     }
@@ -358,33 +345,47 @@ export function SkillsTab() {
 
           {remoteResults.length > 0 ? (
             <div className="skill-market-results">
-              {remoteResults.map(item => (
+              {remoteResults.map(item => {
+                const iconState = remoteInstallState[item.slug];
+                const isInstalling = installingSlug === item.slug || iconState === 'installing';
+                const isDone = iconState === 'done';
+                const isFailed = iconState === 'failed';
+                const ringProgress = Math.max(6, Math.min(100, installProgress[item.slug] ?? 6));
+                return (
                 <div className="skill-market-item" key={item.slug}>
                   <div className="skill-market-item-main">
-                    <span className="skill-market-item-slug">{item.slug}</span>
+                    <div className="skill-market-item-head">
+                      <span className="skill-market-item-slug">{item.slug}</span>
+                      <span className="skill-market-item-meta">
+                        <span className="skill-market-item-meta-chip">{`★ ${typeof item.stars === 'number' ? item.stars.toLocaleString() : '-'}`}</span>
+                        <span className="skill-market-item-meta-chip">{`score ${typeof item.score === 'number' ? item.score.toFixed(3) : '-'}`}</span>
+                      </span>
+                    </div>
                     {item.name && <span className="skill-market-item-name">{item.name}</span>}
-                    <span className="skill-market-item-meta">
-                      <span className="skill-market-item-meta-chip">{`★ ${typeof item.stars === 'number' ? item.stars.toLocaleString() : '-'}`}</span>
-                      <span className="skill-market-item-meta-chip">{`score ${typeof item.score === 'number' ? item.score.toFixed(3) : '-'}`}</span>
-                    </span>
-                    {installingSlug === item.slug && installMessage[item.slug] && (
-                      <span className="skill-market-item-status">{installMessage[item.slug]}</span>
-                    )}
                   </div>
-                  <button
-                    className="skill-market-add"
-                    title={t('settings.skills.installFromSearch')}
-                    onClick={() => installRemoteSkill(item.slug)}
-                    disabled={installingSlug === item.slug || typeof installProgress[item.slug] === 'number'}
-                  >
-                    {typeof installProgress[item.slug] === 'number' ? (
-                      `${Math.round(installProgress[item.slug])}%`
-                    ) : (
-                      '+'
-                    )}
-                  </button>
+                  <div className="skill-market-item-side">
+                    <button
+                      className={`skill-market-add${isInstalling ? ' is-installing' : ''}${isDone ? ' is-done' : ''}${isFailed ? ' is-failed' : ''}`}
+                      title={t('settings.skills.installFromSearch')}
+                      onClick={() => installRemoteSkill(item.slug)}
+                      disabled={isInstalling || isDone}
+                    >
+                      {isInstalling ? (
+                        <span
+                          className="skill-market-add-circle installing"
+                          style={{ ['--progress' as any]: ringProgress }}
+                        />
+                      ) : isDone ? (
+                        <span className="skill-market-add-circle done" />
+                      ) : isFailed ? (
+                        <span className="skill-market-add-circle failed" />
+                      ) : (
+                        '+'
+                      )}
+                    </button>
+                  </div>
                 </div>
-              ))}
+              )})}
             </div>
           ) : (
             remoteSearched && !remoteDismissed && remoteQuery.trim() && !remoteSearching

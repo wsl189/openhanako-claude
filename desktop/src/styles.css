@@ -6619,10 +6619,26 @@ body.resizing .jian-sidebar-inner {
 }
 
 .skill-market-item-main {
+    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
+}
+
+.skill-market-item-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.skill-market-item-side {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-left: 8px;
 }
 
 .skill-market-item-slug {
@@ -6654,8 +6670,12 @@ body.resizing .jian-sidebar-inner {
     font-size: 0.95rem;
     font-weight: 700;
     line-height: 1;
-    min-width: 28px;
-    padding: 0 2px;
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    border-radius: 50%;
+    padding: 0;
+    border: 1px solid transparent;
 }
 
 .skill-market-add:hover:not(:disabled) {
@@ -6667,11 +6687,26 @@ body.resizing .jian-sidebar-inner {
     cursor: not-allowed;
 }
 
+.skill-market-add.is-installing:disabled {
+    opacity: 0.9;
+}
+
+.skill-market-add.is-done:disabled {
+    opacity: 1;
+}
+
+.skill-market-add.is-failed {
+    opacity: 1;
+    color: #ff4d5f;
+}
+
 .skill-market-item-meta {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .skill-market-item-meta-chip {
@@ -6681,6 +6716,36 @@ body.resizing .jian-sidebar-inner {
     border-radius: 999px;
     padding: 1px 6px;
     background: var(--bg);
+}
+
+.skill-market-add-circle {
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    display: inline-block;
+    box-sizing: border-box;
+}
+
+.skill-market-add-circle.installing {
+    border: none;
+    background: conic-gradient(
+        from 0deg,
+        var(--accent) calc(var(--progress, 0) * 1%),
+        color-mix(in srgb, var(--accent) 20%, transparent) 0
+    );
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+}
+
+.skill-market-add-circle.done {
+    border: 2px solid var(--accent);
+    background: var(--accent);
+}
+
+.skill-market-add-circle.failed {
+    border: 2px solid #ff4d5f;
+    background: transparent;
+    box-shadow: 0 0 0 1px rgba(255, 77, 95, 0.2);
 }
 
 .skill-market-item-status {
