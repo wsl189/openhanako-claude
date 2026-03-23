@@ -625,6 +625,7 @@ function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, onAvatar
   agentsRef.current = agents;
 
   const n = agents.length;
+  const wrapLayout = n > 7;
   const stepTight = n > 1 ? Math.min(4, 16 / (n - 1)) : 0;
   const spreadStep = 62;
   const spreadOffset = -(n - 1) * spreadStep / 2;
@@ -633,6 +634,7 @@ function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, onAvatar
 
   // 原生 DOM 事件挂载拖拽（完全绕过 React 合成事件）
   useEffect(() => {
+    if (wrapLayout) return;
     const container = cardsRef.current;
     if (!container) return;
 
@@ -728,19 +730,27 @@ function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, onAvatar
     return () => {
       handlers.forEach(([el, fn]) => el.removeEventListener('pointerdown', fn));
     };
-  }, [agents, spreadStep]);
+  }, [agents, spreadStep, wrapLayout]);
 
   return (
     <div
       className="agent-card-stack"
       style={{ '--cards-spread-width': spreadWidth } as React.CSSProperties}
     >
-      <div className="agent-cards" ref={cardsRef}>
+      <div className={`agent-cards${wrapLayout ? ' wrapped' : ''}`} ref={cardsRef}>
         {agents.map((agent, i) => {
           const rotTight = i * stepTight;
           const txSpread = spreadOffset + i * spreadStep;
           const z = n - i;
           const isSelected = agent.id === selectedId;
+          const cardStyle = wrapLayout
+            ? undefined
+            : ({
+                '--rot-tight': `${rotTight}deg`,
+                '--tx-spread': `${txSpread}px`,
+                '--z': z,
+                zIndex: z,
+              } as React.CSSProperties);
 
           return (
             <div
@@ -748,12 +758,7 @@ function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, onAvatar
               className={`agent-card${isSelected ? ' selected' : ''}`}
               data-agent-id={agent.id}
               data-index={i}
-              style={{
-                '--rot-tight': `${rotTight}deg`,
-                '--tx-spread': `${txSpread}px`,
-                '--z': z,
-                zIndex: z,
-              } as React.CSSProperties}
+              style={cardStyle}
               onClick={(e) => {
                 const card = e.currentTarget as HTMLElement;
                 if (card.dataset.wasDragged) { delete card.dataset.wasDragged; return; }

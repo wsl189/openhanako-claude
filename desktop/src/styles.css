@@ -6213,6 +6213,22 @@ body.resizing .jian-sidebar-inner {
     transition-delay: 0s;
 }
 
+.agent-cards.wrapped {
+    width: min(100%, 520px);
+    height: auto;
+    min-height: 0;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 12px 14px;
+    transition: none;
+}
+
+.agent-cards.wrapped:hover {
+    width: min(100%, 520px);
+}
+
 /* 单张卡片 — 收起扇形，展开直线 */
 .agent-card {
     position: absolute;
@@ -6327,9 +6343,33 @@ body.resizing .jian-sidebar-inner {
     opacity: 1;
 }
 
+.agent-cards.wrapped .agent-card {
+    position: relative;
+    bottom: auto;
+    width: 56px;
+    height: auto;
+    transform-origin: center center;
+    transform: none;
+    transition: transform 0.2s var(--ease-out), filter 0.2s var(--ease-out);
+    z-index: auto !important;
+}
+
+.agent-cards.wrapped:hover .agent-card {
+    transform: none;
+}
+
+.agent-cards.wrapped .agent-card-name {
+    opacity: 1;
+}
+
 /* 单卡 hover：上浮 + 阴影 */
 .agent-card:hover {
     --lift: -6px;
+    z-index: 100 !important;
+}
+
+.agent-cards.wrapped .agent-card:hover {
+    transform: translateY(-4px);
     z-index: 100 !important;
 }
 
