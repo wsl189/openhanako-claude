@@ -34,7 +34,21 @@ export async function hanaFetch(
       signal: controller.signal,
     });
     if (!res.ok) {
-      throw new Error(`hanaFetch ${path}: ${res.status} ${res.statusText}`);
+      let detail = '';
+      try {
+        const data = await res.clone().json();
+        if (data && typeof data.error === 'string' && data.error.trim()) {
+          detail = data.error.trim();
+        }
+      } catch {
+        try {
+          detail = (await res.clone().text()).trim();
+        } catch {
+          detail = '';
+        }
+      }
+      const suffix = detail ? ` - ${detail}` : '';
+      throw new Error(`hanaFetch ${path}: ${res.status} ${res.statusText}${suffix}`);
     }
     return res;
   } finally {

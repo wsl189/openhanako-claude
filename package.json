@@ -20,20 +20,22 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "npm run build:renderer && node scripts/launch.js electron",
-    "start:dev": "npm run build:renderer && node scripts/launch.js electron",
+    "start": "npm run rebuild:electron && npm run build:renderer && node scripts/launch.js electron",
+    "start:dev": "npm run start",
     "dev:renderer": "vite --config vite.config.ts",
     "build:renderer": "vite build --config vite.config.ts",
     "typecheck": "tsc --noEmit",
-    "cli": "node scripts/launch.js cli",
-    "server": "node scripts/launch.js server",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "cli": "npm run rebuild:node && node scripts/launch.js cli",
+    "server": "npm run rebuild:node && node scripts/launch.js server",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:node": "npm rebuild better-sqlite3 --build-from-source",
+    "rebuild": "npm run rebuild:electron",
     "pack": "npm run build:renderer && electron-builder --dir",
     "dist": "npm run build:renderer && electron-builder --mac dmg",
     "dist:win": "npm run build:renderer && electron-builder --win nsis",
     "test": "vitest run",
     "test:watch": "vitest",
-    "postinstall": "electron-rebuild -f -w better-sqlite3"
+    "postinstall": "npm run rebuild:electron"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
@@ -45,6 +47,7 @@
     "@traptitech/markdown-it-katex": "^3.6.0",
     "better-sqlite3": "^12.6.2",
     "chokidar": "^5.0.0",
+    "clawhub": "^0.8.0",
     "codemirror": "^6.0.2",
     "duck-duck-scrape": "^2.2.7",
     "exceljs": "^4.4.0",

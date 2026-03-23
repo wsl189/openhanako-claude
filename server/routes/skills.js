@@ -10,7 +10,8 @@
  */
 import path from "path";
 import fs from "fs";
-import { spawn } from "child_process";
+import { spawn, execFileSync } from "child_process";
+import { createRequire } from "module";
 import { extractZip } from "../../lib/extract-zip.js";
 import { saveConfig } from "../../lib/memory/config-loader.js";
 import { sanitizeSkillName } from "../../lib/tools/install-skill.js";
@@ -21,6 +22,65 @@ const CLAWHUB_STARS_CACHE_TTL_MS = 15 * 60_000;
 const CLAWHUB_STARS_CACHE_FAIL_TTL_MS = 2 * 60_000;
 const clawhubInstallJobs = new Map();
 const clawhubStarsCache = new Map();
+const require = createRequire(import.meta.url);
+let cachedNpxBin = null;
+let cachedBundledClawhubCli = undefined;
+
+function resolveNpxFromLoginShell() {
+  if (process.platform === "win32") return null;
+  try {
+    const shell = process.env.SHELL || "/bin/zsh";
+    const found = execFileSync(shell, ["-l", "-c", "command -v npx || true"], {
+      timeout: 5000,
+      encoding: "utf8",
+    }).trim();
+    if (!found) return null;
+    const line = found.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).pop();
+    return line || null;
+  } catch {
+    return null;
+  }
+}
+
+function getNpxBin() {
+  if (cachedNpxBin) return cachedNpxBin;
+  const byNode = process.platform === "win32"
+    ? path.join(path.dirname(process.execPath), "npx.cmd")
+    : path.join(path.dirname(process.execPath), "npx");
+  if (fs.existsSync(byNode)) {
+    cachedNpxBin = byNode;
+    return cachedNpxBin;
+  }
+  const fromShell = resolveNpxFromLoginShell();
+  if (fromShell) {
+    cachedNpxBin = fromShell;
+    return cachedNpxBin;
+  }
+  cachedNpxBin = process.platform === "win32" ? "npx.cmd" : "npx";
+  return cachedNpxBin;
+}
+
+function resolveBundledClawhubCli() {
+  if (cachedBundledClawhubCli !== undefined) return cachedBundledClawhubCli;
+  try {
+    const resolved = require.resolve("clawhub/dist/cli.js");
+    cachedBundledClawhubCli = fs.existsSync(resolved) ? resolved : null;
+  } catch {
+    cachedBundledClawhubCli = null;
+  }
+  return cachedBundledClawhubCli;
+}
+
+function stripNpxWrapperArgs(args = []) {
+  const list = Array.isArray(args) ? args.map((v) => String(v)) : [];
+  if (list.length >= 2 && list[0] === "--yes" && /^clawhub(?:@[\w.-]+)?$/i.test(list[1])) {
+    return list.slice(2);
+  }
+  if (list.length >= 1 && /^clawhub(?:@[\w.-]+)?$/i.test(list[0])) {
+    return list.slice(1);
+  }
+  return list;
+}
 
 function validateId(id) {
   return id && !id.includes("..") && !id.includes("/") && !id.includes("\\");
@@ -207,74 +267,104 @@ function runNpxClawhub(args, opts = {}) {
     onStderrLine,
   } = opts;
 
-  const bin = process.platform === "win32" ? "npx.cmd" : "npx";
   const registry = "https://registry.npmjs.org";
-
-  const env = {
-    ...process.env,
-    npm_config_registry: registry,
-    NPM_CONFIG_REGISTRY: registry,
-  };
+  const rawArgs = Array.isArray(args) ? args.map((v) => String(v)) : [];
+  const localClawhubArgs = stripNpxWrapperArgs(rawArgs);
+  const bundledCli = resolveBundledClawhubCli();
 
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, {
-      cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let stdoutRest = "";
-    let stderrRest = "";
-
-    const flushLine = (line, cb) => {
-      const text = String(line || "").trim();
-      if (!text || !cb) return;
-      cb(text);
-    };
-    const appendChunk = (chunk, rest, cb) => {
-      const text = String(chunk || "");
-      const normalized = (rest + text).replace(/\r/g, "\n");
-      const parts = normalized.split("\n");
-      const tail = parts.pop() || "";
-      for (const part of parts) flushLine(part, cb);
-      return tail;
-    };
-    const onOut = (buf) => {
-      const text = String(buf);
-      stdout += text;
-      stdoutRest = appendChunk(text, stdoutRest, onStdoutLine);
-    };
-    const onErr = (buf) => {
-      const text = String(buf);
-      stderr += text;
-      stderrRest = appendChunk(text, stderrRest, onStderrLine);
-    };
-    child.stdout.on("data", onOut);
-    child.stderr.on("data", onErr);
-
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("clawhub command timeout"));
-    }, timeoutMs);
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      flushLine(stdoutRest, onStdoutLine);
-      flushLine(stderrRest, onStderrLine);
-      const out = stdout.trim();
-      const err = stderr.trim();
-      if (code === 0) {
-        resolve({ stdout: out, stderr: err });
-        return;
+    const spawnWithCapture = ({ bin, argv, missingHint }) => {
+      const env = {
+        ...process.env,
+        npm_config_registry: registry,
+        NPM_CONFIG_REGISTRY: registry,
+      };
+      if (bin === process.execPath && argv[0] === bundledCli) {
+        // 用 Electron/Node 自身运行本地 clawhub CLI，不依赖系统 npx/node。
+        env.ELECTRON_RUN_AS_NODE = "1";
       }
-      reject(new Error(err || out || `clawhub exited with code ${code}`));
+      const child = spawn(bin, argv, {
+        cwd,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      let stdout = "";
+      let stderr = "";
+      let stdoutRest = "";
+      let stderrRest = "";
+
+      const flushLine = (line, cb) => {
+        const text = String(line || "").trim();
+        if (!text || !cb) return;
+        cb(text);
+      };
+      const appendChunk = (chunk, rest, cb) => {
+        const text = String(chunk || "");
+        const normalized = (rest + text).replace(/\r/g, "\n");
+        const parts = normalized.split("\n");
+        const tail = parts.pop() || "";
+        for (const part of parts) flushLine(part, cb);
+        return tail;
+      };
+      const onOut = (buf) => {
+        const text = String(buf);
+        stdout += text;
+        stdoutRest = appendChunk(text, stdoutRest, onStdoutLine);
+      };
+      const onErr = (buf) => {
+        const text = String(buf);
+        stderr += text;
+        stderrRest = appendChunk(text, stderrRest, onStderrLine);
+      };
+      child.stdout.on("data", onOut);
+      child.stderr.on("data", onErr);
+
+      const timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        reject(new Error("clawhub command timeout"));
+      }, timeoutMs);
+
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        if (err?.code === "ENOENT" && missingHint) {
+          reject(new Error(missingHint));
+          return;
+        }
+        reject(err);
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        flushLine(stdoutRest, onStdoutLine);
+        flushLine(stderrRest, onStderrLine);
+        const out = stdout.trim();
+        const err = stderr.trim();
+        if (code === 0) {
+          resolve({ stdout: out, stderr: err });
+          return;
+        }
+        reject(new Error(err || out || `clawhub exited with code ${code}`));
+      });
+    };
+
+    if (bundledCli) {
+      spawnWithCapture({
+        bin: process.execPath,
+        argv: [bundledCli, ...localClawhubArgs],
+        missingHint: "bundled clawhub CLI not found in app package",
+      });
+      return;
+    }
+
+    const bin = getNpxBin();
+    const npxMissingHint = process.platform === "win32"
+      ? "npx command not found; please ensure Node.js/npm is installed and available in PATH"
+      : "npx command not found; please ensure Node.js/npm is installed (or launch app from a login shell)";
+    spawnWithCapture({
+      bin,
+      argv: rawArgs,
+      missingHint: npxMissingHint,
     });
   });
 }
@@ -322,6 +412,23 @@ async function runNpxClawhubWithRetry(args, opts = {}) {
     }
   }
   throw lastErr || new Error("clawhub command failed");
+}
+
+function classifyClawhubError(err) {
+  const message = String(err?.message || err || "clawhub request failed");
+  if (/rate limit/i.test(message)) {
+    return { status: 429, error: message };
+  }
+  if (/bundled clawhub cli not found/i.test(message)) {
+    return { status: 503, error: message };
+  }
+  if (/npx command not found/i.test(message) || /spawn\s+\S*npx\S*\s+ENOENT/i.test(message)) {
+    return { status: 503, error: message };
+  }
+  if (/timeout/i.test(message)) {
+    return { status: 504, error: message };
+  }
+  return { status: 500, error: message };
 }
 
 function createClawhubInstallJob(slug) {
@@ -893,8 +1000,9 @@ export default async function skillsRoute(app, { engine }) {
       const enrichedTail = results.slice(inspectCap).map((item) => ({ ...item, stars: null }));
       return { ok: true, results: [...enrichedHead, ...enrichedTail] };
     } catch (err) {
-      reply.code(500);
-      return { error: err.message };
+      const mapped = classifyClawhubError(err);
+      reply.code(mapped.status);
+      return { error: mapped.error };
     }
   });
 
@@ -970,8 +1078,9 @@ export default async function skillsRoute(app, { engine }) {
         job: clawhubInstallJobs.get(job.id),
       };
     } catch (err) {
-      reply.code(500);
-      return { error: err.message };
+      const mapped = classifyClawhubError(err);
+      reply.code(mapped.status);
+      return { error: mapped.error };
     }
   });
 

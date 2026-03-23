@@ -13,6 +13,7 @@ export function AgentCreateOverlay() {
   const [yuan, setYuan] = useState('hanako');
   const [creating, setCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const composingRef = useRef(false);
 
   useEffect(() => {
     const handler = () => {
@@ -70,8 +71,12 @@ export function AgentCreateOverlay() {
             placeholder={t('settings.agent.namePlaceholder')}
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionEnd={() => { composingRef.current = false; }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); create(); }
+              const native = e.nativeEvent as KeyboardEvent & { isComposing?: boolean };
+              const composing = composingRef.current || !!native.isComposing || (e as any).isComposing || (e as any).keyCode === 229;
+              if (!composing && e.key === 'Enter') { e.preventDefault(); create(); }
               if (e.key === 'Escape') close();
             }}
           />

@@ -820,6 +820,7 @@
       "testFail": "测试失败",
       "noToken": "请先输入 Bot Token",
       "noCredentials": "请先填写 App ID 和 App Secret",
+      "secretKeepHint": "已保存密钥，留空表示不修改",
       "readOnly": "只读模式",
       "readOnlyDesc": "外部平台的机器人只能读取文件，不能执行写入和命令操作",
       "howTo": "如何接入？",
@@ -839,6 +840,13 @@
       "ownerConfirmText": "Owner 拥有完整的 Agent 权限，包括记忆、工具调用和人格。请确认这是你本人的账号。",
       "ownerConfirmCancel": "取消",
       "ownerConfirmSave": "确认",
+      "addBot": "新增机器人",
+      "noBots": "还没有机器人，点击右上角新增",
+      "botName": "机器人名称",
+      "botNamePlaceholder": "机器人名称（可选）",
+      "unboundAgent": "未绑定 Agent",
+      "bindAgent": "绑定",
+      "deleteBot": "删除机器人",
       "tutorialFsSteps": [
         "前往 <code>open.feishu.cn</code>，登录后进入「开发者后台」",
         "点击「创建企业自建应用」，填写应用名称和描述",
@@ -849,8 +857,7 @@
         "点击「添加事件」，添加 <code>im.message.receive_v1</code>（接收消息）",
         "重要：进入「版本管理与发布」，先创建并发布一个版本（长连接配置需要应用已发布才能保存）",
         "将 App ID 和 App Secret 粘贴到上方输入框，打开开关即可"
-      ],
-      "whatsappHint": "即将支持"
+      ]
     }
   },
   "onboarding": {

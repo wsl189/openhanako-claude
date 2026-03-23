@@ -12,7 +12,6 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { debugLog } from "../lib/debug-log.js";
-import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
 import { t, getLocale } from "../server/i18n.js";
 
 function getSteerPrefix() {
@@ -121,7 +120,7 @@ export class BridgeSessionManager {
    * @param {string} prompt - 格式化后的用户消息
    * @param {string} sessionKey - 会话标识（如 tg_dm_12345）
    * @param {object} [meta] - 元数据（name, avatarUrl, userId）
-   * @param {object} [opts] - { guest: boolean, contextTag?: string, onDelta? }
+   * @param {object} [opts] - { guest: boolean, onDelta? }
    * @returns {Promise<string|null>} agent 的回复文本
    */
   async executeExternalMessage(prompt, sessionKey, meta, opts = {}) {
@@ -153,77 +152,40 @@ export class BridgeSessionManager {
         mgr = SessionManager.create(homeCwd, sessionDir);
       }
 
-      let sessionOpts;
       // Bridge 媒体协议：让模型通过 MEDIA:<url|file://|绝对路径> 返回媒体项。
       const mediaInstruction = "当你需要发送媒体文件（图片、视频、音频、文件）时，在回复中单独一行写 MEDIA:<url>，例如：\nMEDIA:https://example.com/photo.jpg\n不要把 MEDIA: 写在代码块里。一行一个。";
-      if (opts.guest) {
-        // guest 模式：yuan + public-ishiki + contextTag，主模型，无工具
-        const yuanBase = agent.yuanPrompt;
-        const pubIshiki = agent.publicIshiki;
-        const parts = [yuanBase, pubIshiki, opts.contextTag, mediaInstruction].filter(Boolean);
-        const guestPrompt = parts.join("\n\n");
-        const tempResourceLoader = Object.create(this._deps.getResourceLoader());
-        tempResourceLoader.getSystemPrompt = () => guestPrompt;
-        tempResourceLoader.getSkills = () => ({ skills: [], diagnostics: [] });
 
-        // 使用 agent 配置的模型，而非 defaultModel
-        const chatModelId = agent.config?.models?.chat;
-        if (!chatModelId) {
-          throw new Error(t("error.bridgeAgentNoChatModel", { name: agent.agentName }));
-        }
-        const chatModel = mm.availableModels.find(m => m.id === chatModelId);
-        if (!chatModel) {
-          throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: chatModelId }));
-        }
+      // 外部会话统一走完整 agent 能力（记忆 + 工具）
+      const prefs = this._deps.getPreferences();
+      const bridgeCwd = homeCwd;
+      const { tools: bridgeTools, customTools: bridgeCustomTools } = this._deps.buildTools(bridgeCwd, null, { workspace: homeCwd });
 
-        sessionOpts = {
-          model: chatModel,
-          thinkingLevel: "none",
-          resourceLoader: tempResourceLoader,
-          settingsManager: this._createSettings(chatModel),
-        };
-      } else {
-        // owner 模式：完整 agent
-        const prefs = this._deps.getPreferences();
-        const bridgeReadOnly = !!prefs.bridge?.readOnly;
-        const bridgeCwd = homeCwd;
-        const { tools: baseTools, customTools: baseCustomTools } = this._deps.buildTools(bridgeCwd, null, { workspace: homeCwd });
-
-        const bridgeTools = bridgeReadOnly
-          ? baseTools.filter(t => READ_ONLY_BUILTIN_TOOLS.includes(t.name))
-          : baseTools;
-        const safeCustomNames = ["search_memory", "web_search", "web_fetch", "present_files"];
-        const bridgeCustomTools = bridgeReadOnly
-          ? (baseCustomTools || []).filter(t => safeCustomNames.includes(t.name))
-          : baseCustomTools;
-
-        // 使用 agent 配置的模型
-        const ownerModelId = agent.config?.models?.chat;
-        if (!ownerModelId) {
-          throw new Error(t("error.bridgeAgentNoChatModel", { name: agent.agentName }));
-        }
-        const ownerModel = mm.availableModels.find(m => m.id === ownerModelId);
-        if (!ownerModel) {
-          throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: ownerModelId }));
-        }
-
-        const baseRL = this._deps.getResourceLoader();
-        const ownerRL = Object.create(baseRL);
-        const baseGetSystemPrompt = baseRL.getSystemPrompt.bind(baseRL);
-        ownerRL.getSystemPrompt = (...args) => {
-          const sp = baseGetSystemPrompt(...args);
-          return `${sp}\n\n${mediaInstruction}`;
-        };
-
-        sessionOpts = {
-          model: ownerModel,
-          thinkingLevel: mm.resolveThinkingLevel(prefs?.thinking_level || "auto"),
-          resourceLoader: ownerRL,
-          tools: bridgeTools,
-          customTools: bridgeCustomTools,
-          settingsManager: this._createSettings(ownerModel),
-        };
+      // 使用 agent 配置的模型
+      const modelId = agent.config?.models?.chat;
+      if (!modelId) {
+        throw new Error(t("error.bridgeAgentNoChatModel", { name: agent.agentName }));
       }
+      const model = mm.availableModels.find(m => m.id === modelId);
+      if (!model) {
+        throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: modelId }));
+      }
+
+      const baseRL = this._deps.getResourceLoader();
+      const rl = Object.create(baseRL);
+      const baseGetSystemPrompt = baseRL.getSystemPrompt.bind(baseRL);
+      rl.getSystemPrompt = (...args) => {
+        const sp = baseGetSystemPrompt(...args);
+        return `${sp}\n\n${mediaInstruction}`;
+      };
+
+      const sessionOpts = {
+        model,
+        thinkingLevel: mm.resolveThinkingLevel(prefs?.thinking_level || "auto"),
+        resourceLoader: rl,
+        tools: bridgeTools,
+        customTools: bridgeCustomTools,
+        settingsManager: this._createSettings(model),
+      };
 
       const { session } = await createAgentSession({
         cwd: homeCwd,

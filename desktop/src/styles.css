@@ -2658,18 +2658,385 @@ html[data-platform="linux"] .tb-toggle-right {
 .bridge-test-ok  { color: var(--green); border-color: var(--green); }
 .bridge-test-fail { color: var(--coral); border-color: var(--coral); }
 
-/* Owner 选择区域 */
-.bridge-owner-label {
-    text-align: center;
-    margin-bottom: var(--space-xs);
+/* 多 bot 管理 */
+.bridge-multi-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
 }
 
-.bridge-owner-warning {
-    font-size: 0.72rem;
-    color: #a04040;
-    text-align: center;
-    margin: 0 0 var(--space-sm);
-    line-height: 1.5;
+.bridge-add-bot-btn {
+    border: 1px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 0.74rem;
+    cursor: pointer;
+    transition: all 0.18s var(--ease-out);
+}
+
+.bridge-add-bot-btn:hover {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.bridge-bot-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.bridge-bot-empty {
+    border: 1px dashed var(--overlay-light);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.bridge-bot-card {
+    border: 1px solid var(--overlay-light);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card, var(--bg)) 94%, transparent), var(--bg-card, var(--bg)));
+    border-radius: var(--radius-md);
+    padding: var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.bridge-bot-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.bridge-bot-name {
+    max-width: 220px;
+    min-width: 120px;
+}
+
+.bridge-bind-row {
+    display: flex;
+    align-items: stretch;
+    gap: var(--space-sm);
+}
+
+.bridge-bind-row .settings-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.bridge-bot-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.bridge-save-btn,
+.bridge-delete-btn {
+    border-radius: var(--radius-sm);
+    padding: 0 12px;
+    height: 32px;
+    font-size: 0.76rem;
+    border: 1px solid var(--border);
+    background: var(--overlay-light);
+    color: var(--text-light);
+    cursor: pointer;
+    transition: all 0.18s var(--ease-out);
+}
+
+.bridge-save-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-light);
+}
+
+.bridge-delete-btn {
+    border-color: color-mix(in srgb, var(--coral) 45%, var(--border));
+    color: var(--coral);
+}
+
+.bridge-delete-btn:hover {
+    background: color-mix(in srgb, var(--coral) 10%, transparent);
+}
+
+.bridge-save-btn:disabled,
+.bridge-delete-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* 统一平台样式（分割线 + 摘要行 + 展开卡片） */
+.bridge-unified-section {
+    margin-bottom: var(--space-lg);
+}
+
+.bridge-unified-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: var(--space-sm);
+}
+
+.bridge-unified-divider {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    color: var(--text-light);
+    font-size: 0.92rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+
+.bridge-unified-divider::before,
+.bridge-unified-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.bridge-unified-add-row {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.bridge-add-inline-btn {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: 1.35rem;
+    line-height: 1;
+    padding: 2px 4px;
+    cursor: pointer;
+    transition: opacity 0.18s var(--ease-out);
+}
+
+.bridge-add-inline-btn:hover {
+    opacity: 0.78;
+}
+
+.bridge-unified-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.bridge-unified-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.bridge-unified-summary {
+    border: 1px solid var(--overlay-light);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--bg-card, var(--bg)) 95%, transparent);
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.bridge-unified-summary-main {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+}
+
+.bridge-unified-summary-meta {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    overflow: hidden;
+}
+
+.bridge-unified-summary-name {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.84rem;
+    color: var(--text);
+}
+
+.bridge-unified-summary-agent {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+}
+
+.bridge-unified-card {
+    border: 1px solid var(--overlay-light);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card, var(--bg)) 94%, transparent), var(--bg-card, var(--bg)));
+    border-radius: var(--radius-md);
+    padding: var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bridge-unified-form-row {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+}
+
+.bridge-unified-form-label {
+    color: var(--text-light);
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.bridge-unified-form-input {
+    min-width: 0;
+}
+
+.bridge-unified-form-input .settings-input {
+    width: 100%;
+}
+
+.bridge-unified-form-input .settings-key-wrapper {
+    width: 100%;
+}
+
+.bridge-unified-secret-hint {
+    margin-top: 6px;
+    font-size: 0.74rem;
+    color: var(--text-muted);
+}
+
+.bridge-agent-select {
+    position: relative;
+    width: 100%;
+}
+
+.bridge-agent-select-trigger {
+    width: 100%;
+    height: 38px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-card, var(--bg));
+    color: var(--text);
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.84rem;
+    cursor: pointer;
+}
+
+.bridge-agent-select-trigger:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.bridge-agent-select-caret {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.bridge-agent-select-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 30;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card, var(--bg));
+    box-shadow: 0 6px 18px var(--shadow);
+    max-height: 126px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.bridge-agent-select-option {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    padding: 9px 12px;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.bridge-agent-select-option:hover {
+    background: var(--overlay-light);
+}
+
+.bridge-agent-select-option.selected {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    color: var(--text);
+    font-weight: 600;
+}
+
+.bridge-unified-card-footer {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.bridge-unified-card-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.bridge-save-btn-primary {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.bridge-unified-test-result {
+    align-self: flex-end;
+    font-size: 0.74rem;
+    line-height: 1.3;
+    padding: 2px 0;
+}
+
+.bridge-unified-test-result.ok {
+    color: var(--green);
+}
+
+.bridge-unified-test-result.fail {
+    color: var(--coral);
+}
+
+.bridge-unified-test-result.info {
+    color: var(--text-muted);
+}
+
+@media (max-width: 900px) {
+    .bridge-unified-form-row {
+        grid-template-columns: 88px minmax(0, 1fr);
+    }
+
+    .bridge-unified-summary-name {
+        max-width: 170px;
+    }
+
+    .bridge-unified-summary-agent {
+        max-width: 150px;
+    }
 }
 
 /* 如何接入 链接 */

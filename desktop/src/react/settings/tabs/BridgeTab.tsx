@@ -1,396 +1,74 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
 import { KeyInput } from '../widgets/KeyInput';
 import { Toggle } from '../widgets/Toggle';
 
-const platform = (window as any).platform;
-
-interface BridgeStatus {
-  telegram: any;
-  feishu: any;
-  whatsapp: any;
-  qq: any;
-  readOnly: boolean;
-  knownUsers: { telegram?: any[]; feishu?: any[]; whatsapp?: any[]; qq?: any[] };
-  owner: { telegram?: string; feishu?: string; whatsapp?: string; qq?: string };
+interface BridgeBotStatus {
+  id: string;
+  name: string;
+  configured?: boolean;
+  enabled?: boolean;
+  status?: string;
+  error?: string | null;
+  tokenMasked?: string;
+  appID?: string;
+  appSecretMasked?: string;
+  agentId?: string | null;
+  agentName?: string | null;
 }
 
-export function BridgeTab() {
-  const store = useSettingsStore();
-  const { showToast } = store;
-  const [status, setStatus] = useState<BridgeStatus | null>(null);
+interface FeishuStatus {
+  configured?: boolean;
+  enabled?: boolean;
+  status?: string;
+  error?: string | null;
+  appId?: string;
+  appSecretMasked?: string;
+  agentId?: string | null;
+  agentName?: string | null;
+  name?: string;
+}
 
-  // Public Ishiki
-  const [publicIshiki, setPublicIshiki] = useState('');
-  const [publicIshikiOriginal, setPublicIshikiOriginal] = useState('');
-
-  useEffect(() => {
-    const agentId = store.getSettingsAgentId();
-    if (!agentId) return;
-    hanaFetch(`/api/agents/${agentId}/public-ishiki`)
-      .then(r => r.json())
-      .then(data => { setPublicIshiki(data.content || ''); setPublicIshikiOriginal(data.content || ''); })
-      .catch(() => {});
-  }, [store.settingsConfig]);
-
-  const savePublicIshiki = async () => {
-    const agentId = store.getSettingsAgentId();
-    if (!agentId || publicIshiki === publicIshikiOriginal) return;
-    try {
-      await hanaFetch(`/api/agents/${agentId}/public-ishiki`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: publicIshiki }),
-      });
-      setPublicIshikiOriginal(publicIshiki);
-      showToast(t('settings.saved'), 'success');
-    } catch (err: any) {
-      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
-    }
+interface BridgeStatus {
+  telegram?: {
+    bots?: BridgeBotStatus[];
   };
-
-  // Telegram fields
-  const [tgToken, setTgToken] = useState('');
-  // Feishu fields
-  const [fsAppId, setFsAppId] = useState('');
-  const [fsAppSecret, setFsAppSecret] = useState('');
-  // QQ fields
-  const [qqAppId, setQqAppId] = useState('');
-  const [qqAppSecret, setQqAppSecret] = useState('');
-
-  const loadStatus = async () => {
-    try {
-      const res = await hanaFetch('/api/bridge/status');
-      const data = await res.json();
-      setStatus(data);
-      // 回填非敏感值
-      if (data.feishu?.appId && !fsAppId) setFsAppId(data.feishu.appId);
-      if (data.qq?.appID && !qqAppId) setQqAppId(data.qq.appID);
-    } catch (err) {
-      console.error('[bridge] load status failed:', err);
-    }
+  feishu?: FeishuStatus;
+  qq?: {
+    bots?: BridgeBotStatus[];
   };
+}
 
-  useEffect(() => { loadStatus(); }, []);
+type BridgePlatform = 'telegram' | 'feishu' | 'qq';
 
-  const saveBridgeConfig = async (platform_: string, credentials: any, enabled?: boolean) => {
-    try {
-      await hanaFetch('/api/bridge/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform: platform_, credentials, enabled }),
-      });
-      showToast(t('settings.saved'), 'success');
-      await loadStatus();
-    } catch (err: any) {
-      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
-    }
-  };
+type CardResultTone = 'ok' | 'fail' | 'info';
 
-  const testPlatform = async (platform_: string, credentials: any, btn: HTMLButtonElement) => {
-    btn.disabled = true;
-    btn.textContent = '...';
-    try {
-      const res = await hanaFetch('/api/bridge/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform: platform_, credentials }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        const info = platform_ === 'telegram' ? ` @${data.info?.username || ''}` : '';
-        showToast(t('settings.bridge.testOk') + info, 'success');
-      } else {
-        showToast(t('settings.bridge.testFail') + ': ' + (data.error || ''), 'error');
-      }
-    } catch (err: any) {
-      showToast(t('settings.bridge.testFail') + ': ' + err.message, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = t('settings.bridge.test');
-    }
-  };
+interface CardResult {
+  tone: CardResultTone;
+  text: string;
+}
 
-  const setOwner = async (platform_: string, userId: string) => {
-    try {
-      await hanaFetch('/api/bridge/owner', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform: platform_, userId: userId || null }),
-      });
-      showToast(t('settings.bridge.ownerSaved'), 'success');
-    } catch {
-      showToast(t('settings.saveFailed'), 'error');
-    }
-  };
+interface BotDraft {
+  id: string;
+  name: string;
+  appID: string;
+  appSecret: string;
+  appSecretMasked?: string;
+  agentId: string;
+  enabled: boolean;
+}
 
-  const tgInfo = status?.telegram || {};
-  const fsInfo = status?.feishu || {};
-  const waInfo = status?.whatsapp || {};
-  const qqInfo = status?.qq || {};
-  const readOnly = !!status?.readOnly;
+interface AgentItem {
+  id: string;
+  name: string;
+}
 
-  return (
-    <div className="settings-tab-content active" data-tab="bridge">
-      {/* 对外意识 */}
-      <section className="settings-section">
-        <h2 className="settings-section-title">{t('settings.agent.publicIshiki')}</h2>
-        <div className="settings-field">
-          <textarea
-            className="settings-textarea"
-            rows={6}
-            spellCheck={false}
-            value={publicIshiki}
-            onChange={(e) => setPublicIshiki(e.target.value)}
-            onBlur={savePublicIshiki}
-          />
-          <span className="settings-field-hint">{t('settings.agent.publicIshikiHint')}</span>
-        </div>
-      </section>
+const PLATFORMS: BridgePlatform[] = ['telegram', 'feishu', 'qq'];
 
-      {/* 教程链接 */}
-      <div className="bridge-help-link-row">
-        <span
-          className="bridge-help-link"
-          onClick={() => window.dispatchEvent(new Event('hana-show-bridge-tutorial'))}
-        >
-          {t('settings.bridge.howTo')}
-        </span>
-      </div>
-
-      {/* Telegram */}
-      <section className="settings-section">
-        <h2 className="settings-section-title">{t('settings.bridge.telegram')}</h2>
-        <div className="bridge-platform-header">
-          <BridgeStatusDot status={tgInfo.status} />
-          <BridgeStatusText status={tgInfo.status} error={tgInfo.error} />
-          <Toggle
-            on={!!tgInfo.enabled}
-            onChange={async (on) => {
-              const token = tgToken || '';
-              const hasSaved = !!status?.telegram?.tokenMasked;
-              if (on && !token && !hasSaved) {
-                showToast(t('settings.bridge.noToken'), 'error');
-                return;
-              }
-              await saveBridgeConfig('telegram', token ? { token } : null, on);
-            }}
-          />
-        </div>
-        <div className="settings-field">
-          <label className="settings-field-label">{t('settings.bridge.telegramToken')}</label>
-          <div className="bridge-input-row">
-            <KeyInput
-              value={tgToken}
-              onChange={setTgToken}
-              placeholder={tgInfo.tokenMasked || ''}
-              onBlur={async () => {
-                if (tgToken.trim()) await saveBridgeConfig('telegram', { token: tgToken.trim() }, undefined);
-              }}
-            />
-            <button
-              className="bridge-test-btn"
-              onClick={(e) => {
-                if (!tgToken.trim()) { showToast(t('settings.bridge.noToken'), 'error'); return; }
-                testPlatform('telegram', { token: tgToken.trim() }, e.currentTarget);
-              }}
-            >
-              {t('settings.bridge.test')}
-            </button>
-          </div>
-          <span className="settings-field-hint">{t('settings.bridge.telegramHint')}</span>
-        </div>
-        <OwnerSelect
-          platform_="telegram"
-          users={status?.knownUsers?.telegram || []}
-          currentOwner={status?.owner?.telegram}
-          onChange={(userId) => setOwner('telegram', userId)}
-        />
-      </section>
-
-      {/* 飞书 */}
-      <section className="settings-section">
-        <h2 className="settings-section-title">{t('settings.bridge.feishu')}</h2>
-        <div className="bridge-platform-header">
-          <BridgeStatusDot status={fsInfo.status} />
-          <BridgeStatusText status={fsInfo.status} error={fsInfo.error} />
-          <Toggle
-            on={!!fsInfo.enabled}
-            onChange={async (on) => {
-              const hasSaved = !!fsInfo.appSecretMasked;
-              if (on && !fsAppId && !hasSaved) {
-                showToast(t('settings.bridge.noCredentials'), 'error');
-                return;
-              }
-              const creds = fsAppSecret ? { appId: fsAppId, appSecret: fsAppSecret } : (fsAppId ? { appId: fsAppId } : null);
-              await saveBridgeConfig('feishu', creds, on);
-            }}
-          />
-        </div>
-        <div className="settings-field">
-          <label className="settings-field-label">{t('settings.bridge.feishuAppId')}</label>
-          <input
-            className="settings-input"
-            type="text"
-            value={fsAppId}
-            onChange={(e) => setFsAppId(e.target.value)}
-            onBlur={async () => {
-              if (fsAppId.trim() && fsAppSecret.trim()) {
-                await saveBridgeConfig('feishu', { appId: fsAppId.trim(), appSecret: fsAppSecret.trim() }, undefined);
-              }
-            }}
-          />
-        </div>
-        <div className="settings-field">
-          <label className="settings-field-label">{t('settings.bridge.feishuAppSecret')}</label>
-          <div className="bridge-input-row">
-            <KeyInput
-              value={fsAppSecret}
-              onChange={setFsAppSecret}
-              placeholder={fsInfo.appSecretMasked || ''}
-              onBlur={async () => {
-                if (fsAppId.trim() && fsAppSecret.trim()) {
-                  await saveBridgeConfig('feishu', { appId: fsAppId.trim(), appSecret: fsAppSecret.trim() }, undefined);
-                }
-              }}
-            />
-            <button
-              className="bridge-test-btn"
-              onClick={(e) => {
-                if (!fsAppId.trim() || !fsAppSecret.trim()) { showToast(t('settings.bridge.noCredentials'), 'error'); return; }
-                testPlatform('feishu', { appId: fsAppId.trim(), appSecret: fsAppSecret.trim() }, e.currentTarget);
-              }}
-            >
-              {t('settings.bridge.test')}
-            </button>
-          </div>
-          <span className="settings-field-hint">{t('settings.bridge.feishuHint')}</span>
-        </div>
-        <OwnerSelect
-          platform_="feishu"
-          users={status?.knownUsers?.feishu || []}
-          currentOwner={status?.owner?.feishu}
-          onChange={(userId) => setOwner('feishu', userId)}
-        />
-      </section>
-
-      {/* QQ */}
-      <section className="settings-section">
-        <h2 className="settings-section-title">QQ</h2>
-        <div className="bridge-platform-header">
-          <BridgeStatusDot status={qqInfo.status} />
-          <BridgeStatusText status={qqInfo.status} error={qqInfo.error} />
-          <Toggle
-            on={!!qqInfo.enabled}
-            onChange={async (on) => {
-              const hasSaved = !!(qqInfo.appID && qqInfo.appSecretMasked);
-              if (on && !(qqAppId && qqAppSecret) && !hasSaved) {
-                showToast(t('settings.bridge.noCredentials'), 'error');
-                return;
-              }
-              const creds = (qqAppId && qqAppSecret) ? { appID: qqAppId, appSecret: qqAppSecret } : null;
-              await saveBridgeConfig('qq', creds, on);
-            }}
-          />
-        </div>
-        <div className="settings-field">
-          <label className="settings-field-label">{t('settings.bridge.qqAppId')}</label>
-          <input
-            className="settings-input"
-            type="text"
-            value={qqAppId}
-            onChange={(e) => setQqAppId(e.target.value)}
-            onBlur={async () => {
-              if (qqAppId.trim() && qqAppSecret.trim()) {
-                await saveBridgeConfig('qq', { appID: qqAppId.trim(), appSecret: qqAppSecret.trim() }, undefined);
-              }
-            }}
-          />
-        </div>
-        <div className="settings-field">
-          <label className="settings-field-label">{t('settings.bridge.qqAppSecret')}</label>
-          <div className="bridge-input-row">
-            <KeyInput
-              value={qqAppSecret}
-              onChange={setQqAppSecret}
-              placeholder={qqInfo.appSecretMasked || ''}
-              onBlur={async () => {
-                if (qqAppId.trim() && qqAppSecret.trim()) {
-                  await saveBridgeConfig('qq', { appID: qqAppId.trim(), appSecret: qqAppSecret.trim() }, undefined);
-                }
-              }}
-            />
-            <button
-              className="bridge-test-btn"
-              onClick={(e) => {
-                if (!qqAppId.trim() || !qqAppSecret.trim()) { showToast(t('settings.bridge.noCredentials'), 'error'); return; }
-                testPlatform('qq', { appID: qqAppId.trim(), appSecret: qqAppSecret.trim() }, e.currentTarget);
-              }}
-            >
-              {t('settings.bridge.test')}
-            </button>
-          </div>
-          <span className="settings-field-hint">{t('settings.bridge.qqHint')}</span>
-        </div>
-        <OwnerSelect
-          platform_="qq"
-          users={status?.knownUsers?.qq || []}
-          currentOwner={status?.owner?.qq}
-          onChange={(userId) => setOwner('qq', userId)}
-        />
-      </section>
-
-      {/* WhatsApp */}
-      <section className="settings-section">
-        <h2 className="settings-section-title">WhatsApp</h2>
-        <div className="bridge-platform-header">
-          <BridgeStatusDot status={waInfo.status} />
-          <BridgeStatusText status={waInfo.status} error={waInfo.error} />
-          <Toggle
-            on={!!waInfo.enabled}
-            onChange={async (on) => {
-              await saveBridgeConfig('whatsapp', null, on);
-            }}
-          />
-        </div>
-        <div className="settings-field">
-          <span className="settings-field-hint">{t('settings.bridge.whatsappHint')}</span>
-        </div>
-        <OwnerSelect
-          platform_="whatsapp"
-          users={status?.knownUsers?.whatsapp || []}
-          currentOwner={status?.owner?.whatsapp}
-          onChange={(userId) => setOwner('whatsapp', userId)}
-        />
-      </section>
-
-      {/* 只读模式 */}
-      <section className="settings-section">
-        <h2 className="settings-section-title">{t('settings.bridge.readOnly')}</h2>
-        <div className="bridge-platform-header">
-          <span className="bridge-readonly-desc">{t('settings.bridge.readOnlyDesc')}</span>
-          <Toggle
-            on={readOnly}
-            onChange={async (on) => {
-              try {
-                await hanaFetch('/api/bridge/settings', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ readOnly: on }),
-                });
-                showToast(t('settings.saved'), 'success');
-                await loadStatus();
-              } catch {
-                showToast(t('settings.saveFailed'), 'error');
-              }
-            }}
-          />
-        </div>
-      </section>
-    </div>
-  );
+function makeCardKey(platform: BridgePlatform, botId: string) {
+  return `${platform}:${botId || 'new'}`;
 }
 
 function BridgeStatusDot({ status }: { status?: string }) {
@@ -401,68 +79,643 @@ function BridgeStatusDot({ status }: { status?: string }) {
   return <span className={cls} />;
 }
 
-function BridgeStatusText({ status, error }: { status?: string; error?: string }) {
-  let text = t('settings.bridge.disconnected');
-  if (status === 'connected') text = t('settings.bridge.connected');
-  else if (status === 'error') text = t('settings.bridge.error') + (error ? `: ${error}` : '');
-  return <span className="bridge-status-text">{text}</span>;
-}
-
-function OwnerSelect({ platform_, users, currentOwner, onChange }: {
-  platform_: string; users: any[]; currentOwner?: string; onChange: (userId: string) => void;
+function AgentSelect({
+  agents,
+  value,
+  onChange,
+}: {
+  agents: AgentItem[];
+  value: string;
+  onChange: (id: string) => void;
 }) {
-  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = agents.find((a) => a.id === value) || agents[0];
 
-  const handleChange = (value: string) => {
-    if (!value) {
-      onChange(value);
-      return;
-    }
-    setPendingUserId(value);
-  };
-
-  const confirm = () => {
-    if (pendingUserId !== null) {
-      onChange(pendingUserId);
-      setPendingUserId(null);
-    }
-  };
-
-  const cancel = () => setPendingUserId(null);
+  useEffect(() => {
+    const onClickOutside = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
 
   return (
-    <div className="settings-field bridge-owner-field">
-      <label className="settings-field-label bridge-owner-label">{t('settings.bridge.ownerSelect')}</label>
-      <p className="bridge-owner-warning">{t('settings.bridge.ownerWarning')}</p>
-      <select
-        className="settings-input bridge-owner-select"
-        value={currentOwner || ''}
-        onChange={(e) => handleChange(e.target.value)}
-        disabled={users.length === 0}
+    <div className="bridge-agent-select" ref={rootRef}>
+      <button
+        type="button"
+        className="bridge-agent-select-trigger"
+        disabled={agents.length === 0}
+        onClick={() => setOpen((v) => !v)}
       >
-        <option value="">{users.length > 0 ? '—' : t('settings.bridge.ownerNone')}</option>
-        {users.map((u: any) => (
-          <option key={u.userId} value={u.userId}>{u.name || u.userId}</option>
-        ))}
-      </select>
-
-      {pendingUserId !== null && (
-        <div className="memory-confirm-overlay visible" onClick={(e) => { if (e.target === e.currentTarget) cancel(); }}>
-          <div className="memory-confirm-card">
-            <p className="memory-confirm-text">
-              {t('settings.bridge.ownerConfirmText')}
-            </p>
-            <div className="memory-confirm-actions">
-              <button className="memory-confirm-cancel" onClick={cancel}>
-                {t('settings.bridge.ownerConfirmCancel')}
-              </button>
-              <button className="memory-confirm-primary" onClick={confirm}>
-                {t('settings.bridge.ownerConfirmSave')}
-              </button>
-            </div>
-          </div>
+        <span>{selected?.name || 'No Agent'}</span>
+        <span className="bridge-agent-select-caret">⌄</span>
+      </button>
+      {open && agents.length > 0 && (
+        <div className="bridge-agent-select-menu">
+          {agents.map((a) => (
+            <button
+              type="button"
+              key={a.id}
+              className={`bridge-agent-select-option${a.id === selected?.id ? ' selected' : ''}`}
+              onClick={() => {
+                onChange(a.id);
+                setOpen(false);
+              }}
+            >
+              {a.name}
+            </button>
+          ))}
         </div>
       )}
+    </div>
+  );
+}
+
+export function BridgeTab() {
+  const store = useSettingsStore();
+  const { showToast } = store;
+  const agents = (store.agents || []) as AgentItem[];
+
+  const [tgBots, setTgBots] = useState<BridgeBotStatus[]>([]);
+  const [qqBots, setQqBots] = useState<BridgeBotStatus[]>([]);
+  const [feishuBot, setFeishuBot] = useState<BridgeBotStatus | null>(null);
+
+  const [newDrafts, setNewDrafts] = useState<Record<BridgePlatform, BotDraft | null>>({
+    telegram: null,
+    feishu: null,
+    qq: null,
+  });
+  const [expandedIds, setExpandedIds] = useState<Record<BridgePlatform, string | null>>({
+    telegram: null,
+    feishu: null,
+    qq: null,
+  });
+  const [editDrafts, setEditDrafts] = useState<Record<string, BotDraft>>({});
+  const [cardResults, setCardResults] = useState<Record<string, CardResult | undefined>>({});
+  const [cardSaving, setCardSaving] = useState<Record<string, boolean>>({});
+
+  const platformName = (platform: BridgePlatform) => {
+    if (platform === 'telegram') return t('settings.bridge.telegram');
+    if (platform === 'feishu') return t('settings.bridge.feishu');
+    return t('settings.bridge.qq');
+  };
+
+  const platformHint = (platform: BridgePlatform) => {
+    if (platform === 'telegram') return t('settings.bridge.telegramHint');
+    if (platform === 'feishu') return t('settings.bridge.feishuHint');
+    return t('settings.bridge.qqHint');
+  };
+
+  const defaultBotName = (platform: BridgePlatform) => `${platformName(platform)} Bot`;
+  const defaultAgentId = agents[0]?.id || '';
+
+  const getAgentName = (agentId?: string | null, fallback?: string | null) => {
+    if (fallback) return fallback;
+    if (!agentId) return t('settings.bridge.unboundAgent');
+    const hit = agents.find((a) => a.id === agentId);
+    return hit?.name || agentId;
+  };
+
+  const toDraft = (platform: BridgePlatform, bot: BridgeBotStatus): BotDraft => ({
+    id: bot.id || '',
+    name: (bot.name || defaultBotName(platform)).trim(),
+    appID: bot.appID || '',
+    appSecret: '',
+    appSecretMasked: bot.appSecretMasked || bot.tokenMasked || '',
+    agentId: bot.agentId || defaultAgentId,
+    enabled: bot.enabled !== false,
+  });
+
+  const makeNewDraft = (platform: BridgePlatform): BotDraft => ({
+    id: '',
+    name: defaultBotName(platform),
+    appID: '',
+    appSecret: '',
+    appSecretMasked: '',
+    agentId: defaultAgentId,
+    enabled: true,
+  });
+
+  const botsByPlatform = (platform: BridgePlatform): BridgeBotStatus[] => {
+    if (platform === 'telegram') return tgBots;
+    if (platform === 'feishu') return feishuBot ? [feishuBot] : [];
+    return qqBots;
+  };
+
+  const loadStatus = async () => {
+    try {
+      const res = await hanaFetch('/api/bridge/status');
+      const data = (await res.json()) as BridgeStatus;
+
+      setTgBots((data.telegram?.bots || []) as BridgeBotStatus[]);
+      setQqBots((data.qq?.bots || []) as BridgeBotStatus[]);
+
+      const fs = data.feishu || {};
+      const hasFeishu = !!(fs.configured || fs.appId || fs.appSecretMasked || fs.agentId || fs.name || fs.enabled);
+      if (hasFeishu) {
+        setFeishuBot({
+          id: 'feishu-main',
+          name: fs.name || defaultBotName('feishu'),
+          configured: fs.configured,
+          enabled: !!fs.enabled,
+          status: fs.status || 'disconnected',
+          error: fs.error || null,
+          appID: fs.appId || '',
+          appSecretMasked: fs.appSecretMasked || '',
+          agentId: fs.agentId || '',
+          agentName: fs.agentName || null,
+        });
+      } else {
+        setFeishuBot(null);
+      }
+    } catch (err) {
+      console.error('[bridge] load status failed:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  const setDraftField = (
+    platform: BridgePlatform,
+    target: 'new' | string,
+    updater: (draft: BotDraft) => BotDraft,
+  ) => {
+    if (target === 'new') {
+      setNewDrafts((prev) => {
+        const current = prev[platform];
+        if (!current) return prev;
+        return { ...prev, [platform]: updater(current) };
+      });
+      return;
+    }
+    const key = makeCardKey(platform, target);
+    setEditDrafts((prev) => {
+      const current = prev[key];
+      if (!current) return prev;
+      return { ...prev, [key]: updater(current) };
+    });
+  };
+
+  const clearCardState = (platform: BridgePlatform, target: 'new' | string) => {
+    const key = makeCardKey(platform, target === 'new' ? '' : target);
+    setCardResults((prev) => ({ ...prev, [key]: undefined }));
+    setCardSaving((prev) => ({ ...prev, [key]: false }));
+  };
+
+  const openNewCard = (platform: BridgePlatform) => {
+    if (platform === 'feishu' && feishuBot) {
+      toggleEditCard('feishu', feishuBot);
+      return;
+    }
+    setExpandedIds((prev) => ({ ...prev, [platform]: null }));
+    setNewDrafts((prev) => ({ ...prev, [platform]: makeNewDraft(platform) }));
+    clearCardState(platform, 'new');
+  };
+
+  const closeNewCard = (platform: BridgePlatform) => {
+    setNewDrafts((prev) => ({ ...prev, [platform]: null }));
+    clearCardState(platform, 'new');
+  };
+
+  const toggleEditCard = (platform: BridgePlatform, bot: BridgeBotStatus) => {
+    const botId = bot.id || '';
+    const key = makeCardKey(platform, botId);
+    setNewDrafts((prev) => ({ ...prev, [platform]: null }));
+    setExpandedIds((prev) => ({
+      ...prev,
+      [platform]: prev[platform] === botId ? null : botId,
+    }));
+    setEditDrafts((prev) => ({
+      ...prev,
+      [key]: toDraft(platform, bot),
+    }));
+    clearCardState(platform, botId);
+  };
+
+  const closeEditCard = (platform: BridgePlatform, botId: string) => {
+    const key = makeCardKey(platform, botId);
+    setExpandedIds((prev) => ({ ...prev, [platform]: null }));
+    setEditDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    clearCardState(platform, botId);
+  };
+
+  const testPlatform = async (platform: BridgePlatform, credentials: any) => {
+    const res = await hanaFetch('/api/bridge/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, credentials }),
+    });
+    return res.json();
+  };
+
+  const runDraftTest = async (platform: BridgePlatform, draft: BotDraft): Promise<CardResult> => {
+    try {
+      if (platform === 'telegram') {
+        const token = draft.appSecret.trim();
+        if (!token) return { tone: 'fail', text: t('settings.bridge.noToken') };
+        const data = await testPlatform('telegram', { token });
+        if (data.ok) {
+          const suffix = data.info?.username ? ` @${data.info.username}` : '';
+          return { tone: 'ok', text: t('settings.bridge.testOk') + suffix };
+        }
+        return { tone: 'fail', text: t('settings.bridge.testFail') + ': ' + (data.error || '') };
+      }
+
+      const appID = draft.appID.trim();
+      const appSecret = draft.appSecret.trim();
+      if (!appID || !appSecret) return { tone: 'fail', text: t('settings.bridge.noCredentials') };
+
+      if (platform === 'feishu') {
+        const data = await testPlatform('feishu', { appId: appID, appSecret });
+        if (data.ok) return { tone: 'ok', text: t('settings.bridge.testOk') };
+        return { tone: 'fail', text: t('settings.bridge.testFail') + ': ' + (data.error || '') };
+      }
+
+      const data = await testPlatform('qq', { appID, appSecret });
+      if (data.ok) return { tone: 'ok', text: t('settings.bridge.testOk') };
+      return { tone: 'fail', text: t('settings.bridge.testFail') + ': ' + (data.error || '') };
+    } catch (err: any) {
+      return { tone: 'fail', text: t('settings.bridge.testFail') + ': ' + err.message };
+    }
+  };
+
+  const persistMultiBot = async (platform: 'telegram' | 'qq', draft: BotDraft) => {
+    const payload = platform === 'telegram'
+      ? {
+          id: draft.id || null,
+          name: (draft.name || '').trim() || defaultBotName('telegram'),
+          token: draft.appSecret.trim() || undefined,
+          enabled: draft.enabled !== false,
+          agentId: draft.agentId || null,
+        }
+      : {
+          id: draft.id || null,
+          name: (draft.name || '').trim() || defaultBotName('qq'),
+          appID: draft.appID.trim() || undefined,
+          appSecret: draft.appSecret.trim() || undefined,
+          enabled: draft.enabled !== false,
+          agentId: draft.agentId || null,
+        };
+
+    const res = await hanaFetch('/api/bridge/bot-upsert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, bot: payload }),
+    });
+    return res.json();
+  };
+
+  const persistFeishuBot = async (draft: BotDraft) => {
+    const appId = draft.appID.trim();
+    const appSecret = draft.appSecret.trim();
+
+    const credentials: Record<string, any> = {
+      name: (draft.name || '').trim() || defaultBotName('feishu'),
+      appId,
+    };
+    if (appSecret) credentials.appSecret = appSecret;
+
+    await hanaFetch('/api/bridge/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        platform: 'feishu',
+        credentials,
+        enabled: draft.enabled !== false,
+        agentId: draft.agentId || null,
+      }),
+    });
+  };
+
+  const validateDraft = (platform: BridgePlatform, draft: BotDraft): string | null => {
+    const hasSecretInput = !!draft.appSecret.trim();
+    const hasSavedSecret = !!draft.appSecretMasked;
+    if (platform === 'telegram') {
+      if (!hasSecretInput && !hasSavedSecret) return t('settings.bridge.noToken');
+      return null;
+    }
+    if (!draft.appID.trim()) {
+      return t('settings.bridge.noCredentials');
+    }
+    if (!hasSecretInput && !hasSavedSecret) {
+      return t('settings.bridge.noCredentials');
+    }
+    return null;
+  };
+
+  const saveDraftWithTest = async (
+    platform: BridgePlatform,
+    target: 'new' | string,
+    draft: BotDraft,
+    closeCard: () => void,
+  ) => {
+    const isNew = target === 'new';
+    const hasNewSecret = !!draft.appSecret.trim();
+    const normalizedDraft = draft.agentId
+      ? draft
+      : { ...draft, agentId: defaultAgentId };
+    const key = makeCardKey(platform, target === 'new' ? '' : target);
+    const validationError = validateDraft(platform, normalizedDraft);
+    if (validationError) {
+      setCardResults((prev) => ({ ...prev, [key]: { tone: 'fail', text: validationError } }));
+      return;
+    }
+
+    setCardSaving((prev) => ({ ...prev, [key]: true }));
+    setCardResults((prev) => ({ ...prev, [key]: undefined }));
+
+    try {
+      if (platform === 'feishu') {
+        await persistFeishuBot(normalizedDraft);
+      } else {
+        await persistMultiBot(platform, normalizedDraft);
+      }
+      const shouldTest = isNew || hasNewSecret;
+      if (shouldTest) {
+        const testRes = await runDraftTest(platform, normalizedDraft);
+        setCardResults((prev) => ({ ...prev, [key]: testRes }));
+        await loadStatus();
+        if (testRes.tone === 'ok') {
+          closeCard();
+          showToast(t('settings.saved'), 'success');
+        }
+      } else {
+        await loadStatus();
+        closeCard();
+        showToast(t('settings.saved'), 'success');
+      }
+    } catch (err: any) {
+      const fail = { tone: 'fail' as CardResultTone, text: t('settings.saveFailed') + ': ' + err.message };
+      setCardResults((prev) => ({ ...prev, [key]: fail }));
+      showToast(fail.text, 'error');
+    } finally {
+      setCardSaving((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const deleteBot = async (platform: BridgePlatform, botId: string) => {
+    if (platform === 'feishu') {
+      await hanaFetch('/api/bridge/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: 'feishu',
+          credentials: { name: '', appId: '', appSecret: '' },
+          enabled: false,
+          agentId: null,
+        }),
+      });
+      return;
+    }
+
+    await hanaFetch('/api/bridge/bot-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, botId }),
+    });
+  };
+
+  const toggleBotEnabled = async (platform: BridgePlatform, bot: BridgeBotStatus, on: boolean) => {
+    try {
+      if (platform === 'feishu') {
+        const credentials: Record<string, any> = {
+          name: (bot.name || '').trim() || defaultBotName('feishu'),
+          appId: (bot.appID || '').trim(),
+        };
+
+        await hanaFetch('/api/bridge/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            platform: 'feishu',
+            credentials,
+            enabled: on,
+            agentId: bot.agentId || null,
+          }),
+        });
+      } else {
+        const draft = toDraft(platform, bot);
+        draft.enabled = on;
+        await persistMultiBot(platform, draft);
+      }
+
+      await loadStatus();
+      showToast(t('settings.saved'), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+    }
+  };
+
+  const renderConfigCard = (
+    platform: BridgePlatform,
+    target: 'new' | string,
+    draft: BotDraft,
+    onChange: (updater: (d: BotDraft) => BotDraft) => void,
+    onCancel: () => void,
+    onDelete?: () => void,
+  ) => {
+    const key = makeCardKey(platform, target === 'new' ? '' : target);
+    const result = cardResults[key];
+    const saving = !!cardSaving[key];
+    const selectedAgentId = draft.agentId || defaultAgentId;
+
+    return (
+      <div className="bridge-unified-card">
+        <div className="bridge-unified-form-row">
+          <label className="bridge-unified-form-label">{t('settings.bridge.botName')}</label>
+          <div className="bridge-unified-form-input">
+            <input
+              className="settings-input"
+              type="text"
+              value={draft.name}
+              placeholder={t('settings.bridge.botNamePlaceholder')}
+              onChange={(e) => onChange((d) => ({ ...d, name: e.target.value }))}
+            />
+          </div>
+        </div>
+
+        <div className="bridge-unified-form-row">
+          <label className="bridge-unified-form-label">{t('settings.bridge.qqAppId')}</label>
+          <div className="bridge-unified-form-input">
+            <input
+              className="settings-input"
+              type="text"
+              value={draft.appID}
+              onChange={(e) => onChange((d) => ({ ...d, appID: e.target.value }))}
+              placeholder={platform === 'telegram' ? `${t('settings.bridge.qqAppId')} (Optional)` : ''}
+            />
+          </div>
+        </div>
+
+        <div className="bridge-unified-form-row">
+          <label className="bridge-unified-form-label">{platform === 'telegram' ? `${t('settings.bridge.qqAppSecret')} / Bot Token` : t('settings.bridge.qqAppSecret')}</label>
+          <div className="bridge-unified-form-input">
+            <KeyInput
+              value={draft.appSecret}
+              onChange={(v) => onChange((d) => ({ ...d, appSecret: v }))}
+              placeholder=""
+            />
+            {draft.appSecretMasked && !draft.appSecret && (
+              <div className="bridge-unified-secret-hint">{t('settings.bridge.secretKeepHint')}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="bridge-unified-form-row">
+          <label className="bridge-unified-form-label">Agent</label>
+          <div className="bridge-unified-form-input">
+            <AgentSelect
+              agents={agents}
+              value={selectedAgentId}
+              onChange={(id) => onChange((d) => ({ ...d, agentId: id }))}
+            />
+          </div>
+        </div>
+
+        <div className="bridge-unified-card-footer">
+          <div className="bridge-unified-card-actions">
+            {onDelete && (
+              <button
+                className="bridge-delete-btn"
+                onClick={onDelete}
+                disabled={saving}
+              >
+                {t('settings.bridge.deleteBot')}
+              </button>
+            )}
+            <button
+              className="bridge-save-btn"
+              onClick={onCancel}
+              disabled={saving}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              className="bridge-save-btn bridge-save-btn-primary"
+              onClick={() => saveDraftWithTest(platform, target, draft, onCancel)}
+              disabled={saving}
+            >
+              {saving ? '...' : t('settings.save')}
+            </button>
+          </div>
+        </div>
+
+        {result && (
+          <div className={`bridge-unified-test-result ${result.tone}`}>
+            {result.text}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="settings-tab-content active" data-tab="bridge">
+      <div className="bridge-help-link-row">
+        <span
+          className="bridge-help-link"
+          onClick={() => window.dispatchEvent(new Event('hana-show-bridge-tutorial'))}
+        >
+          {t('settings.bridge.howTo')}
+        </span>
+      </div>
+
+      {PLATFORMS.map((platform) => {
+        const bots = botsByPlatform(platform);
+        const newDraft = newDrafts[platform];
+        const expandedId = expandedIds[platform];
+
+        return (
+          <section className="settings-section bridge-unified-section" key={platform}>
+            <div className="bridge-unified-head">
+              <div className="bridge-unified-divider">
+                <span>{platformName(platform)}</span>
+              </div>
+              <div className="bridge-unified-add-row">
+                <button
+                  className="bridge-add-inline-btn"
+                  title={t('settings.bridge.addBot')}
+                  aria-label={t('settings.bridge.addBot')}
+                  onClick={() => openNewCard(platform)}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div className="bridge-unified-list">
+              {bots.length === 0 && !newDraft && (
+                <div className="bridge-bot-empty">{t('settings.bridge.noBots')}</div>
+              )}
+
+              {bots.map((bot) => {
+                const botId = bot.id || '';
+                const cardKey = makeCardKey(platform, botId);
+                const opened = expandedId === botId;
+                const editDraft = editDrafts[cardKey] || toDraft(platform, bot);
+
+                return (
+                  <div key={`${platform}:${botId}`} className="bridge-unified-item">
+                    <div className="bridge-unified-summary">
+                      <button
+                        className="bridge-unified-summary-main"
+                        onClick={() => toggleEditCard(platform, bot)}
+                      >
+                        <BridgeStatusDot status={bot.status} />
+                        <div className="bridge-unified-summary-meta">
+                          <span className="bridge-unified-summary-name">{bot.name || defaultBotName(platform)}</span>
+                          <span className="bridge-unified-summary-agent">
+                            {getAgentName(bot.agentId, bot.agentName)}
+                          </span>
+                        </div>
+                      </button>
+                      <Toggle
+                        on={!!bot.enabled}
+                        onChange={(on) => toggleBotEnabled(platform, bot, on)}
+                      />
+                    </div>
+
+                    {opened && renderConfigCard(
+                      platform,
+                      botId,
+                      editDraft,
+                      (updater) => setDraftField(platform, botId, updater),
+                      () => closeEditCard(platform, botId),
+                      async () => {
+                        try {
+                          await deleteBot(platform, botId);
+                          closeEditCard(platform, botId);
+                          await loadStatus();
+                          showToast(t('settings.saved'), 'success');
+                        } catch (err: any) {
+                          showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+                        }
+                      },
+                    )}
+                  </div>
+                );
+              })}
+
+              {newDraft && renderConfigCard(
+                platform,
+                'new',
+                newDraft,
+                (updater) => setDraftField(platform, 'new', updater),
+                () => closeNewCard(platform),
+              )}
+            </div>
+
+            <span className="settings-field-hint">{platformHint(platform)}</span>
+          </section>
+        );
+      })}
     </div>
   );
 }

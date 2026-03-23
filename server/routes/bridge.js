@@ -7,8 +7,71 @@
 import fs from "fs";
 import path from "path";
 import { debugLog } from "../../lib/debug-log.js";
-import { parseSessionKey, collectKnownUsers, KNOWN_PLATFORMS } from "../../lib/bridge/session-key.js";
+import {
+  parseSessionKey,
+  KNOWN_PLATFORMS,
+  normalizeBridgeBots,
+  writeBridgeBots,
+  buildPlatformKey,
+} from "../../lib/bridge/session-key.js";
 import { t } from "../i18n.js";
+
+const MULTI_BOT_PLATFORMS = new Set(["telegram", "qq"]);
+const BRIDGE_PLATFORMS = [...KNOWN_PLATFORMS];
+
+function makeBotId() {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function parseLegacyBotIndex(botId = "") {
+  if (typeof botId !== "string" || !botId.startsWith("legacy-")) return -1;
+  const idx = Number.parseInt(botId.slice("legacy-".length), 10);
+  return Number.isInteger(idx) && idx >= 0 ? idx : -1;
+}
+
+function summarizePlatformStatus(items = []) {
+  if (items.some((x) => x.status === "connected")) return "connected";
+  if (items.some((x) => x.status === "error")) return "error";
+  return "disconnected";
+}
+
+function getAgentMap(engine) {
+  const agents = engine.listAgents?.() || [];
+  return new Map(agents.map((a) => [a.id, a.name || a.id]));
+}
+
+function normalizeBotDraft(platform, bot = {}, fallback = {}) {
+  const draft = { ...fallback, ...bot };
+  const incomingId = draft.id || "";
+  const effectiveId = incomingId && !incomingId.startsWith("legacy-")
+    ? incomingId
+    : (fallback?.id || makeBotId());
+
+  if (platform === "telegram") {
+    const token = draft.token || draft.appSecret || draft.appsecret || "";
+    return {
+      id: effectiveId,
+      name: (draft.name || "").trim() || "Telegram Bot",
+      token,
+      enabled: draft.enabled !== false,
+      agentId: draft.agentId || null,
+    };
+  }
+  if (platform === "qq") {
+    const appID = draft.appID || draft.appId || "";
+    const appSecret = draft.appSecret || draft.appsecret || draft.token || "";
+    return {
+      id: effectiveId,
+      name: (draft.name || "").trim() || "QQ Bot",
+      appID,
+      appSecret,
+      dmGuildMap: draft.dmGuildMap || {},
+      enabled: draft.enabled !== false,
+      agentId: draft.agentId || null,
+    };
+  }
+  return draft;
+}
 
 export default async function bridgeRoute(app, { engine, bridgeManager }) {
 
@@ -17,115 +80,270 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
     const prefs = engine.getPreferences();
     const bridge = prefs.bridge || {};
     const live = bridgeManager.getStatus();
+    const agentMap = getAgentMap(engine);
+    const mask = (s = "") => s.length <= 8 ? "••••" : s.slice(0, 4) + "••••" + s.slice(-4);
 
-    // 凭证做遮掩后返回，供前端回显
-    const tgToken = bridge.telegram?.token || "";
-    const fsAppId = bridge.feishu?.appId || "";
-    const fsAppSecret = bridge.feishu?.appSecret || "";
-    const mask = (s) => s.length <= 8 ? "••••" : s.slice(0, 4) + "••••" + s.slice(-4);
+    const tgBots = normalizeBridgeBots("telegram", bridge.telegram).map((bot, idx) => {
+      const botId = bot.id || `legacy-${idx}`;
+      const platformKey = buildPlatformKey("telegram", bot.id || null);
+      const st = live[platformKey] || {};
+      const token = bot.token || bot.appSecret || bot.appsecret || "";
+      return {
+        id: botId,
+        name: bot.name || "Telegram Bot",
+        configured: !!token,
+        enabled: bot.enabled !== false,
+        status: st.status || "disconnected",
+        error: st.error || null,
+        tokenMasked: token ? mask(token) : "",
+        agentId: bot.agentId || null,
+        agentName: bot.agentId ? (agentMap.get(bot.agentId) || bot.agentId) : null,
+      };
+    });
+
+    const qqBots = normalizeBridgeBots("qq", bridge.qq).map((bot, idx) => {
+      const botId = bot.id || `legacy-${idx}`;
+      const platformKey = buildPlatformKey("qq", bot.id || null);
+      const st = live[platformKey] || {};
+      const appID = bot.appID || bot.appId || "";
+      const secret = bot.appSecret || bot.appsecret || bot.token || "";
+      return {
+        id: botId,
+        name: bot.name || "QQ Bot",
+        configured: !!(appID && secret),
+        enabled: bot.enabled !== false,
+        status: st.status || "disconnected",
+        error: st.error || null,
+        appID,
+        appSecretMasked: secret ? mask(secret) : "",
+        agentId: bot.agentId || null,
+        agentName: bot.agentId ? (agentMap.get(bot.agentId) || bot.agentId) : null,
+      };
+    });
+
+    const fs = bridge.feishu || {};
+    const fsLive = live.feishu || {};
 
     return {
       telegram: {
-        configured: !!tgToken,
-        enabled: !!bridge.telegram?.enabled,
-        status: live.telegram?.status || "disconnected",
-        error: live.telegram?.error || null,
-        tokenMasked: tgToken ? mask(tgToken) : "",
+        configured: tgBots.some((b) => b.configured),
+        enabled: tgBots.some((b) => b.enabled),
+        status: summarizePlatformStatus(tgBots),
+        error: tgBots.find((b) => b.error)?.error || null,
+        bots: tgBots,
       },
       feishu: {
-        configured: !!(fsAppId && fsAppSecret),
-        enabled: !!bridge.feishu?.enabled,
-        status: live.feishu?.status || "disconnected",
-        error: live.feishu?.error || null,
-        appId: fsAppId,
-        appSecretMasked: fsAppSecret ? mask(fsAppSecret) : "",
+        configured: !!(fs.appId && fs.appSecret),
+        enabled: !!fs.enabled,
+        status: fsLive.status || "disconnected",
+        error: fsLive.error || null,
+        name: fs.name || "Feishu Bot",
+        appId: fs.appId || "",
+        appSecretMasked: fs.appSecret ? mask(fs.appSecret) : "",
+        agentId: fs.agentId || null,
+        agentName: fs.agentId ? (agentMap.get(fs.agentId) || fs.agentId) : null,
       },
       qq: {
-        configured: !!(bridge.qq?.appID && (bridge.qq?.appSecret || bridge.qq?.token)),
-        enabled: !!bridge.qq?.enabled,
-        status: live.qq?.status || "disconnected",
-        error: live.qq?.error || null,
-        appID: bridge.qq?.appID || "",
-        appSecretMasked: (bridge.qq?.appSecret || bridge.qq?.token) ? mask(bridge.qq.appSecret || bridge.qq.token) : "",
+        configured: qqBots.some((b) => b.configured),
+        enabled: qqBots.some((b) => b.enabled),
+        status: summarizePlatformStatus(qqBots),
+        error: qqBots.find((b) => b.error)?.error || null,
+        bots: qqBots,
       },
-      readOnly: !!bridge.readOnly,
-      knownUsers: collectKnownUsers(engine.getBridgeIndex()),
-      owner: bridge.owner || {},
     };
   });
 
-  /** 设置 owner（哪个账号是你） */
+  /** 兼容旧端：owner 入口（当前不再需要 owner 选择） */
   app.post("/api/bridge/owner", async (req) => {
-    const { platform, userId } = req.body || {};
-    if (!platform || !KNOWN_PLATFORMS.includes(platform)) {
-      return { ok: false, error: "invalid platform" };
-    }
-    const prefs = engine.getPreferences();
-    if (!prefs.bridge) prefs.bridge = {};
-    if (!prefs.bridge.owner) prefs.bridge.owner = {};
-    if (userId) {
-      prefs.bridge.owner[platform] = userId;
-    } else {
-      delete prefs.bridge.owner[platform];
-    }
-    engine.savePreferences(prefs);
-    debugLog()?.log("api", `POST /api/bridge/owner platform=${platform} owner=${userId ? "[set]" : "[cleared]"}`);
+    void req;
+    debugLog()?.log("api", "POST /api/bridge/owner (noop)");
     return { ok: true };
   });
 
   /** 保存凭证 + 启停平台 */
   app.post("/api/bridge/config", async (req, reply) => {
-    const { platform, credentials, enabled } = req.body || {};
-    if (!platform || !KNOWN_PLATFORMS.includes(platform)) {
+    const { platform, credentials, enabled, agentId } = req.body || {};
+    if (!platform || !BRIDGE_PLATFORMS.includes(platform)) {
       reply.code(400);
       return { error: "invalid platform" };
     }
 
     const prefs = engine.getPreferences();
     if (!prefs.bridge) prefs.bridge = {};
-    if (!prefs.bridge[platform]) prefs.bridge[platform] = {};
+    const oldCfg = prefs.bridge[platform] || {};
 
-    // 更新凭证
-    if (credentials) {
-      Object.assign(prefs.bridge[platform], credentials);
+    if (MULTI_BOT_PLATFORMS.has(platform)) {
+      // 兼容旧请求：将 platform 级 token/appID/appSecret 落到 default bot
+      const bots = normalizeBridgeBots(platform, oldCfg);
+      let defaultBot = bots.find((b) => b.id === "default");
+      if (!defaultBot) {
+        defaultBot = normalizeBotDraft(platform, { id: "default", name: "Default Bot", enabled: true });
+        bots.push(defaultBot);
+      }
+      defaultBot = normalizeBotDraft(platform, {
+        ...defaultBot,
+        ...(credentials || {}),
+        ...(typeof enabled === "boolean" ? { enabled } : {}),
+        ...(agentId !== undefined ? { agentId: agentId || null } : {}),
+      });
+
+      const nextBots = bots.map((b) => (b.id === "default" ? defaultBot : b));
+      prefs.bridge[platform] = writeBridgeBots(oldCfg, nextBots);
+      engine.savePreferences(prefs);
+      bridgeManager.startPlatformFromConfig(platform, prefs.bridge[platform]);
+      debugLog()?.log("api", `POST /api/bridge/config platform=${platform} default-bot enabled=${defaultBot.enabled !== false}`);
+      return { ok: true, botId: "default" };
     }
 
-    // 更新启用状态
-    if (typeof enabled === "boolean") {
-      prefs.bridge[platform].enabled = enabled;
-    }
+    // 单平台（飞书）
+    const cfg = { ...oldCfg };
+    if (credentials) Object.assign(cfg, credentials);
+    if (typeof enabled === "boolean") cfg.enabled = enabled;
+    if (agentId !== undefined) cfg.agentId = agentId || null;
+    prefs.bridge[platform] = cfg;
 
     engine.savePreferences(prefs);
-
-    // 启停（委托给 bridgeManager，由 ADAPTER_REGISTRY 决定凭证提取逻辑）
-    const cfg = prefs.bridge[platform];
-    if (cfg.enabled) {
-      bridgeManager.startPlatformFromConfig(platform, cfg);
-    } else {
-      bridgeManager.stopPlatform(platform);
-    }
-
+    bridgeManager.startPlatformFromConfig(platform, cfg);
     debugLog()?.log("api", `POST /api/bridge/config platform=${platform} enabled=${!!cfg.enabled}`);
     return { ok: true };
   });
 
-  /** 更新 bridge 全局设置（readOnly 等） */
-  app.post("/api/bridge/settings", async (req) => {
-    const { readOnly } = req.body || {};
+  /** 多 bot：新增或更新 bot */
+  app.post("/api/bridge/bot-upsert", async (req, reply) => {
+    const { platform, bot } = req.body || {};
+    if (!MULTI_BOT_PLATFORMS.has(platform)) {
+      reply.code(400);
+      return { error: "platform must be telegram or qq" };
+    }
+    if (!bot || typeof bot !== "object") {
+      reply.code(400);
+      return { error: "bot is required" };
+    }
+
     const prefs = engine.getPreferences();
     if (!prefs.bridge) prefs.bridge = {};
-    if (typeof readOnly === "boolean") prefs.bridge.readOnly = readOnly;
+    const oldCfg = prefs.bridge[platform] || {};
+    const bots = normalizeBridgeBots(platform, oldCfg);
+    const incomingId = typeof bot.id === "string" ? bot.id.trim() : "";
+    let idx = incomingId && !incomingId.startsWith("legacy-")
+      ? bots.findIndex((b) => b.id === incomingId)
+      : -1;
+    if (idx < 0 && incomingId.startsWith("legacy-")) {
+      const legacyIdx = parseLegacyBotIndex(incomingId);
+      if (legacyIdx >= 0 && legacyIdx < bots.length) idx = legacyIdx;
+    }
+    if (idx < 0 && !incomingId && bots.length === 1) idx = 0;
+    const prev = idx >= 0 ? bots[idx] : null;
+    const merged = normalizeBotDraft(platform, { ...bot, id: incomingId }, prev || undefined);
+    const prevToken = prev?.token || prev?.appSecret || prev?.appsecret || "";
+    const prevAppID = prev?.appID || prev?.appId || "";
+
+    if (platform === "telegram" && !(merged.token || prevToken)) {
+      reply.code(400);
+      return { error: "token required" };
+    }
+    if (platform === "qq" && !(merged.appID || prevAppID)) {
+      reply.code(400);
+      return { error: "appID required" };
+    }
+    if (platform === "qq" && !(merged.appSecret || prevToken)) {
+      reply.code(400);
+      return { error: "appSecret required" };
+    }
+
+    if (!merged.token && prevToken) merged.token = prevToken;
+    if (!merged.appID && prevAppID) merged.appID = prevAppID;
+    if (!merged.appSecret && prevToken) merged.appSecret = prevToken;
+    if (!merged.dmGuildMap && prev?.dmGuildMap) merged.dmGuildMap = prev.dmGuildMap;
+
+    if (idx >= 0) bots[idx] = merged;
+    else bots.push(merged);
+
+    prefs.bridge[platform] = writeBridgeBots(oldCfg, bots);
     engine.savePreferences(prefs);
-    debugLog()?.log("api", `POST /api/bridge/settings readOnly=${prefs.bridge.readOnly}`);
+    bridgeManager.startPlatformFromConfig(platform, prefs.bridge[platform]);
+    return { ok: true, bot: { id: merged.id } };
+  });
+
+  /** 多 bot：删除 bot */
+  app.post("/api/bridge/bot-delete", async (req, reply) => {
+    const { platform, botId } = req.body || {};
+    if (!MULTI_BOT_PLATFORMS.has(platform) || !botId) {
+      reply.code(400);
+      return { error: "platform and botId required" };
+    }
+
+    const prefs = engine.getPreferences();
+    if (!prefs.bridge) prefs.bridge = {};
+    const oldCfg = prefs.bridge[platform] || {};
+    const baseBots = normalizeBridgeBots(platform, oldCfg);
+    const legacyIdx = parseLegacyBotIndex(botId);
+    const bots = legacyIdx >= 0
+      ? baseBots.filter((_, i) => i !== legacyIdx)
+      : baseBots.filter((b) => b.id !== botId);
+    prefs.bridge[platform] = writeBridgeBots(oldCfg, bots);
+    engine.savePreferences(prefs);
+    bridgeManager.startPlatformFromConfig(platform, prefs.bridge[platform]);
+    return { ok: true };
+  });
+
+  /** 多 bot：绑定 agent */
+  app.post("/api/bridge/bot-bind", async (req, reply) => {
+    const { platform, botId, agentId } = req.body || {};
+    if (!MULTI_BOT_PLATFORMS.has(platform) || !botId) {
+      reply.code(400);
+      return { error: "platform and botId required" };
+    }
+
+    const prefs = engine.getPreferences();
+    if (!prefs.bridge) prefs.bridge = {};
+    const oldCfg = prefs.bridge[platform] || {};
+    const bots = normalizeBridgeBots(platform, oldCfg);
+    let idx = bots.findIndex((b) => b.id === botId);
+    if (idx < 0) {
+      const legacyIdx = parseLegacyBotIndex(botId);
+      if (legacyIdx >= 0 && legacyIdx < bots.length) idx = legacyIdx;
+    }
+    if (idx < 0) {
+      reply.code(404);
+      return { error: "bot not found" };
+    }
+    bots[idx] = { ...bots[idx], agentId: agentId || null };
+    prefs.bridge[platform] = writeBridgeBots(oldCfg, bots);
+    engine.savePreferences(prefs);
+    bridgeManager.startPlatformFromConfig(platform, prefs.bridge[platform]);
+    return { ok: true };
+  });
+
+  /** 单平台：绑定 agent（飞书） */
+  app.post("/api/bridge/platform-bind", async (req, reply) => {
+    const { platform, agentId } = req.body || {};
+    if (!platform || platform !== "feishu") {
+      reply.code(400);
+      return { error: "platform must be feishu" };
+    }
+    const prefs = engine.getPreferences();
+    if (!prefs.bridge) prefs.bridge = {};
+    const cfg = { ...(prefs.bridge[platform] || {}), agentId: agentId || null };
+    prefs.bridge[platform] = cfg;
+    engine.savePreferences(prefs);
+    bridgeManager.startPlatformFromConfig(platform, cfg);
+    return { ok: true };
+  });
+
+  /** 兼容旧端：bridge 全局设置入口（当前无可写项） */
+  app.post("/api/bridge/settings", async (req) => {
+    void req;
+    debugLog()?.log("api", "POST /api/bridge/settings (noop)");
     return { ok: true };
   });
 
   /** 停止指定平台 */
   app.post("/api/bridge/stop", async (req, reply) => {
     const { platform } = req.body || {};
-    if (!platform) {
+    if (!platform || !BRIDGE_PLATFORMS.includes(platform)) {
       reply.code(400);
-      return { error: "platform required" };
+      return { error: "invalid platform" };
     }
 
     bridgeManager.stopPlatform(platform);
@@ -133,7 +351,13 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
     // 同步更新 preferences
     const prefs = engine.getPreferences();
     if (prefs.bridge?.[platform]) {
-      prefs.bridge[platform].enabled = false;
+      if (MULTI_BOT_PLATFORMS.has(platform)) {
+        const oldCfg = prefs.bridge[platform] || {};
+        const bots = normalizeBridgeBots(platform, oldCfg).map((b) => ({ ...b, enabled: false }));
+        prefs.bridge[platform] = writeBridgeBots(oldCfg, bots);
+      } else {
+        prefs.bridge[platform].enabled = false;
+      }
       engine.savePreferences(prefs);
     }
 
@@ -152,8 +376,6 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
     const platform = req.query?.platform; // optional filter
     const index = engine.getBridgeIndex();
     const bridgeDir = path.join(engine.agent.sessionDir, "bridge");
-    const prefs = engine.getPreferences();
-    const owner = prefs.bridge?.owner || {};
     const sessions = [];
 
     for (const [sessionKey, raw] of Object.entries(index)) {
@@ -163,7 +385,7 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
       if (!file) continue;
 
       // 解析 sessionKey → 平台 + 类型
-      const { platform: plat, chatType, chatId } = parseSessionKey(sessionKey);
+      const { platform: plat, platformKey, botId, chatType, chatId } = parseSessionKey(sessionKey);
 
       // 按平台过滤
       if (platform && plat !== platform) continue;
@@ -176,15 +398,10 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
         lastActive = stat.mtimeMs;
       } catch {}
 
-      // isOwner 运行时计算：entry.userId 匹配 prefs.bridge.owner[platform]
-      const ownerUserId = owner[plat] || null;
-      const isOwner = !!(entry.userId && ownerUserId && entry.userId === ownerUserId);
-
       sessions.push({
-        sessionKey, platform: plat, chatType, chatId, file, lastActive,
+        sessionKey, platform: plat, platformKey, botId, chatType, chatId, file, lastActive,
         displayName: entry.name || null,
         avatarUrl: entry.avatarUrl || null,
-        isOwner,
       });
     }
 

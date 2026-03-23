@@ -23,11 +23,18 @@ interface StatusData {
   [key: string]: { status: string; configured?: boolean } | undefined;
 }
 
+type BridgePlatform = 'feishu' | 'telegram' | 'qq';
+
+function normalizeBridgeTab(raw: string | null): BridgePlatform {
+  if (raw === 'telegram' || raw === 'qq' || raw === 'feishu') return raw;
+  return 'feishu';
+}
+
 export function BridgePanel() {
   const activePanel = useStore(s => s.activePanel);
   const setActivePanel = useStore(s => s.setActivePanel);
 
-  const [platform, setPlatform] = useState(() => localStorage.getItem('hana_bridge_tab') || 'feishu');
+  const [platform, setPlatform] = useState<BridgePlatform>(() => normalizeBridgeTab(localStorage.getItem('hana_bridge_tab')));
   const [sessions, setSessions] = useState<BridgeSession[]>([]);
   const [currentKey, setCurrentKey] = useState<string | null>(null);
   const [currentName, setCurrentName] = useState('');
@@ -52,7 +59,7 @@ export function BridgePanel() {
   }, []);
 
   // 加载平台数据
-  const loadPlatformData = useCallback(async (plat: string) => {
+  const loadPlatformData = useCallback(async (plat: BridgePlatform) => {
     try {
       const [statusRes, sessionsRes] = await Promise.all([
         hanaFetch('/api/bridge/status'),
@@ -111,7 +118,7 @@ export function BridgePanel() {
     };
   }, [activePanel, platform, loadStatus, loadPlatformData]);
 
-  const switchTab = useCallback((plat: string) => {
+  const switchTab = useCallback((plat: BridgePlatform) => {
     setPlatform(plat);
     setCurrentKey(null);
     setChatOpen(false);
@@ -153,7 +160,6 @@ export function BridgePanel() {
   const t = window.t ?? ((p: string) => p);
   const tgStatus = statusData.telegram?.status;
   const fsStatus = statusData.feishu?.status;
-  const waStatus = statusData.whatsapp?.status;
   const qqStatus = statusData.qq?.status;
 
   return (
@@ -174,13 +180,6 @@ export function BridgePanel() {
             >
               <span className={'bridge-tab-dot' + dotClass(tgStatus)} />
               Telegram
-            </button>
-            <button
-              className={'bridge-tab' + (platform === 'whatsapp' ? ' active' : '')}
-              onClick={() => switchTab('whatsapp')}
-            >
-              <span className={'bridge-tab-dot' + dotClass(waStatus)} />
-              WhatsApp
             </button>
             <button
               className={'bridge-tab' + (platform === 'qq' ? ' active' : '')}
@@ -207,7 +206,7 @@ export function BridgePanel() {
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
                 <div className="bridge-overlay-text">
-                  {t('bridge.notConfigured', { platform: platform === 'telegram' ? 'Telegram' : platform === 'whatsapp' ? 'WhatsApp' : platform === 'qq' ? 'QQ' : t('settings.bridge.feishu') })}
+                  {t('bridge.notConfigured', { platform: platform === 'telegram' ? 'Telegram' : platform === 'qq' ? 'QQ' : t('settings.bridge.feishu') })}
                 </div>
                 <button className="bridge-overlay-btn" onClick={() => window.platform.openSettings('bridge')}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -286,7 +285,7 @@ function dotClass(status?: string): string {
 }
 
 function updateSidebarDot(data: Record<string, { status: string } | undefined>) {
-  const anyConnected = data.telegram?.status === 'connected' || data.feishu?.status === 'connected' || data.whatsapp?.status === 'connected' || data.qq?.status === 'connected';
+  const anyConnected = data.telegram?.status === 'connected' || data.feishu?.status === 'connected' || data.qq?.status === 'connected';
   useStore.setState({ bridgeDotConnected: anyConnected });
 }
 

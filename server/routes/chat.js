@@ -52,7 +52,7 @@ export default async function chatRoute(app, { engine, hub }) {
       disconnectAbortTimer = null;
       if (activeWsClients > 0) return;
 
-      // 中断所有正在 streaming 的 owner session（焦点 + 后台）
+      // 中断所有正在 streaming 的会话（焦点 + 后台）
       debugLog()?.log("ws", `no clients for ${DISCONNECT_ABORT_GRACE_MS}ms, aborting all streaming`);
       engine.abortAllStreaming().catch(() => {});
     }, DISCONNECT_ABORT_GRACE_MS);

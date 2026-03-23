@@ -55,12 +55,11 @@ export async function loadSettingsConfig() {
   try {
     const agentId = store.getSettingsAgentId();
     const agentBase = `/api/agents/${agentId}`;
-    const [configRes, identityRes, ishikiRes, publicIshikiRes, userProfileRes, pinnedRes, globalModelsRes, experienceRes] =
+    const [configRes, identityRes, ishikiRes, userProfileRes, pinnedRes, globalModelsRes, experienceRes] =
       await Promise.all([
         hanaFetch(`${agentBase}/config`),
         hanaFetch(`${agentBase}/identity`),
         hanaFetch(`${agentBase}/ishiki`),
-        hanaFetch(`${agentBase}/public-ishiki`),
         hanaFetch('/api/user-profile'),
         hanaFetch(`${agentBase}/pinned`),
         hanaFetch('/api/preferences/models'),
@@ -73,8 +72,6 @@ export async function loadSettingsConfig() {
     config._identity = identityData.content || '';
     const ishikiData = await ishikiRes.json();
     config._ishiki = ishikiData.content || '';
-    const publicIshikiData = await publicIshikiRes.json();
-    config._publicIshiki = publicIshikiData.content || '';
     const userProfileData = await userProfileRes.json();
     config._userProfile = userProfileData.content || '';
     const pinnedData = await pinnedRes.json();

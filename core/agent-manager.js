@@ -82,14 +82,13 @@ export class AgentManager {
     this._activeAgentId = startId;
 
     const sharedModels = this._d.getSharedModels();
-    const getOwnerIds = () => this._d.getPrefs().getPreferences()?.bridge?.owner || {};
     const resolveModel = (bareId, agentConfig) =>
       this._d.getModels().resolveModelWithCredentials(bareId, agentConfig);
 
     const entries = this._scanAgentDirs();
     const initOne = async (agentId) => {
       const agentDir = path.join(this._d.agentsDir, agentId);
-      const ag = this._createAgentInstance(agentDir, getOwnerIds);
+      const ag = this._createAgentInstance(agentDir);
       await ag.init(
         agentId === this._activeAgentId ? log : () => {},
         sharedModels,
@@ -234,8 +233,7 @@ export class AgentManager {
     this._d.getChannelManager().setupChannelsForNewAgent(agentId);
 
     // 初始化并加入长驻 Map
-    const getOwnerIds = () => this._d.getPrefs().getPreferences()?.bridge?.owner || {};
-    const ag = this._createAgentInstance(agentDir, getOwnerIds);
+    const ag = this._createAgentInstance(agentDir);
     const resolveModel = (bareId, agentConfig) =>
       this._d.getModels().resolveModelWithCredentials(bareId, agentConfig);
     try {
@@ -406,7 +404,7 @@ export class AgentManager {
     } catch { return []; }
   }
 
-  _createAgentInstance(agentDir, getOwnerIds) {
+  _createAgentInstance(agentDir) {
     const ag = new Agent({
       agentDir,
       productDir: this._d.productDir,
@@ -415,7 +413,6 @@ export class AgentManager {
       agentsDir: this._d.agentsDir,
       searchConfigResolver: () => this._d.getSearchConfig(),
     });
-    ag._getOwnerIds = getOwnerIds;
     ag._engine = this._d.getEngine?.() || null;
     ag._onInstallCallback = async (skillName) => {
       const skills = this._d.getSkills();

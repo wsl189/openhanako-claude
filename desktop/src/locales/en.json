@@ -820,6 +820,7 @@
       "testFail": "Test failed",
       "noToken": "Please enter Bot Token first",
       "noCredentials": "Please enter App ID and App Secret first",
+      "secretKeepHint": "Secret already saved. Leave blank to keep unchanged",
       "readOnly": "Read-only mode",
       "readOnlyDesc": "Bridge bots can only read files, no writing or command execution",
       "howTo": "Setup Guide",
@@ -839,6 +840,13 @@
       "ownerConfirmText": "The Owner has full Agent access, including memory, tools, and personality. Make sure this is your own account.",
       "ownerConfirmCancel": "Cancel",
       "ownerConfirmSave": "Confirm",
+      "addBot": "Add Bot",
+      "noBots": "No bots yet. Click Add Bot to create one.",
+      "botName": "Bot Name",
+      "botNamePlaceholder": "Bot name (optional)",
+      "unboundAgent": "Unbound Agent",
+      "bindAgent": "Bind",
+      "deleteBot": "Delete Bot",
       "tutorialFsSteps": [
         "Go to <code>open.feishu.cn</code>, log in and open the Developer Console",
         "Click \"Create Enterprise Custom App\", fill in the app name and description",
@@ -849,8 +857,7 @@
         "Click \"Add Event\", add <code>im.message.receive_v1</code> (receive messages)",
         "Important: Go to \"Version Management\", create and publish a version first (long connection config requires a published app)",
         "Paste the App ID and App Secret into the input fields above and turn on the switch"
-      ],
-      "whatsappHint": "Coming soon"
+      ]
     }
   },
   "onboarding": {

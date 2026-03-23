@@ -84,6 +84,7 @@ export class Hub {
    * @param {boolean} [opts.ephemeral]   true = 不持久化 session（cron/heartbeat/channel）
    * @param {object}  [opts.meta]        Bridge 元数据 { name, avatarUrl, userId }
    * @param {boolean} [opts.isGroup]     是否群聊（影响 guest 上下文标签）
+   * @param {string}  [opts.agentId]     指定绑定的 agent（bridge 多 bot）
    * @param {string}  [opts.cwd]         工作目录覆盖
    * @param {string}  [opts.model]       模型覆盖
    * @param {string}  [opts.persist]     持久化目录（activity session）
@@ -96,6 +97,7 @@ export class Hub {
       ephemeral = false,
       meta,
       isGroup = false,
+      agentId,
       cwd,
       model,
       persist,
@@ -105,7 +107,7 @@ export class Hub {
       images,
       sessionPath,
     } = opts;
-    const o = { sessionKey, role, ephemeral, meta, isGroup, cwd, model, persist, from, to, onDelta, images, sessionPath };
+    const o = { sessionKey, role, ephemeral, meta, isGroup, agentId, cwd, model, persist, from, to, onDelta, images, sessionPath };
 
     // 路由表：按顺序匹配，第一条命中即执行。
     // 优先级通过位置保证，新增路由在此处显式插入，不依赖散落在各处的 if 顺序。
