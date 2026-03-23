@@ -232,7 +232,6 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
       const legacyIdx = parseLegacyBotIndex(incomingId);
       if (legacyIdx >= 0 && legacyIdx < bots.length) idx = legacyIdx;
     }
-    if (idx < 0 && !incomingId && bots.length === 1) idx = 0;
     const prev = idx >= 0 ? bots[idx] : null;
     const merged = normalizeBotDraft(platform, { ...bot, id: incomingId }, prev || undefined);
     const prevToken = prev?.token || prev?.appSecret || prev?.appsecret || "";

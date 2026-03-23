@@ -117,6 +117,24 @@ export default async function deskRoute(app, { engine, hub }) {
     return (jobs || []).map(job => ({ ...job, agentId, agentName }));
   }
 
+  /** 聚合所有 agent 的 cron 任务（用于前端全量任务计划视图） */
+  function listAllCronJobs() {
+    const all = [];
+    for (const ag of engine.listAgents()) {
+      const store = engine.getAgent(ag.id)?.cronStore;
+      if (!store) continue;
+      const jobs = store.listJobs() || [];
+      for (const job of jobs) {
+        all.push({
+          ...job,
+          agentId: ag.id,
+          agentName: ag.name || ag.id,
+        });
+      }
+    }
+    return all;
+  }
+
   /** 从所有 agent 的 activityStore 中按 ID 查找 entry */
   function findActivityEntry(activityId) {
     for (const ag of engine.listAgents()) {
@@ -250,6 +268,12 @@ export default async function deskRoute(app, { engine, hub }) {
 
   /** 列出 cron 任务 */
   app.get("/api/desk/cron", async (req) => {
+    const allFlagRaw = req.query?.all;
+    const all = allFlagRaw === "1" || allFlagRaw === "true" || allFlagRaw === 1 || allFlagRaw === true;
+    if (all) {
+      return { jobs: listAllCronJobs(), agentId: null, agentName: null };
+    }
+
     const { store, agentId, agentName } = resolveCronTarget(req.query || {});
     if (!store) return { jobs: [], agentId, agentName };
     return {

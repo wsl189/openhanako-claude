@@ -69,9 +69,9 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 async function fetchAutomationCount(sessionPath: string | null): Promise<number | null> {
+  void sessionPath;
   try {
-    const query = sessionPath ? `?sessionPath=${encodeURIComponent(sessionPath)}` : '';
-    const res = await hanaFetch(`/api/desk/cron${query}`);
+    const res = await hanaFetch('/api/desk/cron?all=1');
     const data = await res.json();
     return (data.jobs || []).length;
   } catch {

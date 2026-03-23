@@ -17,7 +17,6 @@ interface CronJob {
 
 export function AutomationPanel() {
   const activePanel = useStore(s => s.activePanel);
-  const currentSessionPath = useStore(s => s.currentSessionPath);
   const agents = useStore(s => s.agents);
 
   const [jobs, setJobs] = useState<CronJob[]>([]);
@@ -25,9 +24,8 @@ export function AutomationPanel() {
 
   const loadData = useCallback(async () => {
     try {
-      const query = currentSessionPath ? `?sessionPath=${encodeURIComponent(currentSessionPath)}` : '';
       const [cronRes, favRes] = await Promise.all([
-        hanaFetch(`/api/desk/cron${query}`),
+        hanaFetch('/api/desk/cron?all=1'),
         hanaFetch('/api/favorites'),
       ]);
       const cronData = await cronRes.json();
@@ -39,54 +37,54 @@ export function AutomationPanel() {
     } catch (err) {
       console.error('[automation] load failed:', err);
     }
-  }, [currentSessionPath]);
+  }, []);
 
   useEffect(() => {
     if (activePanel === 'automation') loadData();
-  }, [activePanel, loadData, currentSessionPath]);
+  }, [activePanel, loadData]);
 
   const close = useCallback(() => {
     useStore.getState().setActivePanel(null);
   }, []);
 
-  const toggleJob = useCallback(async (jobId: string) => {
+  const toggleJob = useCallback(async (jobId: string, agentId?: string) => {
     try {
       await hanaFetch('/api/desk/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'toggle', id: jobId, sessionPath: currentSessionPath }),
+        body: JSON.stringify({ action: 'toggle', id: jobId, ...(agentId ? { agentId } : {}) }),
       });
       await loadData();
     } catch (err) {
       console.error('[automation] toggle failed:', err);
     }
-  }, [loadData, currentSessionPath]);
+  }, [loadData]);
 
-  const removeJob = useCallback(async (jobId: string) => {
+  const removeJob = useCallback(async (jobId: string, agentId?: string) => {
     try {
       await hanaFetch('/api/desk/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'remove', id: jobId, sessionPath: currentSessionPath }),
+        body: JSON.stringify({ action: 'remove', id: jobId, ...(agentId ? { agentId } : {}) }),
       });
       await loadData();
     } catch (err) {
       console.error('[automation] remove failed:', err);
     }
-  }, [loadData, currentSessionPath]);
+  }, [loadData]);
 
-  const updateJob = useCallback(async (jobId: string, fields: Record<string, unknown>) => {
+  const updateJob = useCallback(async (jobId: string, fields: Record<string, unknown>, agentId?: string) => {
     try {
       await hanaFetch('/api/desk/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update', id: jobId, ...fields, sessionPath: currentSessionPath }),
+        body: JSON.stringify({ action: 'update', id: jobId, ...fields, ...(agentId ? { agentId } : {}) }),
       });
       await loadData();
     } catch (err) {
       console.error('[automation] update failed:', err);
     }
-  }, [loadData, currentSessionPath]);
+  }, [loadData]);
 
   if (activePanel !== 'automation') return null;
 
@@ -141,9 +139,9 @@ function AutomationItem({
   job: CronJob;
   agents: Array<{ id: string; name: string; yuan: string }>;
   favorites: string[];
-  onToggle: (id: string) => void;
-  onRemove: (id: string) => void;
-  onUpdate: (id: string, fields: Record<string, unknown>) => void;
+  onToggle: (id: string, agentId?: string) => void;
+  onRemove: (id: string, agentId?: string) => void;
+  onUpdate: (id: string, fields: Record<string, unknown>, agentId?: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -166,10 +164,10 @@ function AutomationItem({
   const commitEdit = useCallback(() => {
     const newText = editValue.trim();
     if (newText && newText !== labelText) {
-      onUpdate(job.id, { label: newText });
+      onUpdate(job.id, { label: newText }, job.agentId);
     }
     setEditing(false);
-  }, [editValue, labelText, job.id, onUpdate]);
+  }, [editValue, labelText, job.id, job.agentId, onUpdate]);
 
   const ownerAgent = agents.find(a => a.id === job.agentId);
   const rawOwnerName = job.agentName || ownerAgent?.name || job.agentId || '';
@@ -191,7 +189,7 @@ function AutomationItem({
       <button
         className={'hana-toggle' + (job.enabled ? ' on' : '')}
         title={job.enabled ? 'Disable' : 'Enable'}
-        onClick={() => onToggle(job.id)}
+        onClick={() => onToggle(job.id, job.agentId)}
       />
       <div className="auto-item-info">
         {editing ? (
@@ -226,7 +224,7 @@ function AutomationItem({
                 className="auto-item-model-select"
                 title="Model"
                 value={job.model || ''}
-                onChange={e => onUpdate(job.id, { model: e.target.value })}
+                onChange={e => onUpdate(job.id, { model: e.target.value }, job.agentId)}
               >
                 <option value="">{(window.t ?? ((p: string) => p))('automation.defaultModel')}</option>
                 {modelOptions.map(mid => (
@@ -244,7 +242,7 @@ function AutomationItem({
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
           </svg>
         </button>
-        <button className="auto-item-btn danger" title={(window.t ?? ((p: string) => p))('automation.delete')} onClick={() => onRemove(job.id)}>
+        <button className="auto-item-btn danger" title={(window.t ?? ((p: string) => p))('automation.delete')} onClick={() => onRemove(job.id, job.agentId)}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="3 6 5 6 21 6" />
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />

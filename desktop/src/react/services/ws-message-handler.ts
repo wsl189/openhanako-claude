@@ -249,11 +249,29 @@ export function handleServerMessage(msg: any): void {
       }
       break;
 
-    case 'notification':
-      if ((window as any).hana?.showNotification) {
-        (window as any).hana.showNotification(msg.title, msg.body);
+    case 'notification': {
+      const title = typeof msg.title === 'string' && msg.title.trim() ? msg.title.trim() : '提醒';
+      const body = typeof msg.body === 'string' ? msg.body.trim() : '';
+
+      // 提醒类弹窗常驻显示（duration=0），并使用高对比样式增强可见性。
+      useStore.getState().addToast(body ? `${title} ${body}` : title, 'reminder', 0);
+
+      const showNotification = (window as any).platform?.showNotification || (window as any).hana?.showNotification;
+      if (typeof showNotification === 'function') {
+        Promise.resolve(showNotification(title, body))
+          .then((ret: any) => {
+            if (ret === false || ret?.ok === false) {
+              const reason = ret?.reason ? String(ret.reason) : 'not supported';
+              useStore.getState().addToast(`系统通知未显示: ${reason}`, 'error', 8_000);
+            }
+          })
+          .catch((err: any) => {
+            const reason = err?.message ? String(err.message) : 'unknown error';
+            useStore.getState().addToast(`系统通知失败: ${reason}`, 'error', 8_000);
+          });
       }
       break;
+    }
 
     case 'bridge_status':
       (window as any).__hanaBridgeLoadStatus?.();

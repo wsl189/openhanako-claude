@@ -5655,6 +5655,12 @@ body.resizing .jian-sidebar-inner {
     background: var(--danger);
     color: #fff;
 }
+.hana-toast.reminder {
+    background: linear-gradient(135deg, #edf6ff 0%, #d4e9ff 100%);
+    color: #0f355e;
+    border: 1px solid rgba(59, 122, 187, 0.35);
+    box-shadow: 0 8px 24px rgba(59, 122, 187, 0.2);
+}
 .hana-toast-close {
     display: flex;
     align-items: center;

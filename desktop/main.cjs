@@ -14,6 +14,11 @@ const path = require("path");
 const { fork, execFileSync } = require("child_process");
 const fs = require("fs");
 
+// Windows 通知必须绑定 AppUserModelID，否则常见“任务触发但通知不弹窗”。
+if (process.platform === "win32") {
+  try { app.setAppUserModelId("com.hanako.app"); } catch {}
+}
+
 // macOS/Linux: Electron 从 Dock/Finder 启动时 PATH 只有系统默认值，
 // Homebrew、npm global 等路径全部丢失。用登录 shell 解析完整 PATH。
 if (process.platform !== "win32") {
@@ -1836,20 +1841,37 @@ ipcMain.handle("reload-main-window", () => {
 
 // 系统通知（由 agent 的 notify 工具触发）
 ipcMain.handle("show-notification", (_event, title, body) => {
-  if (!Notification.isSupported()) return;
-  const notif = new Notification({
-    title: title || "Hana",
-    body: body || "",
-    silent: false,
-  });
-  notif.on("click", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+  if (!Notification.isSupported()) return { ok: false, reason: "notification_not_supported" };
+
+  if (process.platform === "darwin") {
+    const settings = systemPreferences.getNotificationSettings?.();
+    const status = settings?.authorizationStatus;
+    if (status === "denied") {
+      return { ok: false, reason: "notification_permission_denied" };
     }
-  });
-  notif.show();
+  }
+
+  try {
+    const notif = new Notification({
+      title: title || "Hana",
+      body: body || "",
+      silent: false,
+    });
+    notif.on("click", () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+    notif.show();
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err?.message ? String(err.message) : "notification_show_failed",
+    };
+  }
 });
 
 // ── 窗口控制 IPC（Windows/Linux 自绘标题栏用）──

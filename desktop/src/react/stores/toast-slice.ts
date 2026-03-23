@@ -1,7 +1,7 @@
 export interface Toast {
   id: number;
   text: string;
-  type: 'success' | 'error' | 'info';
+  type: 'success' | 'error' | 'info' | 'reminder';
 }
 
 export interface ToastSlice {

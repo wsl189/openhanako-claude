@@ -6,7 +6,7 @@
  *
  * Agent 切换时只 reload heartbeat，cron 持续跑。
  *
- * 通知策略：agent 自行决定是否调用 notify 工具，scheduler 不做通知判断。
+ * 通知策略：优先由 agent 自主调用 notify；提醒类 cron 若未调用，则 scheduler 补发兜底通知。
  */
 
 import fs from "fs";
@@ -14,6 +14,7 @@ import path from "path";
 import { createHeartbeat } from "../lib/desk/heartbeat.js";
 import { createCronScheduler } from "../lib/desk/cron-scheduler.js";
 import { CronStore } from "../lib/desk/cron-store.js";
+import { isToolCallBlock } from "../core/llm-utils.js";
 import { getLocale } from "../server/i18n.js";
 
 export class Scheduler {
@@ -171,12 +172,16 @@ export class Scheduler {
     this._executingJobs.set(job.id, ac);
     try {
       const isZh = getLocale().startsWith("zh");
+      const isReminderJob = this._isReminderJob(job);
       const prompt = isZh
         ? [
             `[定时任务 ${job.id}: ${job.label}]`,
             "",
             "**注意：这是系统自动触发的定时任务，不是用户发来的。**",
             "**不要在执行过程中创建新的定时任务。**",
+            ...(isReminderJob
+              ? ["**这是提醒任务：完成后必须调用 notify 工具通知用户。**", ""]
+              : []),
             "",
             job.prompt,
           ].join("\n")
@@ -185,13 +190,24 @@ export class Scheduler {
             "",
             "**Note: This is an automated cron job, NOT a user message.**",
             "**Do not create new cron jobs during execution.**",
+            ...(isReminderJob
+              ? ["**This is a reminder task: you must call notify after finishing.**", ""]
+              : []),
             "",
             job.prompt,
           ].join("\n");
-      await this._executeActivityForAgent(agentId, prompt, "cron", job.label, {
+      const activity = await this._executeActivityForAgent(agentId, prompt, "cron", job.label, {
         model: job.model || undefined,
         signal: ac.signal,
       });
+
+      // 兜底：提醒类任务如果模型没有调用 notify，补发一次系统通知。
+      if (isReminderJob && activity?.sessionPath) {
+        const parsed = this._parseActivitySession(activity.sessionPath);
+        if (!parsed.hasNotifyCall) {
+          this._emitReminderFallback(agentId, job, parsed.assistantText, activity.summary);
+        }
+      }
     } finally {
       this._executingJobs.delete(job.id);
     }
@@ -267,6 +283,7 @@ export class Scheduler {
     }
 
     engine.emitDevLog(`活动记录: ${entry.summary}`, "heartbeat");
+    return { entry, sessionPath, summary: entry.summary };
   }
 
   /**
@@ -274,5 +291,71 @@ export class Scheduler {
    */
   _executeActivity(prompt, type, label, opts = {}) {
     return this._executeActivityForAgent(this._engine.currentAgentId, prompt, type, label, opts);
+  }
+
+  _isReminderJob(job) {
+    const text = `${job?.label || ""}\n${job?.prompt || ""}`.toLowerCase();
+    const keywords = [
+      "提醒", "通知", "叫我", "记得", "提示", "闹钟",
+      "remind", "reminder", "notify", "notification", "alert", "ping",
+    ];
+    return keywords.some(k => text.includes(k));
+  }
+
+  _parseActivitySession(sessionPath) {
+    try {
+      const raw = fs.readFileSync(sessionPath, "utf-8");
+      const lines = raw.split("\n");
+      let hasNotifyCall = false;
+      const assistantParts = [];
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let entry;
+        try { entry = JSON.parse(line); } catch { continue; }
+        if (entry?.type !== "message" || !entry.message) continue;
+        const msg = entry.message;
+        if (msg.role !== "assistant") continue;
+        const content = Array.isArray(msg.content) ? msg.content : [];
+        for (const block of content) {
+          if (block?.type === "text" && block.text) assistantParts.push(block.text);
+          if (isToolCallBlock(block) && block.name === "notify") {
+            hasNotifyCall = true;
+          }
+        }
+      }
+
+      return {
+        hasNotifyCall,
+        assistantText: assistantParts.join("\n").trim(),
+      };
+    } catch {
+      return { hasNotifyCall: false, assistantText: "" };
+    }
+  }
+
+  _emitReminderFallback(agentId, job, assistantText, summary) {
+    const isZh = getLocale().startsWith("zh");
+    const title = String(job?.label || "").trim() || (isZh ? "定时提醒" : "Scheduled reminder");
+    const cleanAssistant = String(assistantText || "")
+      .replace(/[*_`>#-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const cleanPrompt = String(job?.prompt || "")
+      .replace(/[*_`>#-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const cleanSummary = String(summary || "").trim();
+    const body = (
+      cleanAssistant
+      || cleanSummary
+      || cleanPrompt
+      || (isZh ? "你的定时任务已触发。" : "Your scheduled task has run.")
+    ).slice(0, 240);
+
+    this._hub.eventBus.emit(
+      { type: "notification", title, body, agentId, source: "cron_fallback", jobId: job?.id },
+      null,
+    );
   }
 }

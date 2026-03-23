@@ -231,11 +231,11 @@ export class Hub {
   }
 
   _setupNotifyHandler() {
-    const agent = this._engine.agent;
-    if (!agent) return;
-    agent._notifyHandler = (title, body) => {
-      this._eventBus.emit({ type: "notification", title, body }, null);
-    };
+    for (const [, agent] of this._engine.agents || []) {
+      agent._notifyHandler = (title, body) => {
+        this._eventBus.emit({ type: "notification", title, body }, null);
+      };
+    }
   }
 
 }
