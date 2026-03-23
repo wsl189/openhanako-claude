@@ -66,6 +66,21 @@ export async function openFilePreview(filePath: string, label: string, ext: stri
     return;
   }
 
+  if (ext === 'pdf') {
+    // PDF 统一走流式 URL（/api/fs/file），避免 data URL 过长或内置查看器兼容问题导致白屏
+    const artifact: Artifact = {
+      id: `file-${filePath}`,
+      type: 'pdf',
+      title: fileName,
+      content: '',
+      filePath,
+      ext,
+    };
+    upsertArtifact(artifact);
+    openPreview(artifact);
+    return;
+  }
+
   const canPreview = ext in PREVIEWABLE_EXTS;
   if (canPreview) {
     const content = await readFileForPreview(filePath, ext);

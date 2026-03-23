@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../stores';
+import { hanaUrl } from '../hooks/use-hana-fetch';
 import { renderMarkdown } from '../utils/markdown';
 import { parseCSV, injectCopyButtons } from '../utils/format';
 import { fileIconSvg } from '../utils/icons';
@@ -139,7 +140,11 @@ export function PreviewPanel() {
       case 'pdf': {
         const iframe = document.createElement('iframe');
         iframe.className = 'preview-pdf';
-        iframe.src = `data:application/pdf;base64,${artifact.content}`;
+        if (artifact.filePath) {
+          iframe.src = hanaUrl(`/api/fs/file?path=${encodeURIComponent(artifact.filePath)}`);
+        } else if (artifact.content) {
+          iframe.src = `data:application/pdf;base64,${artifact.content}`;
+        }
         body.appendChild(iframe);
         break;
       }

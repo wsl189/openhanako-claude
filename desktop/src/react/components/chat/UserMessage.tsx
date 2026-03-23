@@ -6,7 +6,6 @@ import { memo, useCallback, useEffect, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
 import type { ChatMessage, UserAttachment, DeskContext } from '../../stores/chat-types';
 import { useStore } from '../../stores';
-import { hanaUrl } from '../../hooks/use-hana-fetch';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -55,6 +54,94 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar }: Pr
 
 // ── 附件区 ──
 
+const MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+};
+
+function attachmentMime(att: UserAttachment): string {
+  if (att.mimeType) return att.mimeType;
+  const ext = (att.name.split('.').pop() || '').toLowerCase();
+  return MIME_BY_EXT[ext] || 'image/png';
+}
+
+const AttachmentFileCard = memo(function AttachmentFileCard({ att }: { att: UserAttachment }) {
+  const ext = att.name.split('.').pop() || '';
+  return (
+    <div className="attach-file">
+      <span className="attach-file-icon">
+        {att.isDir ? (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+        ) : (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+        )}
+      </span>
+      <span className="attach-file-name">{att.name}</span>
+      {ext && <span className="attach-file-ext">{ext}</span>}
+    </div>
+  );
+});
+
+const AttachmentImage = memo(function AttachmentImage({ att }: { att: UserAttachment }) {
+  const [src, setSrc] = useState<string | null>(() => {
+    if (!att.base64Data) return null;
+    return `data:${attachmentMime(att)};base64,${att.base64Data}`;
+  });
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    setErrored(false);
+    if (att.base64Data) {
+      setSrc(`data:${attachmentMime(att)};base64,${att.base64Data}`);
+      return;
+    }
+    const platform = (window as any).platform;
+    if (!att.path || !platform?.readFileBase64) {
+      setSrc(null);
+      return;
+    }
+
+    let cancelled = false;
+    platform.readFileBase64(att.path)
+      .then((base64: string | null) => {
+        if (cancelled) return;
+        if (!base64) {
+          setSrc(null);
+          return;
+        }
+        setSrc(`data:${attachmentMime(att)};base64,${base64}`);
+      })
+      .catch(() => {
+        if (!cancelled) setSrc(null);
+      });
+    return () => { cancelled = true; };
+  }, [att.path, att.name, att.base64Data, att.mimeType]);
+
+  if (src && !errored) {
+    return (
+      <img
+        className="attach-image"
+        src={src}
+        alt={att.name}
+        loading="lazy"
+        onError={() => setErrored(true)}
+      />
+    );
+  }
+  return <AttachmentFileCard att={att} />;
+});
+
 const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, deskContext }: {
   attachments: UserAttachment[];
   deskContext?: DeskContext | null;
@@ -66,47 +153,10 @@ const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, des
   return (
     <div className="user-attachments">
       {attachments.map((att, i) => {
-        if (isImage(att) && att.base64Data) {
-          return (
-            <img
-              key={i}
-              className="attach-image"
-              src={`data:${att.mimeType || 'image/png'};base64,${att.base64Data}`}
-              alt={att.name}
-              loading="lazy"
-            />
-          );
-        }
         if (isImage(att)) {
-          return (
-            <img
-              key={i}
-              className="attach-image"
-              src={hanaUrl(`/api/desk/file?path=${encodeURIComponent(att.path)}`)}
-              alt={att.name}
-              loading="lazy"
-            />
-          );
+          return <AttachmentImage key={i} att={att} />;
         }
-        const ext = att.name.split('.').pop() || '';
-        return (
-          <div key={i} className="attach-file">
-            <span className="attach-file-icon">
-              {att.isDir ? (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                </svg>
-              ) : (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                </svg>
-              )}
-            </span>
-            <span className="attach-file-name">{att.name}</span>
-            {ext && <span className="attach-file-ext">{ext}</span>}
-          </div>
-        );
+        return <AttachmentFileCard key={i} att={att} />;
       })}
       {deskContext && (
         <div className="attach-file attach-desk">

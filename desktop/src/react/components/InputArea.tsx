@@ -362,18 +362,22 @@ function InputAreaInner() {
       // 图片文件读 base64 编码
       const hana = (window as any).hana;
       const images: Array<{ type: 'image'; data: string; mimeType: string }> = [];
+      const inlineImageMap = new Map<string, { base64Data: string; mimeType: string }>();
       if (imageFiles.length > 0) {
         for (const img of imageFiles) {
           try {
             if (img.base64Data && img.mimeType) {
               // 内联 base64（粘贴图片）
               images.push({ type: 'image', data: img.base64Data, mimeType: img.mimeType });
+              inlineImageMap.set(img.path, { base64Data: img.base64Data, mimeType: img.mimeType });
             } else if (hana?.readFileBase64) {
               const base64: string = await hana.readFileBase64(img.path);
               if (base64) {
                 const ext = img.name.toLowerCase().replace(/^.*\./, '');
                 const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' };
-                images.push({ type: 'image', data: base64, mimeType: mimeMap[ext] || 'image/png' });
+                const mimeType = mimeMap[ext] || 'image/png';
+                images.push({ type: 'image', data: base64, mimeType });
+                inlineImageMap.set(img.path, { base64Data: base64, mimeType });
               }
             }
           } catch {
@@ -412,7 +416,18 @@ function InputAreaInner() {
             role: 'user',
             text,
             textHtml: renderMarkdown(text),
-            attachments: allFiles.length > 0 ? allFiles.map((f: any) => ({ path: f.path, name: f.name, isDir: false })) : undefined,
+            attachments: allFiles.length > 0
+              ? allFiles.map((f: any) => {
+                const inlineImage = inlineImageMap.get(f.path);
+                return {
+                  path: f.path,
+                  name: f.name,
+                  isDir: !!f.isDirectory,
+                  base64Data: inlineImage?.base64Data ?? f.base64Data,
+                  mimeType: inlineImage?.mimeType ?? f.mimeType,
+                };
+              })
+              : undefined,
           },
         });
         useStore.setState({ welcomeVisible: false });
