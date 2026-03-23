@@ -24,6 +24,7 @@ export class BridgeSessionManager {
    * @param {object} deps - 注入依赖（不持有 engine 引用）
    * @param {() => object} deps.getAgent - 返回当前 agent（需 sessionDir, yuanPrompt）
    * @param {(id: string) => object|null} deps.getAgentById - 按 ID 获取 agent
+   * @param {(agent: object) => object} [deps.getSkillsForAgent] - 获取指定 agent 的 skills
    * @param {() => import('./model-manager.js').ModelManager} deps.getModelManager
    * @param {() => object} deps.getResourceLoader
    * @param {() => object} deps.getPreferences
@@ -185,17 +186,25 @@ export class BridgeSessionManager {
       // 外部会话统一走完整 agent 能力（记忆 + 工具）
       const prefs = this._deps.getPreferences();
       const bridgeCwd = homeCwd;
-      const { tools: bridgeTools, customTools: bridgeCustomTools } = this._deps.buildTools(bridgeCwd, null, { workspace: homeCwd });
+      const { tools: bridgeTools, customTools: bridgeCustomTools } = this._deps.buildTools(
+        bridgeCwd,
+        agent.tools,
+        { agentDir: agent.agentDir, workspace: homeCwd },
+      );
 
       const model = this._resolveBridgeModel(mm, agent);
 
       const baseRL = this._deps.getResourceLoader();
-      const rl = Object.create(baseRL);
-      const baseGetSystemPrompt = baseRL.getSystemPrompt.bind(baseRL);
-      rl.getSystemPrompt = (...args) => {
-        const sp = baseGetSystemPrompt(...args);
-        return `${sp}\n\n${mediaInstruction}`;
-      };
+      const rl = Object.create(baseRL, {
+        getSystemPrompt: {
+          value: () => `${agent.systemPrompt}\n\n${mediaInstruction}`,
+        },
+      });
+      if (this._deps.getSkillsForAgent) {
+        Object.defineProperty(rl, "getSkills", {
+          value: () => this._deps.getSkillsForAgent(agent),
+        });
+      }
 
       const sessionOpts = {
         model,
