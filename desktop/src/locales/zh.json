@@ -1033,6 +1033,7 @@
     "sessionNotFound": "Session 文件不存在",
     "stillStreaming": "{name} 还在说话，请等一下",
     "agentNameEmpty": "助手名字不能为空",
+    "agentNameExists": "名字 \"{name}\" 已存在",
     "agentIdInvalid": "助手 ID 包含非法字符",
     "agentAlreadyExists": "助手 \"{id}\" 已存在",
     "agentSwitching": "正在切换助手，请稍后再试",

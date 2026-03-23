@@ -48,6 +48,51 @@ function mask(key) {
   return key.slice(0, 4) + "..." + key.slice(-4);
 }
 
+const DEFAULT_YUAN_CANDIDATES = ["hanako", "butter", "ming", "kong"];
+
+function readTextSafe(p) {
+  try { return fsSync.readFileSync(p, "utf-8"); } catch { return ""; }
+}
+
+function resolvePersonaTemplate(productDir, kind, yuan, isZh) {
+  const baseDir = kind === "identity" ? "identity-templates" : "ishiki-templates";
+  const example = kind === "identity" ? "identity.example.md" : "ishiki.example.md";
+  const langDir = isZh ? "" : "en/";
+  return readTextSafe(path.join(productDir, baseDir, `${langDir}${yuan}.md`))
+    || readTextSafe(path.join(productDir, baseDir, `${yuan}.md`))
+    || readTextSafe(path.join(productDir, example));
+}
+
+function fillPersonaTemplate(tmpl, ctx) {
+  return String(tmpl || "")
+    .replace(/\{\{agentName\}\}/g, ctx.agentName || "")
+    .replace(/\{\{userName\}\}/g, ctx.userName || "")
+    .replace(/\{\{agentId\}\}/g, ctx.agentId || "");
+}
+
+function buildDefaultPersonaSet(productDir, kind, ctx) {
+  const out = new Set();
+  for (const isZh of [true, false]) {
+    for (const yuan of DEFAULT_YUAN_CANDIDATES) {
+      const tmpl = resolvePersonaTemplate(productDir, kind, yuan, isZh);
+      if (!tmpl) continue;
+      const filled = fillPersonaTemplate(tmpl, ctx).trim();
+      if (filled) out.add(filled);
+    }
+  }
+  return out;
+}
+
+function isDefaultPersonaContent(content, productDir, kind, contexts) {
+  const cur = String(content || "").trim();
+  if (!cur) return true;
+  for (const ctx of contexts) {
+    const defaults = buildDefaultPersonaSet(productDir, kind, ctx);
+    if (defaults.has(cur)) return true;
+  }
+  return false;
+}
+
 export default async function agentsRoute(app, { engine }) {
 
   // ════════════════════════════
@@ -73,7 +118,11 @@ export default async function agentsRoute(app, { engine }) {
       const result = await engine.createAgent({ name, id, yuan });
       return { ok: true, ...result };
     } catch (err) {
-      reply.code(err.message.includes("已存在") ? 409 : 500);
+      const isConflict = err?.code === "AGENT_NAME_EXISTS"
+        || err?.code === "AGENT_ID_EXISTS"
+        || err.message.includes("已存在")
+        || err.message.includes("already exists");
+      reply.code(isConflict ? 409 : 500);
       return { error: err.message };
     }
   });
@@ -255,6 +304,16 @@ export default async function agentsRoute(app, { engine }) {
         reply.code(400);
         return { error: "invalid JSON body" };
       }
+      const configPath = path.join(agentDir(engine, id), "config.yaml");
+      const oldCfg = YAML.load(fsSync.readFileSync(configPath, "utf-8")) || {};
+      const oldYuan = oldCfg?.agent?.yuan || "hanako";
+      const oldName = oldCfg?.agent?.name || id;
+      const oldUserName = oldCfg?.user?.name || "";
+      const oldCtx = { agentId: id, agentName: oldName, userName: oldUserName };
+      const identityPath = path.join(agentDir(engine, id), "identity.md");
+      const ishikiPath = path.join(agentDir(engine, id), "ishiki.md");
+      const identityBefore = readTextSafe(identityPath);
+      const ishikiBefore = readTextSafe(ishikiPath);
       // ── 全局设置拦截：存 preferences / providers.yaml 而非 agent config ──
 
       // thinking_level → 全局 preferences
@@ -346,17 +405,55 @@ export default async function agentsRoute(app, { engine }) {
         }
       }
 
-      const configPath = path.join(agentDir(engine, id), "config.yaml");
-      saveConfig(configPath, partial);
-      engine.invalidateAgentListCache();
-      // active agent 需要额外触发模块刷新 + prompt 重建
+      // active agent 走统一更新链路（含模型/会话联动）
       if (isActiveAgent(engine, id)) {
         await engine.updateConfig(partial);
+      } else {
+        // 非 active agent 也要刷新内存实例，避免 ask_agent / dm 继续使用旧身份
+        const targetAgent = engine.getAgent(id);
+        if (targetAgent) targetAgent.updateConfig(partial);
+        else saveConfig(configPath, partial);
       }
+      engine.invalidateAgentListCache();
       // 记忆总开关：无论是否 active agent，都需要刷新运行时状态（因为 ticker 后台在跑）
       if (partial.memory && "enabled" in partial.memory) {
         engine.setMemoryMasterEnabled(id, partial.memory.enabled !== false);
       }
+
+      // 切换 yuan：默认内容自动切到新模板；用户自定义内容保持不动
+      const newYuan = partial?.agent?.yuan;
+      if (newYuan && newYuan !== oldYuan) {
+        const newCfg = YAML.load(fsSync.readFileSync(configPath, "utf-8")) || {};
+        const newCtx = {
+          agentId: id,
+          agentName: newCfg?.agent?.name || oldName || id,
+          userName: newCfg?.user?.name || oldUserName || "",
+        };
+        const contexts = [newCtx, oldCtx];
+        let personaTouched = false;
+        const isZh = String(newCfg?.locale || engine.getLocale?.() || "").startsWith("zh");
+
+        if (isDefaultPersonaContent(identityBefore, engine.productDir, "identity", contexts)) {
+          const tmpl = resolvePersonaTemplate(engine.productDir, "identity", newYuan, isZh);
+          if (tmpl) {
+            fsSync.writeFileSync(identityPath, fillPersonaTemplate(tmpl, newCtx), "utf-8");
+            personaTouched = true;
+          }
+        }
+        if (isDefaultPersonaContent(ishikiBefore, engine.productDir, "ishiki", contexts)) {
+          const tmpl = resolvePersonaTemplate(engine.productDir, "ishiki", newYuan, isZh);
+          if (tmpl) {
+            fsSync.writeFileSync(ishikiPath, fillPersonaTemplate(tmpl, newCtx), "utf-8");
+            personaTouched = true;
+          }
+        }
+        if (personaTouched) {
+          engine.invalidateAgentListCache();
+          const targetAgent = engine.getAgent(id);
+          if (targetAgent) targetAgent.refreshSystemPrompt();
+        }
+      }
+
       return { ok: true };
     } catch (err) {
       reply.code(500);
@@ -398,7 +495,8 @@ export default async function agentsRoute(app, { engine }) {
       }
       await fs.writeFile(path.join(agentDir(engine, id), "identity.md"), content, "utf-8");
       engine.invalidateAgentListCache();
-      if (isActiveAgent(engine, id)) await engine.updateConfig({});
+      const targetAgent = engine.getAgent(id);
+      if (targetAgent) targetAgent.refreshSystemPrompt();
       return { ok: true };
     } catch (err) {
       reply.code(500);
@@ -439,7 +537,8 @@ export default async function agentsRoute(app, { engine }) {
         return { error: "content must be a string" };
       }
       await fs.writeFile(path.join(agentDir(engine, id), "ishiki.md"), content, "utf-8");
-      if (isActiveAgent(engine, id)) await engine.updateConfig({});
+      const targetAgent = engine.getAgent(id);
+      if (targetAgent) targetAgent.refreshSystemPrompt();
       return { ok: true };
     } catch (err) {
       reply.code(500);

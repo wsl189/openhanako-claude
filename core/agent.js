@@ -444,10 +444,10 @@ export class Agent {
     saveConfig(this.configPath, partial);
     this._config = loadConfig(this.configPath);
 
-    // 更新身份
+    // 更新身份（无条件回填，确保外部改动后的 refresh 也能生效）
     const isZh = String(this._config.locale || "").startsWith("zh");
-    if (partial.agent?.name) this.agentName = this._config.agent?.name || "Hanako";
-    if (partial.user?.name) this.userName = this._config.user?.name || (isZh ? "用户" : "User");
+    this.agentName = this._config.agent?.name || "Hanako";
+    this.userName = this._config.user?.name || (isZh ? "用户" : "User");
 
     // yuan 切换只需更新 config，buildSystemPrompt 会实时读模板
     if (partial.agent?.yuan) {
@@ -477,10 +477,11 @@ export class Agent {
   /** 返回纯人格 prompt（identity + yuan + ishiki），不含记忆、用户档案等 */
   get personality() {
     const isZh = String(this._config.locale || "").startsWith("zh");
+    const agentId = path.basename(this.agentDir);
     const fill = (text) => text
       .replace(/\{\{userName\}\}/g, this.userName)
       .replace(/\{\{agentName\}\}/g, this.agentName)
-      .replace(/\{\{agentId\}\}/g, path.basename(this.agentDir));
+      .replace(/\{\{agentId\}\}/g, agentId);
     const readFile = (p) => { try { return fs.readFileSync(p, "utf-8"); } catch { return ""; } };
     const langDir = isZh ? "" : "en/";
     const yuanType = this._config?.agent?.yuan || "hanako";
@@ -493,7 +494,20 @@ export class Agent {
       || readFile(path.join(this.productDir, "ishiki-templates", `${langDir}${yuanType}.md`))
       || readFile(path.join(this.productDir, "ishiki-templates", `${yuanType}.md`))
       || readFile(path.join(this.productDir, "ishiki.example.md"));
-    return fill(identityMd) + "\n\n" + fill(yuanMd || "") + "\n\n" + fill(ishikiMd);
+    const identityAnchor = isZh
+      ? [
+          "# 身份锚点",
+          `- 你的名字是「${this.agentName}」(agentId: ${agentId})。`,
+          `- 当用户问“你是谁 / 你叫什么”时，直接回答“我叫${this.agentName}”。`,
+          "- 除非用户明确要求你改名，否则不要自称为其他名字。",
+        ].join("\n")
+      : [
+          "# Identity Anchor",
+          `- Your name is "${this.agentName}" (agentId: ${agentId}).`,
+          `- If asked who you are / what your name is, answer: "My name is ${this.agentName}."`,
+          "- Do not claim any other name unless the user explicitly asks you to rename yourself.",
+        ].join("\n");
+    return identityAnchor + "\n\n" + fill(identityMd) + "\n\n" + fill(yuanMd || "") + "\n\n" + fill(ishikiMd);
   }
 
   /** 读取 yuan 模板（能力定义） */

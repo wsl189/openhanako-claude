@@ -11,6 +11,7 @@ export function AgentCreateOverlay() {
   const [visible, setVisible] = useState(false);
   const [name, setName] = useState('');
   const [yuan, setYuan] = useState('hanako');
+  const [errorMessage, setErrorMessage] = useState('');
   const [creating, setCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
@@ -19,6 +20,7 @@ export function AgentCreateOverlay() {
     const handler = () => {
       setName('');
       setYuan('hanako');
+      setErrorMessage('');
       setVisible(true);
       requestAnimationFrame(() => inputRef.current?.focus());
     };
@@ -31,9 +33,15 @@ export function AgentCreateOverlay() {
   const create = async () => {
     if (creating) return;
     const trimmed = name.trim();
-    if (!trimmed) { showToast(t('settings.agent.nameRequired'), 'error'); return; }
+    if (!trimmed) {
+      const msg = t('settings.agent.nameRequired');
+      setErrorMessage(msg);
+      showToast(msg, 'error');
+      return;
+    }
 
     setCreating(true);
+    setErrorMessage('');
     try {
       const res = await hanaFetch('/api/agents', {
         method: 'POST',
@@ -48,7 +56,11 @@ export function AgentCreateOverlay() {
       await loadAgents();
       await browseAgent(data.id);
     } catch (err: any) {
-      showToast(t('settings.agent.createFailed') + ': ' + err.message, 'error');
+      const raw = String(err?.message || '');
+      const detail = raw.includes(' - ') ? (raw.split(' - ').pop() || raw) : raw;
+      const msg = detail.trim() || t('settings.agent.createFailed');
+      setErrorMessage(msg);
+      showToast(t('settings.agent.createFailed') + ': ' + msg, 'error');
     } finally {
       setCreating(false);
     }
@@ -70,7 +82,7 @@ export function AgentCreateOverlay() {
             type="text"
             placeholder={t('settings.agent.namePlaceholder')}
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => { setName(e.target.value); if (errorMessage) setErrorMessage(''); }}
             onCompositionStart={() => { composingRef.current = true; }}
             onCompositionEnd={() => { composingRef.current = false; }}
             onKeyDown={(e) => {
@@ -80,6 +92,7 @@ export function AgentCreateOverlay() {
               if (e.key === 'Escape') close();
             }}
           />
+          {!!errorMessage && <div className="agent-create-error">{errorMessage}</div>}
         </div>
         <div className="settings-field">
           <div className="yuan-selector">

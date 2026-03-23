@@ -185,13 +185,38 @@ async function init(): Promise<void> {
       case 'agent-deleted':
         loadAgents();
         break;
-      case 'agent-updated':
+      case 'agent-updated': {
+        const payload = data || {};
+        const { agentId, agentName, yuan } = payload;
+        const state = useStore.getState();
+
+        // Optimistic patch so welcome/session avatars update immediately.
+        if (agentId) {
+          const agents = state.agents.map((agent) => {
+            if (agent.id !== agentId) return agent;
+            return {
+              ...agent,
+              ...(typeof agentName === 'string' ? { name: agentName } : {}),
+              ...(typeof yuan === 'string' ? { yuan } : {}),
+            };
+          });
+
+          const patch: Record<string, unknown> = { agents };
+          if (state.currentAgentId === agentId) {
+            if (typeof agentName === 'string') patch.agentName = agentName;
+            if (typeof yuan === 'string') patch.agentYuan = yuan;
+          }
+          useStore.setState(patch);
+        }
+
+        const isCurrent = agentId && agentId === state.currentAgentId;
         applyAgentIdentity({
-          agentName: data.agentName,
-          agentId: data.agentId,
+          agentName: isCurrent ? agentName : undefined,
+          yuan: isCurrent ? yuan : undefined,
           ui: { settings: false },
         });
         break;
+      }
       case 'theme-changed':
         setTheme(data.theme);
         break;

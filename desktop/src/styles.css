@@ -6438,6 +6438,12 @@ body.resizing .jian-sidebar-inner {
     color: var(--text);
 }
 
+.agent-create-error {
+    margin-top: 0.35rem;
+    font-size: 0.78rem;
+    color: var(--coral);
+}
+
 .agent-create-actions {
     display: flex;
     justify-content: flex-end;
@@ -8003,7 +8009,7 @@ body.resizing .jian-sidebar-inner {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.4s ease-out;
-    z-index: 90;
+    z-index: 1200;
 }
 
 .settings-toast.show {

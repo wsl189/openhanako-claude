@@ -133,7 +133,7 @@ function WelcomeAvatar({ agentId, hasAvatar, agentAvatarUrl, yuan, name }: {
     } else {
       setSrc(yuanFallbackAvatar(yuan));
     }
-  }, [agentId, agentAvatarUrl, yuan]);
+  }, [agentId, hasAvatar, agentAvatarUrl, yuan]);
 
   const handleError = useCallback(() => {
     setSrc(yuanFallbackAvatar(yuan));
@@ -182,6 +182,14 @@ function AgentChip({ agent, isSelected, onClick }: {
   const [src, setSrc] = useState(() =>
     agent.hasAvatar ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`) : yuanFallbackAvatar(agent.yuan),
   );
+
+  useEffect(() => {
+    if (agent.hasAvatar) {
+      setSrc(hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`));
+    } else {
+      setSrc(yuanFallbackAvatar(agent.yuan));
+    }
+  }, [agent.id, agent.hasAvatar, agent.yuan]);
 
   const handleError = useCallback(() => {
     setSrc(yuanFallbackAvatar(agent.yuan));

@@ -1033,6 +1033,7 @@
     "sessionNotFound": "Session file not found",
     "stillStreaming": "{name} is still responding, please wait",
     "agentNameEmpty": "Agent name cannot be empty",
+    "agentNameExists": "Name \"{name}\" already exists",
     "agentIdInvalid": "Agent ID contains invalid characters",
     "agentAlreadyExists": "Agent \"{id}\" already exists",
     "agentSwitching": "Agent switch in progress, please wait",

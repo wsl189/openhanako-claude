@@ -179,13 +179,27 @@ export class AgentManager {
 
   async createAgent({ name, id, yuan }) {
     if (!name?.trim()) throw new Error(t("error.agentNameEmpty"));
+    const safeNameInput = name.trim();
 
-    const agentId = id?.trim() || await this._generateAgentId(name);
+    // 显示名去重：创建时不允许与现有助手重名（忽略大小写与首尾空格）
+    const normalizedNewName = safeNameInput.toLowerCase();
+    const duplicated = this._scanAgentList().find((a) =>
+      String(a?.name || "").trim().toLowerCase() === normalizedNewName
+    );
+    if (duplicated) {
+      const err = new Error(t("error.agentNameExists", { name: safeNameInput }));
+      err.code = "AGENT_NAME_EXISTS";
+      throw err;
+    }
+
+    const agentId = id?.trim() || await this._generateAgentId(safeNameInput);
     if (/[\/\\]|\.\./.test(agentId)) throw new Error(t("error.agentIdInvalid"));
     const agentDir = path.join(this._d.agentsDir, agentId);
 
     if (fs.existsSync(agentDir)) {
-      throw new Error(t("error.agentAlreadyExists", { id: agentId }));
+      const err = new Error(t("error.agentAlreadyExists", { id: agentId }));
+      err.code = "AGENT_ID_EXISTS";
+      throw err;
     }
 
     // 创建目录结构
@@ -198,7 +212,7 @@ export class AgentManager {
     const templateConfig = fs.readFileSync(path.join(this._d.productDir, "config.example.yaml"), "utf-8");
     const currentAgent = this.agent;
     const userName = currentAgent?.userName || "";
-    const safeName = name.trim().replace(/"/g, '\\"');
+    const safeName = safeNameInput.replace(/"/g, '\\"');
     const VALID_YUAN = ["hanako", "butter", "ming"];
     const yuanType = VALID_YUAN.includes(yuan) ? yuan : "hanako";
     let config = templateConfig.replace(/name: Hanako/, `name: "${safeName}"`);
@@ -213,20 +227,31 @@ export class AgentManager {
     }
     fs.writeFileSync(path.join(agentDir, "config.yaml"), config, "utf-8");
 
-    // identity.md
-    const identityTemplate = path.join(this._d.productDir, "identity.example.md");
-    if (fs.existsSync(identityTemplate)) {
-      const tmpl = fs.readFileSync(identityTemplate, "utf-8");
-      const filled = tmpl
-        .replace(/\{\{agentName\}\}/g, name.trim())
-        .replace(/\{\{userName\}\}/g, currentAgent?.userName || t("error.fallbackUserName"));
+    // identity.md（按 yuan 选择模板，缺失时回退 identity.example.md）
+    const isZh = String(currentAgent?.config?.locale || "").startsWith("zh");
+    const langDir = isZh ? "" : "en/";
+    const readText = (p) => { try { return fs.readFileSync(p, "utf-8"); } catch { return ""; } };
+    const identityTmpl = readText(path.join(this._d.productDir, "identity-templates", `${langDir}${yuanType}.md`))
+      || readText(path.join(this._d.productDir, "identity-templates", `${yuanType}.md`))
+      || readText(path.join(this._d.productDir, "identity.example.md"));
+    if (identityTmpl) {
+      const filled = identityTmpl
+        .replace(/\{\{agentName\}\}/g, safeNameInput)
+        .replace(/\{\{userName\}\}/g, currentAgent?.userName || t("error.fallbackUserName"))
+        .replace(/\{\{agentId\}\}/g, agentId);
       fs.writeFileSync(path.join(agentDir, "identity.md"), filled, "utf-8");
     }
 
-    // ishiki.md
-    const ishikiSrc = path.join(this._d.productDir, "ishiki.example.md");
-    if (fs.existsSync(ishikiSrc)) {
-      fs.copyFileSync(ishikiSrc, path.join(agentDir, "ishiki.md"));
+    // ishiki.md（按 yuan 选择模板，缺失时回退 ishiki.example.md）
+    const ishikiTmpl = readText(path.join(this._d.productDir, "ishiki-templates", `${langDir}${yuanType}.md`))
+      || readText(path.join(this._d.productDir, "ishiki-templates", `${yuanType}.md`))
+      || readText(path.join(this._d.productDir, "ishiki.example.md"));
+    if (ishikiTmpl) {
+      const filled = ishikiTmpl
+        .replace(/\{\{agentName\}\}/g, safeNameInput)
+        .replace(/\{\{userName\}\}/g, currentAgent?.userName || t("error.fallbackUserName"))
+        .replace(/\{\{agentId\}\}/g, agentId);
+      fs.writeFileSync(path.join(agentDir, "ishiki.md"), filled, "utf-8");
     }
 
     // 频道系统
@@ -256,8 +281,8 @@ export class AgentManager {
     }
 
     this.invalidateAgentListCache();
-    log.log(`创建助手: ${name} (${agentId})`);
-    return { id: agentId, name: name.trim() };
+    log.log(`创建助手: ${safeNameInput} (${agentId})`);
+    return { id: agentId, name: safeNameInput };
   }
 
   // ── Switch ──
