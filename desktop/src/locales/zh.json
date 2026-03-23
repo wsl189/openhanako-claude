@@ -45,6 +45,7 @@
     "expand": "展开对话列表",
     "empty": "还没有对话哦 ✿",
     "activity": "助手活动",
+    "platformChat": "平台对话",
     "jian": "书桌",
     "bridge": "接入社交平台",
     "toggle": "侧边栏",
@@ -1015,7 +1016,9 @@
     "background": "后台浏览器"
   },
   "bridge": {
+    "selectAgent": "选择一个助手",
     "selectChat": "选择一个对话",
+    "noAgents": "暂无已绑定助手",
     "noSessions": "暂无对话",
     "noMessages": "暂无消息",
     "empty": "暂无消息记录",

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { formatSessionDate, parseMoodFromContent } from '../utils/format';
@@ -6,15 +6,35 @@ import { renderMarkdown } from '../utils/markdown';
 
 interface BridgeSession {
   sessionKey: string;
+  platform: string;
   chatId: string;
   displayName?: string;
   avatarUrl?: string;
   lastActive?: number;
+  agentId?: string;
+  agentName?: string;
 }
 
 interface BridgeMessage {
   role: string;
   content: string;
+  timestamp?: number | null;
+}
+
+interface BridgeHistorySession extends BridgeSession {
+  messages: BridgeMessage[];
+}
+
+interface BoundAgent {
+  id: string;
+  name: string;
+}
+
+interface BridgeAgentItem {
+  agentId: string;
+  agentName: string;
+  avatarUrl?: string;
+  lastActive?: number;
 }
 
 interface StatusData {
@@ -30,23 +50,87 @@ function normalizeBridgeTab(raw: string | null): BridgePlatform {
   return 'feishu';
 }
 
+function isGenericUserLabel(v?: string | null): boolean {
+  const s = (v || '').trim();
+  return /^(user|用户)$/iu.test(s);
+}
+
+function buildAgentItems(sessions: BridgeSession[], boundAgents: BoundAgent[]): BridgeAgentItem[] {
+  const map = new Map<string, BridgeAgentItem>();
+
+  for (const agent of boundAgents || []) {
+    if (!agent?.id) continue;
+    map.set(agent.id, {
+      agentId: agent.id,
+      agentName: agent.name || agent.id,
+      lastActive: 0,
+    });
+  }
+
+  for (const s of sessions || []) {
+    if (!s.agentId) continue;
+    const prev = map.get(s.agentId);
+    const nextLast = s.lastActive || 0;
+    if (!prev) {
+      map.set(s.agentId, {
+        agentId: s.agentId,
+        agentName: s.agentName || s.agentId,
+        avatarUrl: s.avatarUrl,
+        lastActive: nextLast,
+      });
+      continue;
+    }
+    if (nextLast > (prev.lastActive || 0)) {
+      prev.lastActive = nextLast;
+      if (s.avatarUrl) prev.avatarUrl = s.avatarUrl;
+    }
+    if (!prev.agentName && s.agentName) prev.agentName = s.agentName;
+  }
+
+  return [...map.values()].sort((a, b) => {
+    const at = a.lastActive || 0;
+    const bt = b.lastActive || 0;
+    if (at !== bt) return bt - at;
+    return a.agentName.localeCompare(b.agentName, 'zh-Hans-CN');
+  });
+}
+
 export function BridgePanel() {
   const activePanel = useStore(s => s.activePanel);
   const setActivePanel = useStore(s => s.setActivePanel);
 
   const [platform, setPlatform] = useState<BridgePlatform>(() => normalizeBridgeTab(localStorage.getItem('hana_bridge_tab')));
-  const [sessions, setSessions] = useState<BridgeSession[]>([]);
-  const [currentKey, setCurrentKey] = useState<string | null>(null);
-  const [currentName, setCurrentName] = useState('');
-  const [messages, setMessages] = useState<BridgeMessage[]>([]);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [agentItems, setAgentItems] = useState<BridgeAgentItem[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [historySessions, setHistorySessions] = useState<BridgeHistorySession[]>([]);
   const [showOverlay, setShowOverlay] = useState(false);
   const [statusData, setStatusData] = useState<StatusData>({});
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const currentKeyRef = useRef(currentKey);
-  currentKeyRef.current = currentKey;
+  const platformRef = useRef(platform);
+  platformRef.current = platform;
+  const selectedAgentIdRef = useRef(selectedAgentId);
+  selectedAgentIdRef.current = selectedAgentId;
+
+  const selectedAgent = useMemo(
+    () => agentItems.find((a) => a.agentId === selectedAgentId) || null,
+    [agentItems, selectedAgentId],
+  );
+
+  const loadAgentHistory = useCallback(async (plat: BridgePlatform, agentId: string) => {
+    try {
+      const res = await hanaFetch(`/api/bridge/agents/${encodeURIComponent(agentId)}/history?platform=${plat}`);
+      const data = await res.json();
+      setHistorySessions((data.sessions || []) as BridgeHistorySession[]);
+      setTimeout(() => {
+        if (messagesRef.current) messagesRef.current.scrollTop = 0;
+      }, 0);
+    } catch (err) {
+      console.error('[bridge] load agent history failed:', err);
+      setHistorySessions([]);
+    }
+  }, []);
 
   // 加载状态
   const loadStatus = useCallback(async () => {
@@ -58,7 +142,7 @@ export function BridgePanel() {
     } catch {}
   }, []);
 
-  // 加载平台数据
+  // 加载平台数据 + 自动定位当前选中 agent
   const loadPlatformData = useCallback(async (plat: BridgePlatform) => {
     try {
       const [statusRes, sessionsRes] = await Promise.all([
@@ -67,48 +151,51 @@ export function BridgePanel() {
       ]);
       const sData = await statusRes.json();
       const sessData = await sessionsRes.json();
+
+      const nextSessions = (sessData.sessions || []) as BridgeSession[];
+      const nextBoundAgents = (sessData.boundAgents || []) as BoundAgent[];
+      const nextAgentItems = buildAgentItems(nextSessions, nextBoundAgents);
+
       setStatusData(sData);
       updateSidebarDot(sData);
       setShowOverlay(!sData[plat]?.configured);
-      setSessions(sessData.sessions || []);
+      setAgentItems(nextAgentItems);
+
+      const prevSelected = selectedAgentIdRef.current;
+      const nextSelected = (prevSelected && nextAgentItems.some((a) => a.agentId === prevSelected))
+        ? prevSelected
+        : (nextAgentItems[0]?.agentId || null);
+
+      selectedAgentIdRef.current = nextSelected;
+      setSelectedAgentId(nextSelected);
+
+      if (nextSelected) {
+        await loadAgentHistory(plat, nextSelected);
+      } else {
+        setHistorySessions([]);
+      }
     } catch (err) {
       console.error('[bridge] load platform data failed:', err);
     }
-  }, []);
+  }, [loadAgentHistory]);
 
   // 面板打开时加载数据
   useEffect(() => {
     if (activePanel === 'bridge') {
-      loadPlatformData(platform);
-      setChatOpen(false);
-      setCurrentKey(null);
+      void loadPlatformData(platform);
     }
   }, [activePanel, platform, loadPlatformData]);
 
   // 注册 WS 回调
   useEffect(() => {
     window.__hanaBridgeLoadStatus = loadStatus;
-    window.__hanaBridgeOnMessage = (msg) => {
+    window.__hanaBridgeOnMessage = () => {
       if (activePanel !== 'bridge') return;
-      // 防抖刷新联系人列表
       if (!refreshTimerRef.current) {
         refreshTimerRef.current = setTimeout(() => {
           refreshTimerRef.current = null;
-          loadPlatformData(platform);
+          void loadPlatformData(platformRef.current);
         }, 500);
-      }
-      // 追加到当前会话（用 ref 避免闭包捕获陈旧值）
-      if (msg.sessionKey === currentKeyRef.current) {
-        const role = msg.direction === 'out' ? 'assistant' : 'user';
-        setMessages(prev => [...prev, { role, content: msg.text }]);
-        // 自动滚到底
-        setTimeout(() => {
-          const el = messagesRef.current;
-          if (el) {
-            const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-            if (wasAtBottom) el.scrollTop = el.scrollHeight;
-          }
-        }, 0);
       }
     };
     return () => {
@@ -116,42 +203,22 @@ export function BridgePanel() {
       delete window.__hanaBridgeOnMessage;
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     };
-  }, [activePanel, platform, loadStatus, loadPlatformData]);
+  }, [activePanel, loadStatus, loadPlatformData]);
 
   const switchTab = useCallback((plat: BridgePlatform) => {
     setPlatform(plat);
-    setCurrentKey(null);
-    setChatOpen(false);
+    selectedAgentIdRef.current = null;
+    setSelectedAgentId(null);
+    setHistorySessions([]);
     localStorage.setItem('hana_bridge_tab', plat);
-    loadPlatformData(plat);
+    void loadPlatformData(plat);
   }, [loadPlatformData]);
 
-  const openSession = useCallback(async (sessionKey: string, displayName: string) => {
-    setCurrentKey(sessionKey);
-    setCurrentName(displayName);
-    try {
-      const res = await hanaFetch(`/api/bridge/sessions/${encodeURIComponent(sessionKey)}/messages`);
-      const data = await res.json();
-      setMessages(data.messages || []);
-      setChatOpen(true);
-      setTimeout(() => {
-        if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-      }, 0);
-    } catch (err) {
-      console.error('[bridge] open session failed:', err);
-      setChatOpen(false);
-    }
-  }, []);
-
-  const resetSession = useCallback(async () => {
-    if (!currentKey) return;
-    try {
-      await hanaFetch(`/api/bridge/sessions/${encodeURIComponent(currentKey)}/reset`, { method: 'POST' });
-      openSession(currentKey, currentName);
-    } catch (err) {
-      console.error('[bridge] reset session failed:', err);
-    }
-  }, [currentKey, currentName, openSession]);
+  const openAgentHistory = useCallback((agentId: string) => {
+    selectedAgentIdRef.current = agentId;
+    setSelectedAgentId(agentId);
+    void loadAgentHistory(platformRef.current, agentId);
+  }, [loadAgentHistory]);
 
   const close = useCallback(() => setActivePanel(null), [setActivePanel]);
 
@@ -218,57 +285,70 @@ export function BridgePanel() {
               </div>
             </div>
           )}
+
           <div className="bridge-sidebar" id="bridgeSidebar">
             <div className="bridge-contact-list" id="bridgeContactList">
-              {sessions.length === 0 ? (
-                <div className="bridge-contact-empty">{t('bridge.noSessions')}</div>
+              {agentItems.length === 0 ? (
+                <div className="bridge-contact-empty">{t('bridge.noAgents')}</div>
               ) : (
-                sessions.map(s => {
-                  const name = s.displayName || s.chatId;
-                  return (
-                    <div
-                      key={s.sessionKey}
-                      className={'bridge-contact-item' + (s.sessionKey === currentKey ? ' active' : '')}
-                      onClick={() => openSession(s.sessionKey, name)}
-                    >
-                      <ContactAvatar name={name} avatarUrl={s.avatarUrl} />
-                      <div className="bridge-contact-info">
-                        <div className="bridge-contact-name">{name}</div>
-                        {s.lastActive && (
-                          <div className="bridge-contact-time">
-                            {formatSessionDate(new Date(s.lastActive).toISOString())}
-                          </div>
-                        )}
-                      </div>
+                agentItems.map((a) => (
+                  <div
+                    key={a.agentId}
+                    className={'bridge-contact-item' + (a.agentId === selectedAgentId ? ' active' : '')}
+                    onClick={() => openAgentHistory(a.agentId)}
+                  >
+                    <ContactAvatar name={a.agentName} avatarUrl={a.avatarUrl} />
+                    <div className="bridge-contact-info">
+                      <div className="bridge-contact-name">{a.agentName}</div>
+                      {a.lastActive ? (
+                        <div className="bridge-contact-time">
+                          {formatSessionDate(new Date(a.lastActive).toISOString())}
+                        </div>
+                      ) : (
+                        <div className="bridge-contact-time">{t('bridge.noMessages')}</div>
+                      )}
                     </div>
-                  );
-                })
+                  </div>
+                ))
               )}
             </div>
           </div>
+
           <div className="bridge-chat" id="bridgeChat">
-            {chatOpen ? (
+            {selectedAgent ? (
               <>
                 <div className="bridge-chat-header" id="bridgeChatHeader">
-                  <span className="bridge-chat-header-name">{currentName}</span>
-                  <button className="bridge-chat-reset" title={t('bridge.resetContext')} onClick={resetSession}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="1 4 1 10 7 10" />
-                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                    </svg>
-                  </button>
+                  <span className="bridge-chat-header-name">{selectedAgent.agentName}</span>
                 </div>
                 <div className="bridge-chat-messages" ref={messagesRef} id="bridgeChatMessages">
-                  {messages.length === 0 ? (
+                  {historySessions.length === 0 ? (
                     <div className="bridge-chat-no-msg">{t('bridge.noMessages')}</div>
                   ) : (
-                    messages.map((m, i) => <ChatBubble key={i} message={m} />)
+                    historySessions.map((session) => (
+                      <div className="bridge-history-session" key={session.sessionKey}>
+                        <div className="bridge-history-session-head">
+                          {!isGenericUserLabel(session.displayName) && (
+                            <span className="bridge-history-session-name">{session.displayName || session.chatId}</span>
+                          )}
+                          {session.lastActive && (
+                            <span className="bridge-history-session-time">{formatSessionDate(new Date(session.lastActive).toISOString())}</span>
+                          )}
+                        </div>
+                        {session.messages.length === 0 ? (
+                          <div className="bridge-chat-no-msg">{t('bridge.noMessages')}</div>
+                        ) : (
+                          session.messages.map((m, i) => (
+                            <ChatBubble key={`${session.sessionKey}:${i}`} message={m} />
+                          ))
+                        )}
+                      </div>
+                    ))
                   )}
                 </div>
               </>
             ) : (
               <div className="bridge-chat-empty" id="bridgeChatEmpty">
-                <span>{t('bridge.selectChat')}</span>
+                <span>{t('bridge.selectAgent')}</span>
               </div>
             )}
           </div>
@@ -317,10 +397,22 @@ function ChatBubble({ message: m }: { message: BridgeMessage }) {
       </div>
     );
   }
-  // user: 去掉 [platform 私聊] xxx: 前缀
+  // user: 保留时间标签，仅去掉 User/用户 前缀
   let displayText = m.content;
-  const prefixMatch = displayText.match(/^\[.+?\]\s*.+?:\s*/);
-  if (prefixMatch) displayText = displayText.slice(prefixMatch[0].length);
+  // [来自 User] xxx -> xxx（允许重复）
+  displayText = displayText.replace(
+    /^(?:[\[\(【]\s*来自\s*(?:user|用户)\s*[\]\)】]\s*)+/iu,
+    '',
+  );
+  // [03-23 21:57] User: xxx -> [03-23 21:57] xxx
+  displayText = displayText.replace(
+    /^([\[\(【][^\]\)】]{1,48}[\]\)】]\s*)(?:user|用户)\s*[:：]\s*/iu,
+    '$1',
+  );
+  // 兼容残留片段：57] User: xxx -> xxx
+  displayText = displayText.replace(/^\d{1,2}\]\s*(?:user|用户)\s*[:：]\s*/iu, '');
+  // User: xxx -> xxx
+  displayText = displayText.replace(/^(?:user|用户)\s*[:：]\s*/iu, '');
   return (
     <div className="bridge-bubble-row bridge-bubble-out">
       <div className="bridge-bubble">{displayText}</div>

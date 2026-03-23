@@ -45,6 +45,7 @@
     "expand": "Expand chat list",
     "empty": "No chats yet ✿",
     "activity": "Activity",
+    "platformChat": "Platform Chats",
     "jian": "Desk",
     "bridge": "Social Platforms",
     "toggle": "Sidebar",
@@ -1015,7 +1016,9 @@
     "background": "Background browser"
   },
   "bridge": {
+    "selectAgent": "Select an agent",
     "selectChat": "Select a conversation",
+    "noAgents": "No bound agents",
     "noSessions": "No conversations yet",
     "noMessages": "No messages yet",
     "empty": "No messages",

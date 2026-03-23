@@ -73,6 +73,119 @@ function normalizeBotDraft(platform, bot = {}, fallback = {}) {
   return draft;
 }
 
+function listAgentRoots(engine) {
+  const agents = engine.listAgents?.() || [];
+  return agents.map((a) => {
+    const runtime = engine.getAgent?.(a.id);
+    return {
+      id: a.id,
+      name: a.name || runtime?.agentName || a.id,
+      sessionDir: runtime?.sessionDir || path.join(engine.agentsDir, a.id, "sessions"),
+    };
+  });
+}
+
+function readBridgeIndexFromSessionDir(sessionDir) {
+  const bridgeDir = path.join(sessionDir, "bridge");
+  const indexPath = path.join(bridgeDir, "bridge-sessions.json");
+  let index = {};
+  try {
+    index = JSON.parse(fs.readFileSync(indexPath, "utf-8")) || {};
+  } catch {}
+  return { bridgeDir, indexPath, index };
+}
+
+function writeBridgeIndexToPath(indexPath, index) {
+  fs.mkdirSync(path.dirname(indexPath), { recursive: true });
+  fs.writeFileSync(indexPath, JSON.stringify(index, null, 2) + "\n", "utf-8");
+}
+
+function getBoundAgentsForPlatform(engine, platform) {
+  const prefs = engine.getPreferences?.() || {};
+  const bridge = prefs.bridge || {};
+  const agentMap = getAgentMap(engine);
+  const ids = new Set();
+
+  const includeAll = !platform;
+
+  if (includeAll || platform === "feishu") {
+    const aid = bridge.feishu?.agentId;
+    if (aid) ids.add(aid);
+  }
+  if (includeAll || platform === "telegram") {
+    for (const bot of normalizeBridgeBots("telegram", bridge.telegram)) {
+      if (bot?.agentId) ids.add(bot.agentId);
+    }
+  }
+  if (includeAll || platform === "qq") {
+    for (const bot of normalizeBridgeBots("qq", bridge.qq)) {
+      if (bot?.agentId) ids.add(bot.agentId);
+    }
+  }
+
+  return [...ids].map((id) => ({ id, name: agentMap.get(id) || id }));
+}
+
+function parseBridgeMessagesFile(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    if (!raw.trim()) return { messages: [] };
+    const lines = raw
+      .trim()
+      .split("\n")
+      .map((l) => {
+        try { return JSON.parse(l); } catch { return null; }
+      })
+      .filter(Boolean);
+
+    const messages = [];
+    for (const line of lines) {
+      if (line.type !== "message") continue;
+      const msg = line.message;
+      if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+
+      let textContent = "";
+      let imageCount = 0;
+      if (Array.isArray(msg.content)) {
+        for (const b of msg.content) {
+          if (b.type === "text" && b.text) textContent += b.text;
+          if (b.type === "image") imageCount++;
+        }
+      } else if (typeof msg.content === "string") {
+        textContent = msg.content;
+      }
+
+      if (!textContent && imageCount === 0) continue;
+      const content = textContent || `[图片 x${imageCount}]`;
+      messages.push({
+        role: msg.role,
+        content,
+        timestamp: line.timestamp || line.ts || null,
+      });
+    }
+
+    return { messages };
+  } catch (err) {
+    return { messages: [], error: err.message };
+  }
+}
+
+function findBridgeSessionRecord(engine, sessionKey, explicitAgentId = "") {
+  const allAgents = listAgentRoots(engine);
+  const targets = explicitAgentId
+    ? allAgents.filter((a) => a.id === explicitAgentId)
+    : allAgents;
+
+  for (const agent of targets) {
+    const { bridgeDir, indexPath, index } = readBridgeIndexFromSessionDir(agent.sessionDir);
+    const raw = index[sessionKey];
+    const file = typeof raw === "string" ? raw : raw?.file;
+    if (!file) continue;
+    return { agent, bridgeDir, indexPath, index, raw, file };
+  }
+  return null;
+}
+
 export default async function bridgeRoute(app, { engine, bridgeManager }) {
 
   /** 获取所有平台连接状态 */
@@ -371,106 +484,164 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
   });
 
   /** 获取 bridge session 列表 */
-  app.get("/api/bridge/sessions", async (req) => {
+  app.get("/api/bridge/sessions", async (req, reply) => {
     const platform = req.query?.platform; // optional filter
-    const index = engine.getBridgeIndex();
-    const bridgeDir = path.join(engine.agent.sessionDir, "bridge");
+    if (platform && !BRIDGE_PLATFORMS.includes(platform)) {
+      reply.code(400);
+      return { error: "invalid platform", sessions: [], boundAgents: [] };
+    }
+
+    const allAgents = listAgentRoots(engine);
+    const boundAgents = getBoundAgentsForPlatform(engine, platform);
+    const boundSet = platform
+      ? new Set(boundAgents.map((a) => a.id))
+      : (boundAgents.length ? new Set(boundAgents.map((a) => a.id)) : null);
+    const sessions = [];
+
+    for (const agent of allAgents) {
+      if (boundSet && !boundSet.has(agent.id)) continue;
+      const { bridgeDir, index } = readBridgeIndexFromSessionDir(agent.sessionDir);
+
+      for (const [sessionKey, raw] of Object.entries(index)) {
+        // 兼容旧格式（字符串）和新格式（对象）
+        const entry = typeof raw === "string" ? { file: raw } : raw;
+        const file = entry.file;
+        if (!file) continue;
+
+        // 解析 sessionKey → 平台 + 类型
+        const { platform: plat, platformKey, botId, chatType, chatId } = parseSessionKey(sessionKey);
+
+        // 按平台过滤
+        if (platform && plat !== platform) continue;
+
+        // 获取最后修改时间
+        let lastActive = null;
+        const fp = path.join(bridgeDir, file);
+        try {
+          const stat = fs.statSync(fp);
+          lastActive = stat.mtimeMs;
+        } catch {}
+
+        sessions.push({
+          sessionKey,
+          platform: plat,
+          platformKey,
+          botId,
+          chatType,
+          chatId,
+          file,
+          lastActive,
+          displayName: entry.name || null,
+          avatarUrl: entry.avatarUrl || null,
+          agentId: agent.id,
+          agentName: agent.name,
+        });
+      }
+    }
+
+    // 按最后活跃时间排序
+    sessions.sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
+    return { sessions, boundAgents };
+  });
+
+  /** 按 agent + 平台聚合历史 */
+  app.get("/api/bridge/agents/:agentId/history", async (req, reply) => {
+    const agentId = typeof req.params?.agentId === "string" ? req.params.agentId.trim() : "";
+    const platform = typeof req.query?.platform === "string" ? req.query.platform.trim() : "";
+
+    if (!agentId) {
+      reply.code(400);
+      return { error: "agentId required", agentId: "", sessions: [] };
+    }
+    if (platform && !BRIDGE_PLATFORMS.includes(platform)) {
+      reply.code(400);
+      return { error: "invalid platform", agentId, sessions: [] };
+    }
+
+    const allAgents = listAgentRoots(engine);
+    const agent = allAgents.find((a) => a.id === agentId);
+    if (!agent) {
+      reply.code(404);
+      return { error: "agent not found", agentId, sessions: [] };
+    }
+
+    // 如果平台存在绑定关系，仅允许查看已绑定 agent
+    const boundAgents = getBoundAgentsForPlatform(engine, platform || undefined);
+    const boundSet = new Set(boundAgents.map((a) => a.id));
+    if (platform && !boundSet.has(agentId)) {
+      return { agentId, agentName: agent.name, sessions: [] };
+    }
+
+    const { bridgeDir, index } = readBridgeIndexFromSessionDir(agent.sessionDir);
     const sessions = [];
 
     for (const [sessionKey, raw] of Object.entries(index)) {
-      // 兼容旧格式（字符串）和新格式（对象）
       const entry = typeof raw === "string" ? { file: raw } : raw;
       const file = entry.file;
       if (!file) continue;
 
-      // 解析 sessionKey → 平台 + 类型
-      const { platform: plat, platformKey, botId, chatType, chatId } = parseSessionKey(sessionKey);
+      const parsed = parseSessionKey(sessionKey);
+      if (platform && parsed.platform !== platform) continue;
 
-      // 按平台过滤
-      if (platform && plat !== platform) continue;
+      const fp = path.resolve(bridgeDir, file);
+      if (!fp.startsWith(path.resolve(bridgeDir) + path.sep)) continue;
 
-      // 获取最后修改时间
       let lastActive = null;
-      const fp = path.join(bridgeDir, file);
       try {
         const stat = fs.statSync(fp);
         lastActive = stat.mtimeMs;
       } catch {}
 
+      const { messages } = parseBridgeMessagesFile(fp);
       sessions.push({
-        sessionKey, platform: plat, platformKey, botId, chatType, chatId, file, lastActive,
+        sessionKey,
+        platform: parsed.platform,
+        platformKey: parsed.platformKey,
+        botId: parsed.botId,
+        chatType: parsed.chatType,
+        chatId: parsed.chatId,
         displayName: entry.name || null,
         avatarUrl: entry.avatarUrl || null,
+        lastActive,
+        messages,
       });
     }
 
-    // 按最后活跃时间排序
     sessions.sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
-    return { sessions };
+    return { agentId, agentName: agent.name, sessions };
   });
 
   /** 读取指定 bridge session 的消息 */
   app.get("/api/bridge/sessions/:sessionKey/messages", async (req) => {
     const { sessionKey } = req.params;
-    const index = engine.getBridgeIndex();
-    const raw = index[sessionKey];
-    const file = typeof raw === "string" ? raw : raw?.file;
-    if (!file) return { error: "session not found", messages: [] };
+    const explicitAgentId = typeof req.query?.agentId === "string" ? req.query.agentId.trim() : "";
+    const hit = findBridgeSessionRecord(engine, sessionKey, explicitAgentId);
+    if (!hit) return { error: "session not found", messages: [] };
 
-    const bridgeDir = path.join(engine.agent.sessionDir, "bridge");
-    const fp = path.resolve(bridgeDir, file);
+    const fp = path.resolve(hit.bridgeDir, hit.file);
 
     // 防止 path traversal
-    if (!fp.startsWith(path.resolve(bridgeDir) + path.sep)) {
+    if (!fp.startsWith(path.resolve(hit.bridgeDir) + path.sep)) {
       return { error: "invalid session path", messages: [] };
     }
 
-    try {
-      const raw = fs.readFileSync(fp, "utf-8");
-      const lines = raw.trim().split("\n").map(l => {
-        try { return JSON.parse(l); } catch { return null; }
-      }).filter(Boolean);
-
-      const messages = [];
-      for (const line of lines) {
-        if (line.type !== "message") continue;
-        const msg = line.message;
-        if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
-
-        let textContent = "";
-        let imageCount = 0;
-        if (Array.isArray(msg.content)) {
-          for (const b of msg.content) {
-            if (b.type === "text" && b.text) textContent += b.text;
-            if (b.type === "image") imageCount++;
-          }
-        } else if (typeof msg.content === "string") {
-          textContent = msg.content;
-        }
-
-        if (!textContent && imageCount === 0) continue;
-        const content = textContent || `[图片 x${imageCount}]`;
-        messages.push({ role: msg.role, content });
-      }
-
-      return { messages };
-    } catch (err) {
-      return { error: err.message, messages: [] };
-    }
+    const { messages, error } = parseBridgeMessagesFile(fp);
+    if (error) return { error, messages: [] };
+    return { messages };
   });
 
   /** 重置 bridge session（清除上下文，下次消息新建 session） */
   app.post("/api/bridge/sessions/:sessionKey/reset", async (req) => {
     const { sessionKey } = req.params;
-    const index = engine.getBridgeIndex();
-    const raw = index[sessionKey];
-    if (!raw) return { ok: false, error: "session not found" };
+    const explicitAgentId = typeof req.query?.agentId === "string" ? req.query.agentId.trim() : "";
+    const hit = findBridgeSessionRecord(engine, sessionKey, explicitAgentId);
+    if (!hit) return { ok: false, error: "session not found" };
 
     // 保留元数据（name, avatarUrl），只删 file 引用
-    const entry = typeof raw === "string" ? {} : { ...raw };
+    const entry = typeof hit.raw === "string" ? {} : { ...hit.raw };
     delete entry.file;
-    index[sessionKey] = entry;
-    engine.saveBridgeIndex(index);
+    hit.index[sessionKey] = entry;
+    writeBridgeIndexToPath(hit.indexPath, hit.index);
 
     return { ok: true };
   });

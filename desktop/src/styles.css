@@ -3912,6 +3912,39 @@ html[data-platform="darwin"] .sv-topbar-title {
     padding: var(--space-xl) 0;
 }
 
+.bridge-history-session {
+    border-top: 1px solid var(--overlay-light);
+    padding-top: var(--space-md);
+    margin-top: var(--space-md);
+}
+
+.bridge-history-session:first-child {
+    border-top: none;
+    padding-top: 0;
+    margin-top: 0;
+}
+
+.bridge-history-session-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    padding: 0 2px;
+}
+
+.bridge-history-session-name {
+    font-size: 0.76rem;
+    color: var(--text);
+    font-weight: 600;
+}
+
+.bridge-history-session-time {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
 /* 气泡 */
 .bridge-bubble-row {
     display: flex;
