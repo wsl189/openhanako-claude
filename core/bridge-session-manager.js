@@ -116,6 +116,33 @@ export class BridgeSessionManager {
   }
 
   /**
+   * 解析 bridge 会话应使用的模型：
+   * - 优先 agent.config.models.chat
+   * - 未配置或不可用时回退全局默认模型
+   */
+  _resolveBridgeModel(mm, agent) {
+    const preferredId = agent?.config?.models?.chat || "";
+
+    if (!preferredId) {
+      if (mm.defaultModel) {
+        debugLog()?.log("bridge-session", `agent "${agent?.agentName || agent?.id || "unknown"}" 无 chat 模型，回退默认模型 ${mm.defaultModel.id}`);
+        return mm.defaultModel;
+      }
+      throw new Error(t("error.bridgeAgentNoChatModel", { name: agent.agentName }));
+    }
+
+    const preferred = mm.availableModels.find((m) => m.id === preferredId);
+    if (preferred) return preferred;
+
+    if (mm.defaultModel) {
+      debugLog()?.log("bridge-session", `agent "${agent?.agentName || agent?.id || "unknown"}" 模型 "${preferredId}" 不可用，回退默认模型 ${mm.defaultModel.id}`);
+      return mm.defaultModel;
+    }
+
+    throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: preferredId }));
+  }
+
+  /**
    * 执行外部平台消息：找到或创建持久 session，prompt 并捕获回复文本
    * @param {string} prompt - 格式化后的用户消息
    * @param {string} sessionKey - 会话标识（如 tg_dm_12345）
@@ -160,15 +187,7 @@ export class BridgeSessionManager {
       const bridgeCwd = homeCwd;
       const { tools: bridgeTools, customTools: bridgeCustomTools } = this._deps.buildTools(bridgeCwd, null, { workspace: homeCwd });
 
-      // 使用 agent 配置的模型
-      const modelId = agent.config?.models?.chat;
-      if (!modelId) {
-        throw new Error(t("error.bridgeAgentNoChatModel", { name: agent.agentName }));
-      }
-      const model = mm.availableModels.find(m => m.id === modelId);
-      if (!model) {
-        throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: modelId }));
-      }
+      const model = this._resolveBridgeModel(mm, agent);
 
       const baseRL = this._deps.getResourceLoader();
       const rl = Object.create(baseRL);
