@@ -19,7 +19,9 @@ import { createChannelTicker } from "../lib/channels/channel-ticker.js";
 import { appendMessage, formatMessagesForLLM, getChannelMeta } from "../lib/channels/channel-store.js";
 import { collectMentionedAgentIds } from "../lib/channels/channel-mentions.js";
 import { loadConfig } from "../lib/memory/config-loader.js";
+import { compileToday, assemble } from "../lib/memory/compile.js";
 import { callProviderText } from "../lib/llm/provider-client.js";
+import { scrubPII } from "../lib/pii-guard.js";
 import { runAgentSession } from "./agent-executor.js";
 import { debugLog } from "../lib/debug-log.js";
 import { getLocale } from "../server/i18n.js";
@@ -52,8 +54,8 @@ export class ChannelRouter {
       getAgentOrder: () => this.getAgentOrder(),
       executeCheck: (agentId, channelName, newMessages, allUpdates, opts) =>
         this._executeCheck(agentId, channelName, newMessages, allUpdates, opts),
-      onMemorySummarize: (agentId, channelName, contextText) =>
-        this._memorySummarize(agentId, channelName, contextText),
+      onMemorySummarize: (agentId, channelName, memoryInput) =>
+        this._memorySummarize(agentId, channelName, memoryInput),
       onEvent: (event, data) => {
         this._hub.eventBus.emit({ type: event, ...data }, null);
       },
@@ -308,7 +310,7 @@ export class ChannelRouter {
 
         // 写入频道文件
         const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
-        appendMessage(channelFile, agentId, replyText);
+        const { timestamp: replyTimestamp } = appendMessage(channelFile, agentId, replyText);
         // 自动 triage 回复不再触发二次 @ 级联，避免同一条 @ 消息回环重放。
         this._handleAgentPost(channelName, agentId, replyText, { source: "auto_reply" });
 
@@ -318,7 +320,7 @@ export class ChannelRouter {
         // WS 广播
         this._hub.eventBus.emit({ type: "channel_new_message", channelName, sender: agentId }, null);
 
-        return { replied: true, replyContent: replyText };
+        return { replied: true, replyContent: replyText, replyTimestamp };
       } catch (err) {
         console.error(`[channel] 回复失败 (${agentId}/#${channelName}): ${err.message}`);
         debugLog()?.error("channel", `回复失败 (${agentId}/#${channelName}): ${err.message}`);
@@ -478,62 +480,209 @@ export class ChannelRouter {
   }
 
   /**
-   * 频道记忆摘要
-   * 从 engine._channelMemorySummarize 搬入
+   * 统一规范频道消息时间戳（优先保留本地 HH:MM 语义，兼容 ISO）
+   * @param {string | null | undefined} ts
+   * @returns {string | null}
    */
-  async _memorySummarize(agentId, channelName, contextText) {
+  _normalizeChannelTimestamp(ts) {
+    const raw = String(ts || "").trim();
+    if (!raw) return null;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?$/.test(raw)) {
+      return raw.replace(" ", "T");
+    }
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(raw)) {
+      return raw;
+    }
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+    return null;
+  }
+
+  /**
+   * 将频道消息输入转换为可用于频道摘要的文本块。
+   * @param {string} agentId
+   * @param {object|string} memoryInput
+   * @param {string} userName
+   * @returns {string}
+   */
+  _buildChannelMemoryConversation(agentId, memoryInput, userName) {
+    const isZh = getLocale().startsWith("zh");
+    if (typeof memoryInput === "string") {
+      return String(memoryInput || "").trim().slice(0, 5000);
+    }
+
+    const input = memoryInput && typeof memoryInput === "object" ? memoryInput : {};
+    const recentMessages = Array.isArray(input.recentMessages) ? input.recentMessages : [];
+    const reply = input.reply && typeof input.reply === "object" ? input.reply : null;
+
+    const aliases = new Set(
+      [userName, this._engine.userName, "用户", "user"]
+        .map(v => String(v || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+
+    const lines = [];
+    for (const msg of recentMessages) {
+      const body = String(msg?.body || "").trim();
+      if (!body) continue;
+      const senderRaw = String(msg?.sender || "").trim();
+      const sender = senderRaw || (isZh ? "未知成员" : "unknown");
+      const senderKey = sender.toLowerCase();
+      const ts = this._normalizeChannelTimestamp(msg?.timestamp) || (isZh ? "未知时间" : "unknown-time");
+
+      if (aliases.has(senderKey)) {
+        lines.push(`[${ts}] ${isZh ? "用户" : "User"}: ${body}`);
+      } else {
+        lines.push(`[${ts}] ${sender}: ${body}`);
+      }
+    }
+
+    const replyBody = String(reply?.body || "").trim();
+    if (replyBody) {
+      const replySender = String(reply?.sender || agentId).trim() || agentId;
+      const ts = this._normalizeChannelTimestamp(reply?.timestamp) || new Date().toISOString();
+      lines.push(`[${ts}] ${replySender}: ${replyBody}`);
+    }
+
+    return lines.join("\n\n").slice(0, 5000);
+  }
+
+  /**
+   * 频道记忆摘要专用提示词（与私聊记忆区分：聚焦话题/决策/分工）
+   * @param {boolean} hasPrev
+   * @returns {string}
+   */
+  _buildChannelMemoryPrompt(hasPrev) {
+    const isZh = getLocale().startsWith("zh");
+    if (isZh) {
+      return `你是一个“频道讨论记忆系统”，输入是多人群聊，不是一对一聊天。
+
+目标：沉淀对后续协作有价值的信息——话题目标、关键结论、分工、进展、阻塞、下一步。
+不要沉淀“用户画像”类内容，不要把频道里任何成员和用户身份混淆。
+
+## 输出格式（严格）
+## 重要事实
+- 记录稳定且可复用的事实：决策、约束、分工、待办、结论、风险。
+- 尽量写清谁负责什么（如有）。
+- 没有则写“无”。
+
+## 事情经过
+- 按时间顺序写关键推进脉络，标注 HH:MM 与发言者。
+- 重点写新增变化：若新消息改写了旧目标，以最新目标为准，并简记旧目标被替换。
+
+## 规则
+1. ${hasPrev ? "你会同时看到“已有频道摘要”和“新增频道对话”，请先合并再去重，同一事项以更新消息为准。" : "请只基于输入的频道对话生成摘要。"}
+2. @某成员 仅表示提及，不表示身份变更。
+3. 严禁写入身份等价事实，例如“用户=某agent”“用户网名是某agent”“我是某agent”。
+4. 只写客观事实，不写助手内心活动和泛化性人格判断。
+5. 输出必须直接以“## 重要事实”开头，不要前言后记。`;
+    }
+
+    return `You are a channel-memory system for multi-party group discussions (not 1:1 chat).
+
+Goal: retain collaboration-useful information — topic goals, decisions, ownership, progress, blockers, and next steps.
+Do not store user-profile style content, and never conflate the human user with any agent/member identity.
+
+## Output Format (strict)
+## Key Facts
+- Keep stable, reusable facts: decisions, constraints, ownership, TODOs, conclusions, risks.
+- Include responsible party when available.
+- Write "None" if empty.
+
+## Timeline
+- Summarize key progression in chronological order with HH:MM and speaker names.
+- Focus on what's new; if latest messages supersede earlier goals, treat the latest as authoritative and note the replacement briefly.
+
+## Rules
+1. ${hasPrev ? "You will see both existing channel summary and new channel messages. Merge then deduplicate; newer info wins." : "Generate summary only from the provided channel messages."}
+2. @mentions indicate addressing someone, not identity reassignment.
+3. Never write identity-equivalence facts (e.g., \"user=an agent\", \"user alias is an agent\", \"I am that agent\").
+4. Keep only objective facts; no inner thoughts or generic personality judgments.
+5. Start directly with \"## Key Facts\" and no preamble/conclusion.`;
+  }
+
+  /**
+   * 频道记忆写入（复用普通记忆链路：summaries -> compileToday -> assemble）
+   * 从 engine._channelMemorySummarize 迁入并强化。
+   */
+  async _memorySummarize(agentId, channelName, memoryInput) {
     const engine = this._engine;
     try {
-      const utilCfg = engine.resolveUtilityConfig() || {};
-      const { utility: model, api_key, base_url, api } = utilCfg;
-      if (!api_key || !base_url || !api) {
-        console.log(`\x1b[90m[channel] ${agentId} 无 API 配置，跳过记忆摘要\x1b[0m`);
+      const agent = engine.getAgent?.(agentId) || engine.agents?.get(agentId);
+      if (!agent) {
+        console.log(`\x1b[90m[channel] ${agentId} 未初始化，跳过频道记忆\x1b[0m`);
+        return;
+      }
+      if (!agent.memoryMasterEnabled) {
+        debugLog()?.log("channel", `memory skip ${agentId}/#${channelName}: memory master disabled`);
         return;
       }
 
-      const isZhMem = getLocale().startsWith("zh");
-      const summaryText = await callProviderText({
-        api,
-        model,
-        api_key,
-        base_url,
-        systemPrompt: isZhMem
-          ? "将频道对话摘要为一条简短的记忆（一两句话），记录关键信息和结论。直接输出摘要，不要前缀。"
-          : "Summarize the channel conversation into a brief memory (one or two sentences), capturing key information and conclusions. Output the summary directly, no prefix.",
-        messages: [{ role: "user", content: isZhMem ? `频道 #${channelName}：\n${contextText.slice(0, 2000)}` : `Channel #${channelName}:\n${contextText.slice(0, 2000)}` }],
-        temperature: 0.3,
-        max_tokens: 200,
+      const summaryManager = agent.summaryManager;
+      const resolvedModel = agent.resolvedMemoryModel;
+      if (!summaryManager || !resolvedModel?.model || !resolvedModel?.api_key || !resolvedModel?.base_url || !resolvedModel?.api) {
+        console.log(`\x1b[90m[channel] ${agentId} 记忆模型未就绪，跳过频道记忆\x1b[0m`);
+        return;
+      }
+
+      const conversationText = this._buildChannelMemoryConversation(
+        agentId,
+        memoryInput,
+        agent.userName || engine.userName || "用户",
+      );
+      if (!conversationText) return;
+
+      const sessionId = `channel-${channelName}`;
+      const existing = summaryManager.getSummary(sessionId);
+      const prevSummary = existing?.summary || "";
+      const hasPrev = !!prevSummary;
+      const isZh = getLocale().startsWith("zh");
+
+      const userContent = hasPrev
+        ? (isZh
+          ? `## 已有频道摘要\n\n${prevSummary}\n\n## 新增频道对话\n\n${conversationText}`
+          : `## Existing Channel Summary\n\n${prevSummary}\n\n## New Channel Messages\n\n${conversationText}`)
+        : conversationText;
+
+      let newSummary = await callProviderText({
+        api: resolvedModel.api,
+        model: resolvedModel.model,
+        api_key: resolvedModel.api_key,
+        base_url: resolvedModel.base_url,
+        systemPrompt: this._buildChannelMemoryPrompt(hasPrev),
+        messages: [{ role: "user", content: userContent }],
+        temperature: 0.2,
+        max_tokens: 700,
+      });
+      if (!newSummary?.trim()) return;
+
+      const { cleaned, detected } = scrubPII(newSummary);
+      if (detected.length > 0) {
+        console.warn(`[channel] PII detected in channel summary (${detected.join(", ")})`);
+      }
+      newSummary = cleaned.trim();
+
+      const now = new Date().toISOString();
+      summaryManager.saveSummary(sessionId, {
+        session_id: sessionId,
+        created_at: existing?.created_at || now,
+        updated_at: now,
+        summary: newSummary,
+        snapshot: existing?.snapshot || "",
+        snapshot_at: existing?.snapshot_at || null,
       });
 
-      // 写入 agent 的 fact store
-      const isCurrentAgent = (agentId === engine.currentAgentId);
-      let factStore = null;
-      let needClose = false;
-
-      if (isCurrentAgent && engine.agent?.factStore) {
-        factStore = engine.agent.factStore;
-      } else {
-        const { FactStore } = await import("../lib/memory/fact-store.js");
-        const dbPath = path.join(engine.agentsDir, agentId, "memory", "facts.db");
-        factStore = new FactStore(dbPath);
-        needClose = true;
-      }
-
-      const now = new Date();
       try {
-        factStore.add({
-          fact: `[#${channelName}] ${summaryText}`,
-          tags: [isZhMem ? "频道" : "channel", channelName],
-          time: now.toISOString().slice(0, 16),
-          session_id: `channel-${channelName}`,
-        });
-      } finally {
-        if (needClose) factStore.close();
+        await compileToday(summaryManager, agent.todayMdPath, resolvedModel);
+        assemble(agent.factsMdPath, agent.todayMdPath, agent.weekMdPath, agent.longtermMdPath, agent.memoryMdPath);
+        agent.refreshSystemPrompt?.();
+      } catch (err) {
+        console.error(`[channel] 频道记忆编译失败 (${agentId}/#${channelName}): ${err.message}`);
       }
 
-      console.log(`\x1b[90m[channel] ${agentId} memory saved (#${channelName}, ${summaryText.length} chars)\x1b[0m`);
+      console.log(`\x1b[90m[channel] ${agentId} channel summary saved (#${channelName}, ${newSummary.length} chars)\x1b[0m`);
     } catch (err) {
-      console.error(`[channel] 记忆摘要失败 (${agentId}/#${channelName}): ${err.message}`);
+      console.error(`[channel] 频道记忆写入失败 (${agentId}/#${channelName}): ${err.message}`);
     }
   }
 }
