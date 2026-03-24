@@ -611,27 +611,43 @@ export function ChannelMessages() {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // 消息变化时自动滚动：
-  // - 普通消息：滚到底
-  // - /new 插入分隔线后：把分隔线滚到可视区顶部，形成“新会话从这里开始”的阅读起点
+  // - 新的聊天消息（用户或 agent）：把最后一条消息定位到可视区约 3/4 处
+  // - 仅分隔线变化等其他情况：滚到底
   useEffect(() => {
     const el = document.getElementById('channelMessages');
     if (!el) return;
     const spacer = el.querySelector('.channel-context-tail-spacer') as HTMLElement | null;
 
     const lastMsg = messages[messages.length - 1];
-    if (lastMsg?.isContextReset) {
-      const lastDivider = el.querySelector('.channel-context-divider:last-of-type') as HTMLElement | null;
-      if (lastDivider && spacer) {
-        // 当分隔线在末尾时，补一段底部留白，才能把它滚到容器顶部
-        const neededSpace = Math.max(0, el.clientHeight - lastDivider.offsetHeight - 12);
+    const isLastChatMessage = !!lastMsg && !lastMsg.isContextReset;
+
+    if (isLastChatMessage && spacer) {
+      // 先清空补白，避免旧补白干扰本次定位
+      spacer.style.height = '0px';
+
+      requestAnimationFrame(() => {
+        const msgNodes = el.querySelectorAll('.channel-msg');
+        const lastMsgEl = msgNodes.length > 0 ? (msgNodes[msgNodes.length - 1] as HTMLElement) : null;
+        if (!lastMsgEl) return;
+
+        const desiredY = Math.floor(el.clientHeight * 0.75);
+        const containerRect = el.getBoundingClientRect();
+        const msgRect = lastMsgEl.getBoundingClientRect();
+        // 基于“当前可视位置”计算目标 scrollTop，确保用户与 agent 的锚点一致
+        const currentY = msgRect.top - containerRect.top;
+        const rawTargetTop = Math.max(0, el.scrollTop + currentY - desiredY);
+
+        const maxScrollable = el.scrollHeight - el.clientHeight;
+        const neededSpace = Math.max(0, rawTargetTop - maxScrollable + 12);
         spacer.style.height = `${neededSpace}px`;
 
         requestAnimationFrame(() => {
-          const targetTop = Math.max(0, lastDivider.offsetTop - 8);
+          const maxScrollableAfterSpacer = el.scrollHeight - el.clientHeight;
+          const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
           el.scrollTo({ top: targetTop, behavior: 'smooth' });
         });
-        return;
-      }
+      });
+      return;
     }
 
     if (spacer) spacer.style.height = '0px';
