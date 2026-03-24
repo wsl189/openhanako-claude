@@ -219,8 +219,8 @@ export default async function channelsRoute(app, { engine, hub }) {
       const allAgents = engine.listAgents?.() || [];
       const mentionedAgents = collectMentionedAgentIds(body, allAgents, channelMembers);
 
-      hub.triggerChannelTriage(name, { mentionedAgents })?.catch(err =>
-        console.error(`[channel] 触发立即 triage 失败: ${err.message}`)
+      hub.triggerChannelTriage(name, { source: "user", mentionedAgents })?.catch(err =>
+        console.error(`[channel] 触发频道调度失败: ${err.message}`)
       );
 
       return { ok: true, timestamp: result.timestamp };
