@@ -222,6 +222,7 @@ export class HanaEngine {
   async abortAllStreaming() { return this._sessionCoord.abortAllStreaming(); }
   isBridgeSessionStreaming(key) { return this._bridge?.isSessionStreaming(key) ?? false; }
   async abortBridgeSession(key) { return this._bridge?.abortSession(key) ?? false; }
+  async resetBridgeSession(key, opts) { return this._bridge?.resetSession(key, opts) ?? false; }
   steerBridgeSession(key, text) { return this._bridge?.steerSession(key, text) ?? false; }
   async closeSession(p) { return this._sessionCoord.closeSession(p); }
   getSessionByPath(p) { return this._sessionCoord.getSessionByPath(p); }

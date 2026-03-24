@@ -52,6 +52,34 @@ export class BridgeSessionManager {
     return true;
   }
 
+  /**
+   * 重置指定 bridge session（清除上下文，下次消息会新建 session）
+   * @param {string} sessionKey
+   * @param {object} [opts]
+   * @param {string} [opts.agentId]
+   * @returns {Promise<boolean>}
+   */
+  async resetSession(sessionKey, opts = {}) {
+    const agent = this._resolveAgent(opts.agentId);
+
+    const active = this._activeSessions.get(sessionKey);
+    if (active?.isStreaming) {
+      try { await active.abort(); } catch {}
+    }
+    this._activeSessions.delete(sessionKey);
+
+    const index = this.readIndex(agent);
+    const raw = index[sessionKey];
+    if (!raw) return false;
+
+    // 保留元数据（name/avatarUrl/userId），仅删除 file 引用
+    const entry = typeof raw === "string" ? {} : { ...raw };
+    delete entry.file;
+    index[sessionKey] = entry;
+    this.writeIndex(index, agent);
+    return true;
+  }
+
   /** bridge 索引文件路径 */
   _indexPath(agent) {
     const a = agent || this._deps.getAgent();
