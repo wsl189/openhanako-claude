@@ -36,7 +36,8 @@
     "disabled": "Channels disabled",
     "toggleLabel": "Channel toggle",
     "members": "Members",
-    "createIntroOptional": "Description"
+    "createIntroOptional": "Description",
+    "mentionAll": "All members"
   },
   "sidebar": {
     "title": "Chats",

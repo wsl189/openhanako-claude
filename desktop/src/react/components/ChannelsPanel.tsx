@@ -34,6 +34,14 @@ interface MemberInfo {
   isUser: boolean;
 }
 
+interface MentionItem {
+  id: string;
+  displayName: string;
+  mentionText: string;
+  avatar: MemberInfo | null;
+  searchTokens: string[];
+}
+
 // ── 辅助函数 ──
 
 function resolveChannelMember(
@@ -831,7 +839,7 @@ export function ChannelInput() {
   const [inputValue, setInputValue] = useState('');
   const [sending, setSending] = useState(false);
   const [mentionActive, setMentionActive] = useState(false);
-  const [mentionItems, setMentionItems] = useState<MemberInfo[]>([]);
+  const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
   const [mentionStartPos, setMentionStartPos] = useState(-1);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -884,12 +892,29 @@ export function ChannelInput() {
       .map((id) => resolveChannelMember(id, userName, userAvatarUrl, agents, currentAgentId))
       .filter((m) => !m.isUser);
 
+    const mentionAllLabel = (window as any).t?.('channel.mentionAll') || '全体成员';
+    const mentionItemsAll: MentionItem[] = [
+      {
+        id: '__all_members__',
+        displayName: mentionAllLabel,
+        mentionText: mentionAllLabel,
+        avatar: null,
+        searchTokens: [mentionAllLabel, '全体成员', '所有人', 'all', 'all members', 'everyone'],
+      },
+      ...members.map((m) => ({
+        id: m.id,
+        displayName: m.displayName,
+        mentionText: m.displayName,
+        avatar: m,
+        searchTokens: [m.displayName, m.id, m.yuan || ''],
+      })),
+    ];
+
     const filtered = keyword
-      ? members.filter((m) =>
-          m.displayName.toLowerCase().includes(keyword) ||
-          (m.yuan || '').toLowerCase().includes(keyword),
+      ? mentionItemsAll.filter((m) =>
+          m.searchTokens.some((token) => String(token || '').toLowerCase().includes(keyword)),
         )
-      : members;
+      : mentionItemsAll;
 
     if (filtered.length === 0) {
       setMentionActive(false);
@@ -901,13 +926,13 @@ export function ChannelInput() {
     setMentionActive(true);
   }, [channelMembers, agents, userName, userAvatarUrl, currentAgentId]);
 
-  const insertMention = useCallback((displayName: string) => {
+  const insertMention = useCallback((mentionText: string) => {
     if (!inputRef.current || mentionStartPos < 0) return;
     const val = inputRef.current.value;
     const cursorPos = inputRef.current.selectionStart ?? 0;
     const before = val.slice(0, mentionStartPos);
     const after = val.slice(cursorPos);
-    const inserted = `@${displayName} `;
+    const inserted = `@${mentionText} `;
     const newVal = before + inserted + after;
     setInputValue(newVal);
     setMentionActive(false);
@@ -926,7 +951,7 @@ export function ChannelInput() {
       if (mentionActive) {
         e.preventDefault();
         const selected = mentionItems[mentionSelectedIdx];
-        if (selected) insertMention(selected.displayName);
+        if (selected) insertMention(selected.mentionText);
         return;
       }
       e.preventDefault();
@@ -946,6 +971,35 @@ export function ChannelInput() {
     requestAnimationFrame(() => checkMention());
   }, [checkMention]);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const plainText = e.clipboardData?.getData('text/plain') ?? '';
+    if (!plainText) return;
+
+    // Copying from channel message markdown blocks may carry extra trailing blank lines.
+    const htmlText = e.clipboardData?.getData('text/html') ?? '';
+    const fromChannelMessage = htmlText.includes('channel-msg-text');
+    if (!fromChannelMessage) return;
+
+    const normalized = plainText
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n{2,}$/g, '');
+
+    if (normalized === plainText) return;
+
+    e.preventDefault();
+    const el = e.currentTarget;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? start;
+    const next = inputValue.slice(0, start) + normalized + inputValue.slice(end);
+    setInputValue(next);
+
+    requestAnimationFrame(() => {
+      const cursor = start + normalized.length;
+      el.setSelectionRange(cursor, cursor);
+      checkMention();
+    });
+  }, [inputValue, checkMention]);
+
   if (isDM || !currentChannel) return null;
 
   return (
@@ -959,11 +1013,11 @@ export function ChannelInput() {
               data-name={m.displayName}
               onMouseDown={(e) => {
                 e.preventDefault();
-                insertMention(m.displayName);
+                insertMention(m.mentionText);
               }}
             >
               <div className="channel-mention-avatar">
-                <MemberAvatar info={m} />
+                {m.avatar ? <MemberAvatar info={m.avatar} /> : <span>@</span>}
               </div>
               <span>{m.displayName}</span>
             </div>
@@ -979,6 +1033,7 @@ export function ChannelInput() {
         value={inputValue}
         onChange={handleInput}
         onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
       />
       <button
         className="channel-send-btn"

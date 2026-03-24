@@ -36,7 +36,8 @@
     "warningConfirm": "我了解了，开启频道",
     "disabled": "频道功能已关闭",
     "toggleLabel": "频道功能开关",
-    "members": "成员"
+    "members": "成员",
+    "mentionAll": "全体成员"
   },
   "sidebar": {
     "title": "对话",
