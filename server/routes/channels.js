@@ -8,6 +8,8 @@
  * POST   /api/channels              — 创建新频道
  * GET    /api/channels/:id          — 获取频道消息 + 成员列表
  * POST   /api/channels/:id/messages — 用户发送群聊消息
+ * POST   /api/channels/:id/new      — 开启新对话（重置上下文，保留历史）
+ * POST   /api/channels/:id/reset    — 清空频道消息并重置
  * POST   /api/channels/:id/read     — 更新用户已读 bookmark
  * DELETE /api/channels/:id          — 删除频道
  */
@@ -19,10 +21,13 @@ import {
   parseChannel,
   createChannel,
   appendMessage,
+  appendContextResetMarker,
+  clearChannelMessages,
   readBookmarks,
   updateBookmark,
   addBookmarkEntry,
   getChannelMeta,
+  isContextResetMessage,
 } from "../../lib/channels/channel-store.js";
 import { collectMentionedAgentIds } from "../../lib/channels/channel-mentions.js";
 
@@ -61,16 +66,17 @@ export default async function channelsRoute(app, { engine, hub }) {
         const filePath = path.join(channelsDir, f);
         const content = fs.readFileSync(filePath, "utf-8");
         const { meta, messages } = parseChannel(content);
+        const visibleMessages = messages.filter(m => !isContextResetMessage(m));
         const members = Array.isArray(meta.members) ? meta.members : [];
 
-        const lastMsg = messages[messages.length - 1];
+        const lastMsg = visibleMessages[visibleMessages.length - 1];
         const bookmark = bookmarks.get(channelId);
 
         let newMessageCount = 0;
         if (bookmark && bookmark !== "never") {
-          newMessageCount = messages.filter(m => m.timestamp > bookmark).length;
+          newMessageCount = visibleMessages.filter(m => m.timestamp > bookmark).length;
         } else {
-          newMessageCount = messages.length;
+          newMessageCount = visibleMessages.length;
         }
 
         channels.push({
@@ -78,7 +84,7 @@ export default async function channelsRoute(app, { engine, hub }) {
           name: meta.name || channelId,
           description: meta.description || "",
           members,
-          messageCount: messages.length,
+          messageCount: visibleMessages.length,
           newMessageCount,
           lastMessage: lastMsg?.body?.slice(0, 60) || "",
           lastSender: lastMsg?.sender || "",
@@ -164,12 +170,17 @@ export default async function channelsRoute(app, { engine, hub }) {
       const content = fs.readFileSync(filePath, "utf-8");
       const { meta, messages } = parseChannel(content);
       const members = Array.isArray(meta.members) ? meta.members : [];
+      const apiMessages = messages.map((m) =>
+        isContextResetMessage(m)
+          ? { ...m, body: "", isContextReset: true }
+          : m,
+      );
 
       return {
         id: meta.id || name,
         name: meta.name || name,
         description: meta.description || "",
-        messages,
+        messages: apiMessages,
         members,
       };
     } catch (err) {
@@ -234,6 +245,51 @@ export default async function channelsRoute(app, { engine, hub }) {
       }
 
       updateBookmark(userBookmarkPath(), name, timestamp);
+      return { ok: true };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // ── 开始新对话（保留历史，仅重置上下文） ──
+  app.post("/api/channels/:name/new", async (req, reply) => {
+    try {
+      const { name } = req.params;
+      const filePath = safeChannelPath(name);
+      if (!filePath) { reply.code(400); return { error: "Invalid channel id" }; }
+      if (!fs.existsSync(filePath)) {
+        reply.code(404);
+        return { error: "Channel not found" };
+      }
+
+      const timestamp = await appendContextResetMarker(filePath);
+      if (!timestamp) {
+        reply.code(500);
+        return { error: "Failed to append context reset marker" };
+      }
+
+      debugLog()?.log("api", `POST /channels/${name}/new`);
+      return { ok: true, timestamp };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // ── 清空频道消息（保留元数据） ──
+  app.post("/api/channels/:name/reset", async (req, reply) => {
+    try {
+      const { name } = req.params;
+      const filePath = safeChannelPath(name);
+      if (!filePath) { reply.code(400); return { error: "Invalid channel id" }; }
+      if (!fs.existsSync(filePath)) {
+        reply.code(404);
+        return { error: "Channel not found" };
+      }
+
+      await clearChannelMessages(filePath);
+      debugLog()?.log("api", `POST /channels/${name}/reset`);
       return { ok: true };
     } catch (err) {
       reply.code(500);

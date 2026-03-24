@@ -17,7 +17,7 @@ import fs from "fs";
 import path from "path";
 import { createChannelTicker } from "../lib/channels/channel-ticker.js";
 import { appendMessage, formatMessagesForLLM, getChannelMeta } from "../lib/channels/channel-store.js";
-import { collectMentionedAgentIds } from "../lib/channels/channel-mentions.js";
+import { collectMentionedAgentIds, hasMentionAll } from "../lib/channels/channel-mentions.js";
 import { loadConfig } from "../lib/memory/config-loader.js";
 import { callProviderText } from "../lib/llm/provider-client.js";
 import { runAgentSession } from "./agent-executor.js";
@@ -92,7 +92,7 @@ export class ChannelRouter {
    */
   setupPostHandler() {
     const postHandler = (channelName, senderId, content = "") => {
-      this._handleAgentPost(channelName, senderId, content);
+      this._handleAgentPost(channelName, senderId, content, { source: "tool" });
     };
 
     for (const [, agent] of this._engine.agents || []) {
@@ -233,7 +233,8 @@ export class ChannelRouter {
         // 写入频道文件
         const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
         appendMessage(channelFile, agentId, replyText);
-        this._handleAgentPost(channelName, agentId, replyText);
+        // 自动 triage 回复不再触发二次 @ 级联，避免同一条 @ 消息回环重放。
+        this._handleAgentPost(channelName, agentId, replyText, { source: "auto_reply" });
 
         console.log(`\x1b[90m[channel] ${agentId} replied #${channelName} (${replyText.length} chars)\x1b[0m`);
         debugLog()?.log("channel", `${agentId} replied #${channelName} (${replyText.length} chars)`);
@@ -280,7 +281,9 @@ export class ChannelRouter {
           capture: true,
         },
       ],
-      { engine: this._engine, signal, sessionSuffix: "channel-temp" },
+      // 频道回复仅允许只读工具（如 search_memory / web_search），
+      // 禁止 channel/dm/ask_agent 等写操作，避免 @ 触发回环。
+      { engine: this._engine, signal, sessionSuffix: "channel-temp", readOnly: true },
     );
 
     if (!text?.trim()) {
@@ -296,7 +299,7 @@ export class ChannelRouter {
               capture: true,
             },
           ],
-          { engine: this._engine, signal, sessionSuffix: "channel-temp" },
+          { engine: this._engine, signal, sessionSuffix: "channel-temp", readOnly: true },
         );
         if (retryText?.trim()) return retryText.trim();
         return isZh ? "我看到你的问题了，刚才生成失败了，请再发一次，我会直接回答。" : "I saw your question, but generation failed just now. Please send it again and I'll answer directly.";
@@ -331,9 +334,21 @@ export class ChannelRouter {
    * @param {string} channelName
    * @param {string} senderId
    * @param {string} content
+   * @param {{ source?: "tool" | "auto_reply" }} [opts]
    */
-  _handleAgentPost(channelName, senderId, content = "") {
+  _handleAgentPost(channelName, senderId, content = "", { source = "tool" } = {}) {
     const mentionedAgents = this._collectMentionedAgentsInChannel(channelName, content, { excludeAgentIds: [senderId] });
+    if (source === "auto_reply") {
+      // 防回环：自动回复中的 @全体 不级联触发；但定向 @agent 仍允许。
+      if (hasMentionAll(content)) {
+        debugLog()?.log("channel", `agent ${senderId} auto-replied in #${channelName} with @all, skip cascade`);
+        return;
+      }
+      if (!mentionedAgents.length) {
+        debugLog()?.log("channel", `agent ${senderId} auto-replied in #${channelName}, no @mentions → skip cascade`);
+        return;
+      }
+    }
     if (!mentionedAgents.length) {
       debugLog()?.log("channel", `agent ${senderId} posted to #${channelName}, no @mentions → skip triage`);
       return;

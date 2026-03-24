@@ -50,6 +50,7 @@ export interface ChannelMessage {
   sender: string;
   timestamp: string;
   body: string;
+  isContextReset?: boolean;
 }
 
 export interface Activity {

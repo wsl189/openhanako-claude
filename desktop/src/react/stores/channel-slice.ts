@@ -19,6 +19,8 @@ export interface ChannelSlice {
   loadChannels: () => Promise<void>;
   openChannel: (channelId: string, isDM?: boolean) => Promise<void>;
   sendChannelMessage: (text: string) => Promise<void>;
+  resetChannelContext: () => Promise<void>;
+  clearChannelMessages: () => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
   createChannel: (name: string, members: string[], intro?: string) => Promise<string | null>;
 }
@@ -167,6 +169,62 @@ export const createChannelSlice = (
       }
     } catch (err) {
       console.error('[channels] send failed:', err);
+    }
+  },
+
+  resetChannelContext: async () => {
+    const s = get!();
+    if (!s.currentChannel || s.channelIsDM) return;
+
+    try {
+      const res = await hanaFetch(`/api/channels/${encodeURIComponent(s.currentChannel)}/new`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data?.ok || !data?.timestamp) throw new Error(data?.error || 'new session failed');
+
+      set({
+        channelMessages: [...s.channelMessages, {
+          sender: 'system',
+          timestamp: data.timestamp,
+          body: '',
+          isContextReset: true,
+        }],
+        channelAgentActivity: {
+          ...s.channelAgentActivity,
+          [s.currentChannel]: {},
+        },
+      });
+    } catch (err) {
+      console.error('[channels] new session failed:', err);
+      throw err;
+    }
+  },
+
+  clearChannelMessages: async () => {
+    const s = get!();
+    if (!s.currentChannel || s.channelIsDM) return;
+
+    try {
+      const res = await hanaFetch(`/api/channels/${encodeURIComponent(s.currentChannel)}/reset`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data?.ok) throw new Error(data?.error || 'reset failed');
+
+      set({
+        channelMessages: [],
+        channelAgentActivity: {
+          ...s.channelAgentActivity,
+          [s.currentChannel]: {},
+        },
+      });
+      await get!().loadChannels();
+    } catch (err) {
+      console.error('[channels] reset failed:', err);
+      throw err;
     }
   },
 

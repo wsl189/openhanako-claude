@@ -43,6 +43,12 @@ interface MentionItem {
   searchTokens: string[];
 }
 
+interface CommandItem {
+  id: string;
+  label: string;
+  desc: string;
+}
+
 // ── 辅助函数 ──
 
 function resolveChannelMember(
@@ -604,12 +610,32 @@ export function ChannelMessages() {
   const currentAgentId = useStore((s) => s.currentAgentId);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when messages change
+  // 消息变化时自动滚动：
+  // - 普通消息：滚到底
+  // - /new 插入分隔线后：把分隔线滚到可视区顶部，形成“新会话从这里开始”的阅读起点
   useEffect(() => {
     const el = document.getElementById('channelMessages');
-    if (el) {
-      el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const spacer = el.querySelector('.channel-context-tail-spacer') as HTMLElement | null;
+
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg?.isContextReset) {
+      const lastDivider = el.querySelector('.channel-context-divider:last-of-type') as HTMLElement | null;
+      if (lastDivider && spacer) {
+        // 当分隔线在末尾时，补一段底部留白，才能把它滚到容器顶部
+        const neededSpace = Math.max(0, el.clientHeight - lastDivider.offsetHeight - 12);
+        spacer.style.height = `${neededSpace}px`;
+
+        requestAnimationFrame(() => {
+          const targetTop = Math.max(0, lastDivider.offsetTop - 8);
+          el.scrollTo({ top: targetTop, behavior: 'smooth' });
+        });
+        return;
+      }
     }
+
+    if (spacer) spacer.style.height = '0px';
+    el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   if (!currentChannel || messages.length === 0) {
@@ -623,6 +649,15 @@ export function ChannelMessages() {
   return (
     <>
       {messages.map((msg, idx) => {
+        if (msg.isContextReset) {
+          lastSender = null;
+          return (
+            <div key={`${msg.timestamp}-${idx}`} className="channel-context-divider">
+              <span>{t('channel.newConversationDivider')}</span>
+            </div>
+          );
+        }
+
         const isContinuation = msg.sender === lastSender;
         const senderInfo = resolveChannelMember(msg.sender, userName, userAvatarUrl, agents, currentAgentId);
         const isSelf = senderInfo.isUser || (isDM && msg.sender === (currentAgentId || ''));
@@ -655,6 +690,7 @@ export function ChannelMessages() {
         lastSender = msg.sender;
         return el;
       })}
+      <div className="channel-context-tail-spacer" aria-hidden="true" />
     </>
   );
 }
@@ -733,6 +769,7 @@ export function ChannelMembers() {
 // ══════════════════════════════════════════════════════
 
 export function ChannelInput() {
+  const { t } = useI18n();
   const currentChannel = useStore((s) => s.currentChannel);
   const isDM = useStore((s) => s.channelIsDM);
   const channelMembers = useStore((s) => s.channelMembers);
@@ -741,9 +778,12 @@ export function ChannelInput() {
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
   const sendChannelMessage = useStore((s) => s.sendChannelMessage);
+  const resetChannelContext = useStore((s) => s.resetChannelContext);
+  const clearChannelMessages = useStore((s) => s.clearChannelMessages);
   const attachedFiles = useStore((s) => s.attachedFiles);
   const removeAttachedFile = useStore((s) => s.removeAttachedFile);
   const clearAttachedFiles = useStore((s) => s.clearAttachedFiles);
+  const addToast = useStore((s) => s.addToast);
 
   const [inputValue, setInputValue] = useState('');
   const [sending, setSending] = useState(false);
@@ -751,6 +791,10 @@ export function ChannelInput() {
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
   const [mentionStartPos, setMentionStartPos] = useState(-1);
+  const [commandActive, setCommandActive] = useState(false);
+  const [commandItems, setCommandItems] = useState<CommandItem[]>([]);
+  const [commandSelectedIdx, setCommandSelectedIdx] = useState(0);
+  const [commandStartPos, setCommandStartPos] = useState(-1);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Show/hide the input area based on DM state
@@ -771,10 +815,53 @@ export function ChannelInput() {
     }
   }, [currentChannel, isDM]);
 
+  // 切换频道时重置输入态
+  useEffect(() => {
+    setInputValue('');
+    setMentionActive(false);
+    setCommandActive(false);
+    clearAttachedFiles();
+  }, [currentChannel, clearAttachedFiles]);
+
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();
     const hasFiles = attachedFiles.length > 0;
     if (sending || (!text && !hasFiles)) return;
+
+    const cmd = text.split(/\s+/)[0]?.toLowerCase();
+    if (cmd === '/new') {
+      setSending(true);
+      try {
+        await resetChannelContext();
+        setInputValue('');
+        setMentionActive(false);
+        setCommandActive(false);
+        clearAttachedFiles();
+      } catch (err) {
+        console.error('[channels] /new failed:', err);
+        addToast(t('channel.resetContextFailed'), 'error', 3000);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    if (cmd === '/clear') {
+      setSending(true);
+      try {
+        await clearChannelMessages();
+        setInputValue('');
+        setMentionActive(false);
+        setCommandActive(false);
+        clearAttachedFiles();
+      } catch (err) {
+        console.error('[channels] /clear failed:', err);
+        addToast(t('channel.resetFailed'), 'error', 3000);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
 
     let finalText = text;
     if (hasFiles) {
@@ -789,10 +876,12 @@ export function ChannelInput() {
       await sendChannelMessage(finalText);
       setInputValue('');
       clearAttachedFiles();
+      setMentionActive(false);
+      setCommandActive(false);
     } finally {
       setSending(false);
     }
-  }, [sending, inputValue, attachedFiles, sendChannelMessage, clearAttachedFiles]);
+  }, [sending, inputValue, attachedFiles, sendChannelMessage, clearAttachedFiles, resetChannelContext, clearChannelMessages, addToast, t]);
 
   const checkMention = useCallback(() => {
     if (!inputRef.current) return;
@@ -845,7 +934,55 @@ export function ChannelInput() {
     setMentionItems(filtered);
     setMentionSelectedIdx(0);
     setMentionActive(true);
+    setCommandActive(false);
   }, [channelMembers, agents, userName, userAvatarUrl, currentAgentId]);
+
+  const checkCommand = useCallback(() => {
+    if (!inputRef.current) return;
+    const val = inputRef.current.value;
+    const cursorPos = inputRef.current.selectionStart ?? 0;
+    const textBeforeCursor = val.slice(0, cursorPos);
+
+    const slashIdx = textBeforeCursor.lastIndexOf('/');
+    if (slashIdx < 0 || (slashIdx > 0 && /\S/.test(textBeforeCursor[slashIdx - 1]))) {
+      setCommandActive(false);
+      return;
+    }
+
+    const keywordRaw = textBeforeCursor.slice(slashIdx + 1);
+    if (/\s/.test(keywordRaw)) {
+      setCommandActive(false);
+      return;
+    }
+
+    setCommandStartPos(slashIdx);
+    const keyword = keywordRaw.toLowerCase();
+    const allCommands: CommandItem[] = [
+      {
+        id: 'new',
+        label: '/new',
+        desc: t('channel.commandNewDesc'),
+      },
+      {
+        id: 'clear',
+        label: '/clear',
+        desc: t('channel.commandClearDesc'),
+      },
+    ];
+    const filtered = keyword
+      ? allCommands.filter((c) => c.label.slice(1).toLowerCase().includes(keyword))
+      : allCommands;
+
+    if (filtered.length === 0) {
+      setCommandActive(false);
+      return;
+    }
+
+    setCommandItems(filtered);
+    setCommandSelectedIdx(0);
+    setCommandActive(true);
+    setMentionActive(false);
+  }, [t]);
 
   const insertMention = useCallback((mentionText: string) => {
     if (!inputRef.current || mentionStartPos < 0) return;
@@ -867,12 +1004,38 @@ export function ChannelInput() {
     });
   }, [mentionStartPos]);
 
+  const insertCommand = useCallback((label: string) => {
+    if (!inputRef.current || commandStartPos < 0) return;
+    const val = inputRef.current.value;
+    const cursorPos = inputRef.current.selectionStart ?? 0;
+    const before = val.slice(0, commandStartPos);
+    const after = val.slice(cursorPos);
+    const inserted = `${label} `;
+    const newVal = before + inserted + after;
+    setInputValue(newVal);
+    setCommandActive(false);
+
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        const newCursor = before.length + inserted.length;
+        inputRef.current.setSelectionRange(newCursor, newCursor);
+        inputRef.current.focus();
+      }
+    });
+  }, [commandStartPos]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as any).isComposing) {
       if (mentionActive) {
         e.preventDefault();
         const selected = mentionItems[mentionSelectedIdx];
         if (selected) insertMention(selected.mentionText);
+        return;
+      }
+      if (commandActive) {
+        e.preventDefault();
+        const selected = commandItems[commandSelectedIdx];
+        if (selected) insertCommand(selected.label);
         return;
       }
       e.preventDefault();
@@ -884,13 +1047,21 @@ export function ChannelInput() {
       if (e.key === 'ArrowUp') { e.preventDefault(); setMentionSelectedIdx((i) => (i - 1 + mentionItems.length) % mentionItems.length); }
       if (e.key === 'Escape') { e.preventDefault(); setMentionActive(false); }
     }
-  }, [mentionActive, mentionItems, mentionSelectedIdx, insertMention, handleSend]);
+    if (commandActive) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setCommandSelectedIdx((i) => (i + 1) % commandItems.length); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setCommandSelectedIdx((i) => (i - 1 + commandItems.length) % commandItems.length); }
+      if (e.key === 'Escape') { e.preventDefault(); setCommandActive(false); }
+    }
+  }, [mentionActive, mentionItems, mentionSelectedIdx, insertMention, commandActive, commandItems, commandSelectedIdx, insertCommand, handleSend]);
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputValue(e.target.value);
-    // Defer mention check to after state update
-    requestAnimationFrame(() => checkMention());
-  }, [checkMention]);
+    // Defer checks to after state update
+    requestAnimationFrame(() => {
+      checkMention();
+      checkCommand();
+    });
+  }, [checkMention, checkCommand]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const plainText = e.clipboardData?.getData('text/plain') ?? '';
@@ -918,8 +1089,9 @@ export function ChannelInput() {
       const cursor = start + normalized.length;
       el.setSelectionRange(cursor, cursor);
       checkMention();
+      checkCommand();
     });
-  }, [inputValue, checkMention]);
+  }, [inputValue, checkMention, checkCommand]);
 
   if (isDM || !currentChannel) return null;
 
@@ -941,6 +1113,23 @@ export function ChannelInput() {
                 {m.avatar ? <MemberAvatar info={m.avatar} /> : <span>@</span>}
               </div>
               <span>{m.displayName}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {commandActive && commandItems.length > 0 && (
+        <div className="channel-mention-dropdown channel-command-dropdown">
+          {commandItems.map((cmd, idx) => (
+            <div
+              key={cmd.id}
+              className={`channel-mention-item${idx === commandSelectedIdx ? ' active' : ''}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                insertCommand(cmd.label);
+              }}
+            >
+              <span className="channel-command-item-main">{cmd.label}</span>
+              <span className="channel-command-item-desc">{cmd.desc}</span>
             </div>
           ))}
         </div>

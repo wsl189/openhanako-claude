@@ -11492,6 +11492,34 @@ a.about-link:hover {
     padding: 6px 0;
 }
 
+.channel-context-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 18px 0;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 600;
+    opacity: 0.9;
+}
+
+.channel-context-divider::before,
+.channel-context-divider::after {
+    content: "";
+    flex: 1;
+    height: 2px;
+    background: color-mix(in srgb, var(--text-muted) 30%, transparent);
+}
+
+.channel-context-divider > span {
+    white-space: nowrap;
+}
+
+.channel-context-tail-spacer {
+    height: 0;
+    pointer-events: none;
+}
+
 .channel-msg-continuation {
     padding: 1px 0;
 }
@@ -11662,6 +11690,16 @@ a.about-link:hover {
 .channel-mention-item:hover,
 .channel-mention-item.active {
     background: var(--overlay-light);
+}
+
+.channel-command-item-main {
+    font-weight: 600;
+}
+
+.channel-command-item-desc {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-size: 12px;
 }
 
 .channel-mention-avatar {
