@@ -173,6 +173,7 @@ export class Scheduler {
     try {
       const isZh = getLocale().startsWith("zh");
       const isReminderJob = this._isReminderJob(job);
+      const notifyTarget = this._normalizeNotifyTarget(job?.notifyTarget, "auto");
       const prompt = isZh
         ? [
             `[定时任务 ${job.id}: ${job.label}]`,
@@ -180,7 +181,14 @@ export class Scheduler {
             "**注意：这是系统自动触发的定时任务，不是用户发来的。**",
             "**不要在执行过程中创建新的定时任务。**",
             ...(isReminderJob
-              ? ["**这是提醒任务：完成后必须调用 notify 工具通知用户。**", ""]
+              ? [
+                  notifyTarget === "platform"
+                    ? "**这是平台提醒任务：完成后必须调用 notify 工具，并把 target 设为 platform。**"
+                    : notifyTarget === "local"
+                      ? "**这是本地提醒任务：完成后必须调用 notify 工具，并把 target 设为 local。**"
+                      : "**这是提醒任务：完成后必须调用 notify 工具；若接入平台可优先使用 target=platform。**",
+                  "",
+                ]
               : []),
             "",
             job.prompt,
@@ -191,7 +199,14 @@ export class Scheduler {
             "**Note: This is an automated cron job, NOT a user message.**",
             "**Do not create new cron jobs during execution.**",
             ...(isReminderJob
-              ? ["**This is a reminder task: you must call notify after finishing.**", ""]
+              ? [
+                  notifyTarget === "platform"
+                    ? "**This is a platform reminder task: call notify with target=platform after finishing.**"
+                    : notifyTarget === "local"
+                      ? "**This is a local reminder task: call notify with target=local after finishing.**"
+                      : "**This is a reminder task: call notify after finishing; prefer target=platform when bridge is connected.**",
+                  "",
+                ]
               : []),
             "",
             job.prompt,
@@ -205,7 +220,7 @@ export class Scheduler {
       if (isReminderJob && activity?.sessionPath) {
         const parsed = this._parseActivitySession(activity.sessionPath);
         if (!parsed.hasNotifyCall) {
-          this._emitReminderFallback(agentId, job, parsed.assistantText, activity.summary);
+          await this._emitReminderFallback(agentId, job, parsed.assistantText, activity.summary);
         }
       }
     } finally {
@@ -302,6 +317,11 @@ export class Scheduler {
     return keywords.some(k => text.includes(k));
   }
 
+  _normalizeNotifyTarget(value, fallback = "auto") {
+    const v = String(value ?? fallback).toLowerCase();
+    return (v === "local" || v === "platform" || v === "auto") ? v : fallback;
+  }
+
   _parseActivitySession(sessionPath) {
     try {
       const raw = fs.readFileSync(sessionPath, "utf-8");
@@ -334,7 +354,7 @@ export class Scheduler {
     }
   }
 
-  _emitReminderFallback(agentId, job, assistantText, summary) {
+  async _emitReminderFallback(agentId, job, assistantText, summary) {
     const isZh = getLocale().startsWith("zh");
     const title = String(job?.label || "").trim() || (isZh ? "定时提醒" : "Scheduled reminder");
     const cleanAssistant = String(assistantText || "")
@@ -353,9 +373,14 @@ export class Scheduler {
       || (isZh ? "你的定时任务已触发。" : "Your scheduled task has run.")
     ).slice(0, 240);
 
-    this._hub.eventBus.emit(
-      { type: "notification", title, body, agentId, source: "cron_fallback", jobId: job?.id },
-      null,
-    );
+    const target = this._normalizeNotifyTarget(job?.notifyTarget, "auto");
+    await this._hub.notify({
+      title,
+      body,
+      target,
+      agentId,
+      source: "cron_fallback",
+      jobId: job?.id,
+    });
   }
 }

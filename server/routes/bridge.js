@@ -16,7 +16,7 @@ import {
 } from "../../lib/bridge/session-key.js";
 import { t } from "../i18n.js";
 
-const MULTI_BOT_PLATFORMS = new Set(["telegram", "qq"]);
+const MULTI_BOT_PLATFORMS = new Set(["telegram", "feishu", "qq"]);
 const BRIDGE_PLATFORMS = [...KNOWN_PLATFORMS];
 
 function makeBotId() {
@@ -70,6 +70,18 @@ function normalizeBotDraft(platform, bot = {}, fallback = {}) {
       agentId: draft.agentId || null,
     };
   }
+  if (platform === "feishu") {
+    const appId = draft.appId || draft.appID || "";
+    const appSecret = draft.appSecret || draft.appsecret || "";
+    return {
+      id: effectiveId,
+      name: (draft.name || "").trim() || "Feishu Bot",
+      appId,
+      appSecret,
+      enabled: draft.enabled !== false,
+      agentId: draft.agentId || null,
+    };
+  }
   return draft;
 }
 
@@ -108,17 +120,9 @@ function getBoundAgentsForPlatform(engine, platform) {
 
   const includeAll = !platform;
 
-  if (includeAll || platform === "feishu") {
-    const aid = bridge.feishu?.agentId;
-    if (aid) ids.add(aid);
-  }
-  if (includeAll || platform === "telegram") {
-    for (const bot of normalizeBridgeBots("telegram", bridge.telegram)) {
-      if (bot?.agentId) ids.add(bot.agentId);
-    }
-  }
-  if (includeAll || platform === "qq") {
-    for (const bot of normalizeBridgeBots("qq", bridge.qq)) {
+  for (const p of ["telegram", "feishu", "qq"]) {
+    if (!includeAll && platform !== p) continue;
+    for (const bot of normalizeBridgeBots(p, bridge[p])) {
       if (bot?.agentId) ids.add(bot.agentId);
     }
   }
@@ -234,8 +238,25 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
       };
     });
 
-    const fs = bridge.feishu || {};
-    const fsLive = live.feishu || {};
+    const fsBots = normalizeBridgeBots("feishu", bridge.feishu).map((bot, idx) => {
+      const botId = bot.id || `legacy-${idx}`;
+      const platformKey = buildPlatformKey("feishu", bot.id || null);
+      const st = live[platformKey] || {};
+      const appId = bot.appId || bot.appID || "";
+      const secret = bot.appSecret || bot.appsecret || "";
+      return {
+        id: botId,
+        name: bot.name || "Feishu Bot",
+        configured: !!(appId && secret),
+        enabled: bot.enabled !== false,
+        status: st.status || "disconnected",
+        error: st.error || null,
+        appID: appId,
+        appSecretMasked: secret ? mask(secret) : "",
+        agentId: bot.agentId || null,
+        agentName: bot.agentId ? (agentMap.get(bot.agentId) || bot.agentId) : null,
+      };
+    });
 
     return {
       telegram: {
@@ -246,15 +267,11 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
         bots: tgBots,
       },
       feishu: {
-        configured: !!(fs.appId && fs.appSecret),
-        enabled: !!fs.enabled,
-        status: fsLive.status || "disconnected",
-        error: fsLive.error || null,
-        name: fs.name || "Feishu Bot",
-        appId: fs.appId || "",
-        appSecretMasked: fs.appSecret ? mask(fs.appSecret) : "",
-        agentId: fs.agentId || null,
-        agentName: fs.agentId ? (agentMap.get(fs.agentId) || fs.agentId) : null,
+        configured: fsBots.some((b) => b.configured),
+        enabled: fsBots.some((b) => b.enabled),
+        status: summarizePlatformStatus(fsBots),
+        error: fsBots.find((b) => b.error)?.error || null,
+        bots: fsBots,
       },
       qq: {
         configured: qqBots.some((b) => b.configured),
@@ -285,40 +302,32 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
     if (!prefs.bridge) prefs.bridge = {};
     const oldCfg = prefs.bridge[platform] || {};
 
-    if (MULTI_BOT_PLATFORMS.has(platform)) {
-      // 兼容旧请求：将 platform 级 token/appID/appSecret 落到 default bot
-      const bots = normalizeBridgeBots(platform, oldCfg);
-      let defaultBot = bots.find((b) => b.id === "default");
-      if (!defaultBot) {
-        defaultBot = normalizeBotDraft(platform, { id: "default", name: "Default Bot", enabled: true });
-        bots.push(defaultBot);
-      }
-      defaultBot = normalizeBotDraft(platform, {
-        ...defaultBot,
-        ...(credentials || {}),
-        ...(typeof enabled === "boolean" ? { enabled } : {}),
-        ...(agentId !== undefined ? { agentId: agentId || null } : {}),
-      });
-
-      const nextBots = bots.map((b) => (b.id === "default" ? defaultBot : b));
-      prefs.bridge[platform] = writeBridgeBots(oldCfg, nextBots);
-      engine.savePreferences(prefs);
-      bridgeManager.startPlatformFromConfig(platform, prefs.bridge[platform]);
-      debugLog()?.log("api", `POST /api/bridge/config platform=${platform} default-bot enabled=${defaultBot.enabled !== false}`);
-      return { ok: true, botId: "default" };
+    if (!MULTI_BOT_PLATFORMS.has(platform)) {
+      reply.code(400);
+      return { error: "unsupported platform" };
     }
 
-    // 单平台（飞书）
-    const cfg = { ...oldCfg };
-    if (credentials) Object.assign(cfg, credentials);
-    if (typeof enabled === "boolean") cfg.enabled = enabled;
-    if (agentId !== undefined) cfg.agentId = agentId || null;
-    prefs.bridge[platform] = cfg;
+    // 兼容旧请求：将 platform 级 token/appID/appSecret 落到 default bot
+    const bots = normalizeBridgeBots(platform, oldCfg);
+    let defaultBot = bots.find((b) => b.id === "default");
+    if (!defaultBot) {
+      const defaultName = platform === "feishu" ? "Feishu Bot" : "Default Bot";
+      defaultBot = normalizeBotDraft(platform, { id: "default", name: defaultName, enabled: true });
+      bots.push(defaultBot);
+    }
+    defaultBot = normalizeBotDraft(platform, {
+      ...defaultBot,
+      ...(credentials || {}),
+      ...(typeof enabled === "boolean" ? { enabled } : {}),
+      ...(agentId !== undefined ? { agentId: agentId || null } : {}),
+    });
 
+    const nextBots = bots.map((b) => (b.id === "default" ? defaultBot : b));
+    prefs.bridge[platform] = writeBridgeBots(oldCfg, nextBots);
     engine.savePreferences(prefs);
-    bridgeManager.startPlatformFromConfig(platform, cfg);
-    debugLog()?.log("api", `POST /api/bridge/config platform=${platform} enabled=${!!cfg.enabled}`);
-    return { ok: true };
+    bridgeManager.startPlatformFromConfig(platform, prefs.bridge[platform]);
+    debugLog()?.log("api", `POST /api/bridge/config platform=${platform} default-bot enabled=${defaultBot.enabled !== false}`);
+    return { ok: true, botId: "default" };
   });
 
   /** 多 bot：新增或更新 bot */
@@ -326,7 +335,7 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
     const { platform, bot } = req.body || {};
     if (!MULTI_BOT_PLATFORMS.has(platform)) {
       reply.code(400);
-      return { error: "platform must be telegram or qq" };
+      return { error: "platform must be telegram, feishu or qq" };
     }
     if (!bot || typeof bot !== "object") {
       reply.code(400);
@@ -347,25 +356,34 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
     }
     const prev = idx >= 0 ? bots[idx] : null;
     const merged = normalizeBotDraft(platform, { ...bot, id: incomingId }, prev || undefined);
-    const prevToken = prev?.token || prev?.appSecret || prev?.appsecret || "";
+    const prevSecret = prev?.token || prev?.appSecret || prev?.appsecret || "";
     const prevAppID = prev?.appID || prev?.appId || "";
 
-    if (platform === "telegram" && !(merged.token || prevToken)) {
+    if (platform === "telegram" && !(merged.token || prevSecret)) {
       reply.code(400);
       return { error: "token required" };
+    }
+    if (platform === "feishu" && !(merged.appId || prevAppID)) {
+      reply.code(400);
+      return { error: "appId required" };
+    }
+    if (platform === "feishu" && !(merged.appSecret || prevSecret)) {
+      reply.code(400);
+      return { error: "appSecret required" };
     }
     if (platform === "qq" && !(merged.appID || prevAppID)) {
       reply.code(400);
       return { error: "appID required" };
     }
-    if (platform === "qq" && !(merged.appSecret || prevToken)) {
+    if (platform === "qq" && !(merged.appSecret || prevSecret)) {
       reply.code(400);
       return { error: "appSecret required" };
     }
 
-    if (!merged.token && prevToken) merged.token = prevToken;
+    if (!merged.token && prevSecret) merged.token = prevSecret;
     if (!merged.appID && prevAppID) merged.appID = prevAppID;
-    if (!merged.appSecret && prevToken) merged.appSecret = prevToken;
+    if (!merged.appId && prevAppID) merged.appId = prevAppID;
+    if (!merged.appSecret && prevSecret) merged.appSecret = prevSecret;
     if (!merged.dmGuildMap && prev?.dmGuildMap) merged.dmGuildMap = prev.dmGuildMap;
 
     if (idx >= 0) bots[idx] = merged;
@@ -427,19 +445,27 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
     return { ok: true };
   });
 
-  /** 单平台：绑定 agent（飞书） */
+  /** 兼容旧端：平台级绑定 agent（写入 default bot） */
   app.post("/api/bridge/platform-bind", async (req, reply) => {
     const { platform, agentId } = req.body || {};
-    if (!platform || platform !== "feishu") {
+    if (!platform || !MULTI_BOT_PLATFORMS.has(platform)) {
       reply.code(400);
-      return { error: "platform must be feishu" };
+      return { error: "platform must be telegram, feishu or qq" };
     }
     const prefs = engine.getPreferences();
     if (!prefs.bridge) prefs.bridge = {};
-    const cfg = { ...(prefs.bridge[platform] || {}), agentId: agentId || null };
-    prefs.bridge[platform] = cfg;
+    const oldCfg = prefs.bridge[platform] || {};
+    const bots = normalizeBridgeBots(platform, oldCfg);
+    let defaultBot = bots.find((b) => b.id === "default");
+    if (!defaultBot) {
+      const defaultName = platform === "feishu" ? "Feishu Bot" : "Default Bot";
+      defaultBot = normalizeBotDraft(platform, { id: "default", name: defaultName, enabled: true });
+      bots.push(defaultBot);
+    }
+    const nextBots = bots.map((b) => (b.id === "default" ? { ...b, agentId: agentId || null } : b));
+    prefs.bridge[platform] = writeBridgeBots(oldCfg, nextBots);
     engine.savePreferences(prefs);
-    bridgeManager.startPlatformFromConfig(platform, cfg);
+    bridgeManager.startPlatformFromConfig(platform, prefs.bridge[platform]);
     return { ok: true };
   });
 

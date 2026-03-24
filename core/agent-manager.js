@@ -456,9 +456,14 @@ export class AgentManager {
       this.agent.updateConfig({ skills: { enabled: [...enabled] } });
       skills.syncAgentSkills(this.agent);
     };
-    ag._notifyHandler = (title, body) => {
-      this._d.getHub()?.eventBus?.emit({ type: "notification", title, body }, null);
-    };
+    ag._notifyHandler = (title, body, opts = {}) =>
+      this._d.getHub()?.notify?.({
+        title,
+        body,
+        target: opts?.target || "auto",
+        agentId: path.basename(ag.agentDir || ""),
+        source: "notify_tool",
+      });
     return ag;
   }
 

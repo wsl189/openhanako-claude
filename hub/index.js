@@ -216,6 +216,44 @@ export class Hub {
     this._eventBus.clear();
   }
 
+  /**
+   * 统一通知出口：
+   * - target=platform: 仅发平台私聊（失败不弹本地）
+   * - target=auto: 优先发平台，失败再本地弹窗
+   * - target=local: 仅本地弹窗
+   */
+  async notify({ title, body, target = "auto", agentId = null, source = "notify_tool", ...meta } = {}) {
+    const normalized = (() => {
+      const v = String(target || "auto").toLowerCase();
+      return (v === "local" || v === "platform" || v === "auto") ? v : "auto";
+    })();
+
+    const text = [String(title || "").trim(), String(body || "").trim()]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+
+    if (normalized !== "local" && text && this._bridgeManager?.sendProactive) {
+      try {
+        const sent = await this._bridgeManager.sendProactive(text);
+        if (sent) {
+          return { delivered: "platform", ...sent };
+        }
+      } catch {}
+    }
+
+    // 显式要求 platform 时，不回退本地弹窗，避免重复打扰
+    if (normalized === "platform") {
+      return { delivered: "none", reason: "platform_unavailable" };
+    }
+
+    this._eventBus.emit(
+      { type: "notification", title, body, agentId, source, ...meta },
+      null,
+    );
+    return { delivered: "local" };
+  }
+
   // ──────────── 内部 ────────────
 
   /** @returns {DmRouter} */
@@ -232,9 +270,14 @@ export class Hub {
 
   _setupNotifyHandler() {
     for (const [, agent] of this._engine.agents || []) {
-      agent._notifyHandler = (title, body) => {
-        this._eventBus.emit({ type: "notification", title, body }, null);
-      };
+      agent._notifyHandler = (title, body, opts = {}) =>
+        this.notify({
+          title,
+          body,
+          target: opts?.target || "auto",
+          agentId: path.basename(agent?.agentDir || "") || null,
+          source: "notify_tool",
+        });
     }
   }
 

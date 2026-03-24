@@ -84,6 +84,11 @@ function listWorkspaceFiles(dir) {
 }
 
 export default async function deskRoute(app, { engine, hub }) {
+  function normalizeNotifyTarget(value, fallback = "auto") {
+    const v = String(value ?? fallback).toLowerCase();
+    return (v === "local" || v === "platform" || v === "auto") ? v : fallback;
+  }
+
   function resolveCronTarget(input = {}) {
     const explicitAgentId = typeof input.agentId === "string" ? input.agentId.trim() : "";
     if (explicitAgentId) {
@@ -306,6 +311,7 @@ export default async function deskRoute(app, { engine, hub }) {
           prompt: params.prompt,
           label: params.label,
           model: params.model,
+          notifyTarget: normalizeNotifyTarget(params.notifyTarget, "auto"),
         });
         return {
           ok: true,
@@ -352,6 +358,10 @@ export default async function deskRoute(app, { engine, hub }) {
           );
           if (!normalizedSchedule) return { error: t("error.cronEveryMustBeNumber") };
           partial.schedule = normalizedSchedule;
+        }
+
+        if (partial.notifyTarget !== undefined) {
+          partial.notifyTarget = normalizeNotifyTarget(partial.notifyTarget, current.notifyTarget || "auto");
         }
 
         const job = store.updateJob(id, partial);

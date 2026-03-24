@@ -14,28 +14,19 @@ interface BridgeBotStatus {
   error?: string | null;
   tokenMasked?: string;
   appID?: string;
-  appSecretMasked?: string;
-  agentId?: string | null;
-  agentName?: string | null;
-}
-
-interface FeishuStatus {
-  configured?: boolean;
-  enabled?: boolean;
-  status?: string;
-  error?: string | null;
   appId?: string;
   appSecretMasked?: string;
   agentId?: string | null;
   agentName?: string | null;
-  name?: string;
 }
 
 interface BridgeStatus {
   telegram?: {
     bots?: BridgeBotStatus[];
   };
-  feishu?: FeishuStatus;
+  feishu?: {
+    bots?: BridgeBotStatus[];
+  };
   qq?: {
     bots?: BridgeBotStatus[];
   };
@@ -138,8 +129,8 @@ export function BridgeTab() {
   const agents = (store.agents || []) as AgentItem[];
 
   const [tgBots, setTgBots] = useState<BridgeBotStatus[]>([]);
+  const [fsBots, setFsBots] = useState<BridgeBotStatus[]>([]);
   const [qqBots, setQqBots] = useState<BridgeBotStatus[]>([]);
-  const [feishuBot, setFeishuBot] = useState<BridgeBotStatus | null>(null);
 
   const [newDrafts, setNewDrafts] = useState<Record<BridgePlatform, BotDraft | null>>({
     telegram: null,
@@ -180,7 +171,7 @@ export function BridgeTab() {
   const toDraft = (platform: BridgePlatform, bot: BridgeBotStatus): BotDraft => ({
     id: bot.id || '',
     name: (bot.name || defaultBotName(platform)).trim(),
-    appID: bot.appID || '',
+    appID: bot.appID || bot.appId || '',
     appSecret: '',
     appSecretMasked: bot.appSecretMasked || bot.tokenMasked || '',
     agentId: bot.agentId || defaultAgentId,
@@ -199,7 +190,7 @@ export function BridgeTab() {
 
   const botsByPlatform = (platform: BridgePlatform): BridgeBotStatus[] => {
     if (platform === 'telegram') return tgBots;
-    if (platform === 'feishu') return feishuBot ? [feishuBot] : [];
+    if (platform === 'feishu') return fsBots;
     return qqBots;
   };
 
@@ -209,26 +200,8 @@ export function BridgeTab() {
       const data = (await res.json()) as BridgeStatus;
 
       setTgBots((data.telegram?.bots || []) as BridgeBotStatus[]);
+      setFsBots((data.feishu?.bots || []) as BridgeBotStatus[]);
       setQqBots((data.qq?.bots || []) as BridgeBotStatus[]);
-
-      const fs = data.feishu || {};
-      const hasFeishu = !!(fs.configured || fs.appId || fs.appSecretMasked || fs.agentId || fs.name || fs.enabled);
-      if (hasFeishu) {
-        setFeishuBot({
-          id: 'feishu-main',
-          name: fs.name || defaultBotName('feishu'),
-          configured: fs.configured,
-          enabled: !!fs.enabled,
-          status: fs.status || 'disconnected',
-          error: fs.error || null,
-          appID: fs.appId || '',
-          appSecretMasked: fs.appSecretMasked || '',
-          agentId: fs.agentId || '',
-          agentName: fs.agentName || null,
-        });
-      } else {
-        setFeishuBot(null);
-      }
     } catch (err) {
       console.error('[bridge] load status failed:', err);
     }
@@ -266,10 +239,6 @@ export function BridgeTab() {
   };
 
   const openNewCard = (platform: BridgePlatform) => {
-    if (platform === 'feishu' && feishuBot) {
-      toggleEditCard('feishu', feishuBot);
-      return;
-    }
     setExpandedIds((prev) => ({ ...prev, [platform]: null }));
     setNewDrafts((prev) => ({ ...prev, [platform]: makeNewDraft(platform) }));
     clearCardState(platform, 'new');
@@ -346,7 +315,7 @@ export function BridgeTab() {
     }
   };
 
-  const persistMultiBot = async (platform: 'telegram' | 'qq', draft: BotDraft) => {
+  const persistMultiBot = async (platform: BridgePlatform, draft: BotDraft) => {
     const payload = platform === 'telegram'
       ? {
           id: draft.id || null,
@@ -355,10 +324,19 @@ export function BridgeTab() {
           enabled: draft.enabled !== false,
           agentId: draft.agentId || null,
         }
-      : {
+      : platform === 'qq'
+        ? {
           id: draft.id || null,
           name: (draft.name || '').trim() || defaultBotName('qq'),
           appID: draft.appID.trim() || undefined,
+          appSecret: draft.appSecret.trim() || undefined,
+          enabled: draft.enabled !== false,
+          agentId: draft.agentId || null,
+        }
+        : {
+          id: draft.id || null,
+          name: (draft.name || '').trim() || defaultBotName('feishu'),
+          appId: draft.appID.trim() || undefined,
           appSecret: draft.appSecret.trim() || undefined,
           enabled: draft.enabled !== false,
           agentId: draft.agentId || null,
@@ -370,28 +348,6 @@ export function BridgeTab() {
       body: JSON.stringify({ platform, bot: payload }),
     });
     return res.json();
-  };
-
-  const persistFeishuBot = async (draft: BotDraft) => {
-    const appId = draft.appID.trim();
-    const appSecret = draft.appSecret.trim();
-
-    const credentials: Record<string, any> = {
-      name: (draft.name || '').trim() || defaultBotName('feishu'),
-      appId,
-    };
-    if (appSecret) credentials.appSecret = appSecret;
-
-    await hanaFetch('/api/bridge/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        platform: 'feishu',
-        credentials,
-        enabled: draft.enabled !== false,
-        agentId: draft.agentId || null,
-      }),
-    });
   };
 
   const validateDraft = (platform: BridgePlatform, draft: BotDraft): string | null => {
@@ -432,11 +388,7 @@ export function BridgeTab() {
     setCardResults((prev) => ({ ...prev, [key]: undefined }));
 
     try {
-      if (platform === 'feishu') {
-        await persistFeishuBot(normalizedDraft);
-      } else {
-        await persistMultiBot(platform, normalizedDraft);
-      }
+      await persistMultiBot(platform, normalizedDraft);
       const shouldTest = isNew || hasNewSecret;
       if (shouldTest) {
         const testRes = await runDraftTest(platform, normalizedDraft);
@@ -461,20 +413,6 @@ export function BridgeTab() {
   };
 
   const deleteBot = async (platform: BridgePlatform, botId: string) => {
-    if (platform === 'feishu') {
-      await hanaFetch('/api/bridge/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          platform: 'feishu',
-          credentials: { name: '', appId: '', appSecret: '' },
-          enabled: false,
-          agentId: null,
-        }),
-      });
-      return;
-    }
-
     await hanaFetch('/api/bridge/bot-delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -484,27 +422,9 @@ export function BridgeTab() {
 
   const toggleBotEnabled = async (platform: BridgePlatform, bot: BridgeBotStatus, on: boolean) => {
     try {
-      if (platform === 'feishu') {
-        const credentials: Record<string, any> = {
-          name: (bot.name || '').trim() || defaultBotName('feishu'),
-          appId: (bot.appID || '').trim(),
-        };
-
-        await hanaFetch('/api/bridge/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            platform: 'feishu',
-            credentials,
-            enabled: on,
-            agentId: bot.agentId || null,
-          }),
-        });
-      } else {
-        const draft = toDraft(platform, bot);
-        draft.enabled = on;
-        await persistMultiBot(platform, draft);
-      }
+      const draft = toDraft(platform, bot);
+      draft.enabled = on;
+      await persistMultiBot(platform, draft);
 
       await loadStatus();
       showToast(t('settings.saved'), 'success');

@@ -243,7 +243,7 @@ export class Agent {
     this._artifactTool = createArtifactTool();
     this._browserTool = createBrowserTool();
     this._notifyTool = createNotifyTool({
-      onNotify: (title, body) => this._notifyHandler?.(title, body),
+      onNotify: (title, body, opts) => this._notifyHandler?.(title, body, opts),
     });
 
     // 10. 设置修改工具
