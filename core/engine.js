@@ -5,7 +5,7 @@
  * 具体逻辑委托给：
  *   - AgentManager       — agent CRUD / init / switch
  *   - SessionCoordinator — session 生命周期 / listing
- *   - ConfigCoordinator  — 配置读写 / 模型 / 搜索 / utility
+ *   - ConfigCoordinator  — 配置读写 / 模型 / utility
  *   - ChannelManager     — 频道 CRUD / 成员管理
  *   - BridgeSessionManager — 外部平台 session
  *   - ModelManager        — 模型注册 / 发现
@@ -83,7 +83,6 @@ export class HanaEngine {
       getModels: () => this._models,
       getHub: () => this._hub,
       getSkills: () => this._skills,
-      getSearchConfig: () => this.getSearchConfig(),
       resolveUtilityConfig: () => this.resolveUtilityConfig(),
       getSharedModels: () => this._configCoord.getSharedModels(),
       getChannelManager: () => this._channels,
@@ -257,8 +256,6 @@ export class HanaEngine {
   setHomeFolder(f) { return this._configCoord.setHomeFolder(f); }
   getSharedModels() { return this._configCoord.getSharedModels(); }
   setSharedModels(p) { return this._configCoord.setSharedModels(p); }
-  getSearchConfig() { return this._configCoord.getSearchConfig(); }
-  setSearchConfig(p) { return this._configCoord.setSearchConfig(p); }
   getUtilityApi() { return this._configCoord.getUtilityApi(); }
   setUtilityApi(p) { return this._configCoord.setUtilityApi(p); }
   resolveUtilityConfig() { return this._configCoord.resolveUtilityConfig(); }

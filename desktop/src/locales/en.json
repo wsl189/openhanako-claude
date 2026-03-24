@@ -613,10 +613,6 @@
       "utilityModelHint": "Titles, light classification, etc. A cheap small model is recommended",
       "utilityLargeModel": "Utility (large)",
       "utilityLargeModelHint": "Activity summaries, task breakdown, etc. Falls back to small utility if empty",
-      "searchProvider": "Search Service",
-      "searchProviderField": "Search engine",
-      "searchApiKey": "Search API Key",
-      "searchApiKeyHint": "Enter the API key for the selected search provider",
       "favorites": "Favorites",
       "searchModel": "Search models...",
       "noFavorites": "Click ☆ to favorite models",
@@ -708,14 +704,6 @@
       "empty": "No experience yet",
       "edit": "Edit",
       "deleteCategory": "Delete category"
-    },
-    "search": {
-      "verify": "Verify",
-      "verifying": "Verifying...",
-      "verified": "Verified & saved ✿",
-      "verifyFailed": "Verification failed",
-      "noProvider": "Please select a search engine first",
-      "noKey": "Please enter an API Key first"
     },
     "work": {
       "title": "Patrol",

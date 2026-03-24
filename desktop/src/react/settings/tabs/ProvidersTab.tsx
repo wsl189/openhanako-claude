@@ -1147,34 +1147,7 @@ function ToolModelTestBtn({ modelId }: { modelId: string }) {
 }
 
 function OtherModelsSection({ providers }: { providers: Record<string, any> }) {
-  const { globalModelsConfig, pendingFavorites, showToast } = useSettingsStore();
-  const [searchApiKey, setSearchApiKey] = useState('');
-
-  const searchProvider = globalModelsConfig?.search?.provider || '';
-  const maskedSearchKey = globalModelsConfig?.search?.api_key;
-
-  const verifySearch = async () => {
-    const provider = (globalModelsConfig?.search?.provider || '').trim();
-    const apiKey = searchApiKey.trim();
-    if (!provider) { showToast(t('settings.search.noProvider'), 'error'); return; }
-    if (!apiKey) { showToast(t('settings.search.noKey'), 'error'); return; }
-    try {
-      const res = await hanaFetch('/api/search/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, api_key: apiKey }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        showToast(t('settings.search.verified'), 'success');
-        await loadSettingsConfig();
-      } else {
-        showToast(t('settings.search.verifyFailed') + (data.error ? ': ' + data.error : ''), 'error');
-      }
-    } catch (err: any) {
-      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
-    }
-  };
+  const { globalModelsConfig, pendingFavorites } = useSettingsStore();
 
   return (
     <>
@@ -1208,34 +1181,6 @@ function OtherModelsSection({ providers }: { providers: Record<string, any> }) {
             <ToolModelTestBtn modelId={globalModelsConfig?.models?.utility_large || ''} />
           </div>
           <span className="settings-field-hint">{t('settings.api.utilityLargeModelHint')}</span>
-        </div>
-      </div>
-      <div className="settings-row">
-        <div className="settings-field settings-field-half">
-          <label className="settings-field-label">{t('settings.api.searchProviderField')}</label>
-          <SelectWidget
-            options={[
-              { value: '', label: 'Not configured' },
-              { value: 'tavily', label: 'Tavily' },
-              { value: 'serper', label: 'Serper (Google)' },
-              { value: 'brave', label: 'Brave Search' },
-            ]}
-            value={searchProvider}
-            onChange={(val) => autoSaveGlobalModels({ search: { provider: val } })}
-            placeholder={t('settings.api.searchProviderField')}
-          />
-        </div>
-        <div className="settings-field settings-field-half">
-          <label className="settings-field-label">{t('settings.api.searchApiKey')}</label>
-          <KeyInput
-            value={searchApiKey}
-            onChange={setSearchApiKey}
-            placeholder={maskedSearchKey || t('settings.api.apiKeyPlaceholder')}
-          />
-          <button className="search-verify-btn" onClick={verifySearch}>
-            {t('settings.search.verify')}
-          </button>
-          <span className="settings-field-hint">{t('settings.api.searchApiKeyHint')}</span>
         </div>
       </div>
     </>

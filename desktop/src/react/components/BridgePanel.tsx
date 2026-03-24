@@ -390,7 +390,23 @@ function ContactAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string }
 function ChatBubble({ message: m }: { message: BridgeMessage }) {
   if (m.role === 'assistant') {
     const { text } = parseMoodFromContent(m.content);
-    const cleaned = (text || m.content).replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
+    // 这里不能用 `text || m.content`，否则“纯 reflect/mood 标签消息”会回退到原文并直接显示标签
+    let base = typeof text === 'string' ? text : '';
+    const finalMatches = [...base.matchAll(/<final>\s*([\s\S]*?)\s*<\/final>/gi)];
+    if (finalMatches.length) {
+      base = finalMatches[finalMatches.length - 1][1];
+    } else {
+      const replyingMatches = [...base.matchAll(/<replying>\s*([\s\S]*?)\s*<\/replying>/gi)];
+      if (replyingMatches.length) base = replyingMatches[replyingMatches.length - 1][1];
+    }
+    const cleaned = base
+      .replace(/```(?:mood|pulse|reflect|think|analysis|commentary|summary)[\s\S]*?```\n*/gi, '')
+      .replace(/<(?:mood|pulse|reflect|think|analysis|commentary|summary)>[\s\S]*?<\/(?:mood|pulse|reflect|think|analysis|commentary|summary)>\s*/gi, '')
+      .replace(/<xing\s+title=["\u201C\u201D][^"\u201C\u201D]*["\u201C\u201D]>[\s\S]*?<\/xing>\s*/gi, '')
+      .replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/gi, '')
+      .replace(/<\/?(?:final|replying)\s*>/gi, '')
+      .trim();
+    if (!cleaned) return null;
     return (
       <div className="bridge-bubble-row bridge-bubble-in">
         <div className="bridge-bubble" dangerouslySetInnerHTML={{ __html: renderMarkdown(cleaned) }} />

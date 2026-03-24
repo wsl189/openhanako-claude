@@ -1,7 +1,7 @@
 /**
  * ConfigCoordinator — 运行时配置管理
  *
- * 从 Engine 提取，负责模型/搜索/utility 配置读写、
+ * 从 Engine 提取，负责模型/utility 配置读写、
  * updateConfig 联动、Plan Mode、记忆开关、Provider 迁移。
  * 不持有 engine 引用，通过构造器注入依赖。
  */
@@ -102,30 +102,6 @@ export class ConfigCoordinator {
       agent._utilityModel = fresh.utility || null;
       log.log(`setSharedModels: ${changed.join(", ")}`);
     }
-  }
-
-  // ── Search Config ──
-
-  getSearchConfig() {
-    const prefs = this._prefs();
-    return {
-      provider: prefs.search_provider || null,
-      api_key: prefs.search_api_key || null,
-    };
-  }
-
-  setSearchConfig(partial) {
-    const prefs = this._prefs();
-    if (partial.provider !== undefined) {
-      if (partial.provider) prefs.search_provider = partial.provider;
-      else delete prefs.search_provider;
-    }
-    if (partial.api_key !== undefined) {
-      if (partial.api_key) prefs.search_api_key = partial.api_key;
-      else delete prefs.search_api_key;
-    }
-    this._savePrefs(prefs);
-    log.log(`setSearchConfig: provider=${partial.provider || "(cleared)"}`);
   }
 
   // ── Utility API ──

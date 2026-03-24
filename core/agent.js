@@ -39,13 +39,12 @@ export class Agent {
    * @param {string} opts.productDir - 产品模板目录（ishiki.example.md, yuan 模板等）
    * @param {string} opts.userDir    - 用户数据目录（user.md, 用户头像）—— 跨助手共享
    */
-  constructor({ agentDir, productDir, userDir, channelsDir, agentsDir, searchConfigResolver }) {
+  constructor({ agentDir, productDir, userDir, channelsDir, agentsDir }) {
     this.agentDir = agentDir;
     this.productDir = productDir;
     this.userDir = userDir;
     this.channelsDir = channelsDir || null;
     this.agentsDir = agentsDir || null;
-    this._searchConfigResolver = searchConfigResolver || null;
 
     // 路径
     this.configPath = path.join(agentDir, "config.yaml");
@@ -121,9 +120,7 @@ export class Agent {
 
     // 3. 初始化各模块
     log(`  [agent] 3. initWebSearch...`);
-    initWebSearch(this.configPath, {
-      searchConfigResolver: this._searchConfigResolver,
-    });
+    initWebSearch(this.configPath);
     log(`  [agent] 3. 模块初始化完成`);
 
     // 4. 记忆 v2：FactStore + SessionSummaryManager + ticker
@@ -461,9 +458,7 @@ export class Agent {
 
     // 刷新受影响的模块
     if (partial.search) {
-      initWebSearch(this.configPath, {
-      searchConfigResolver: this._searchConfigResolver,
-    });
+      initWebSearch(this.configPath);
     }
 
     // 重建 system prompt

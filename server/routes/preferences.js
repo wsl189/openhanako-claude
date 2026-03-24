@@ -1,8 +1,8 @@
 /**
  * 全局偏好设置路由（跨 agent 共享）
  *
- * GET  /api/preferences/models  — 读取全局模型 + 搜索配置
- * PUT  /api/preferences/models  — 更新全局模型 + 搜索配置
+ * GET  /api/preferences/models  — 读取全局模型
+ * PUT  /api/preferences/models  — 更新全局模型
  */
 
 import { debugLog } from "../../lib/debug-log.js";
@@ -15,19 +15,14 @@ export default async function preferencesRoute(app, { engine }) {
     return key.slice(0, 4) + "..." + key.slice(-4);
   };
 
-  // 读取全局模型 + 搜索配置
+  // 读取全局模型
   app.get("/api/preferences/models", async (req, reply) => {
     try {
       const models = engine.getSharedModels();
-      const search = engine.getSearchConfig();
       const utilityApi = engine.getUtilityApi();
 
       return {
         models,
-        search: {
-          provider: search.provider || "",
-          api_key: mask(search.api_key),
-        },
         utility_api: {
           provider: utilityApi.provider || "",
           base_url: utilityApi.base_url || "",
@@ -40,7 +35,7 @@ export default async function preferencesRoute(app, { engine }) {
     }
   });
 
-  // 更新全局模型 + 搜索配置
+  // 更新全局模型
   app.put("/api/preferences/models", async (req, reply) => {
     try {
       const body = req.body;
@@ -56,12 +51,6 @@ export default async function preferencesRoute(app, { engine }) {
         engine.setSharedModels(body.models);
         sections.push("models");
         needsModelSync = true;
-      }
-
-      // 搜索配置
-      if (body.search) {
-        engine.setSearchConfig(body.search);
-        sections.push("search");
       }
 
       // utility API 配置

@@ -562,28 +562,4 @@ export default async function configRoute(app, { engine }) {
     }
   });
 
-  // ── 搜索 API Key 验证 ──
-
-  app.post("/api/search/verify", async (req, reply) => {
-    const { provider, api_key } = req.body || {};
-    if (!provider) {
-      reply.code(400);
-      return { ok: false, error: "provider is required" };
-    }
-    if (!api_key) {
-      reply.code(400);
-      return { ok: false, error: "api_key is required" };
-    }
-    try {
-      const { verifySearchKey } = await import("../../lib/tools/web-search.js");
-      await verifySearchKey(provider, api_key);
-      engine.setSearchConfig({ provider, api_key });
-      await engine.updateConfig({ search: { provider, api_key } });
-      debugLog()?.log("api", `POST /api/search/verify provider=${provider} (ok)`);
-      return { ok: true };
-    } catch (err) {
-      debugLog()?.warn("api", `POST /api/search/verify provider=${provider} failed: ${err.message}`);
-      return { ok: false, error: err.message };
-    }
-  });
 }

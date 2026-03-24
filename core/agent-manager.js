@@ -30,7 +30,6 @@ export class AgentManager {
    * @param {() => import('./model-manager.js').ModelManager} deps.getModels
    * @param {() => object|null} deps.getHub
    * @param {() => import('./skill-manager.js').SkillManager} deps.getSkills
-   * @param {() => object} deps.getSearchConfig
    * @param {() => object} deps.resolveUtilityConfig
    * @param {() => object} deps.getSharedModels
    * @param {() => import('./channel-manager.js').ChannelManager} deps.getChannelManager
@@ -436,7 +435,6 @@ export class AgentManager {
       userDir: this._d.userDir,
       channelsDir: this._d.channelsDir,
       agentsDir: this._d.agentsDir,
-      searchConfigResolver: () => this._d.getSearchConfig(),
     });
     ag._engine = this._d.getEngine?.() || null;
     ag._onInstallCallback = async (skillName) => {

@@ -160,7 +160,26 @@ function parseBridgeMessagesFile(filePath) {
       }
 
       if (!textContent && imageCount === 0) continue;
-      const content = textContent || `[图片 x${imageCount}]`;
+      let content = textContent || `[图片 x${imageCount}]`;
+      // 平台对话面板里不展示中间层标签（仅清理 assistant 输出，避免误改用户原文）
+      if (msg.role === "assistant" && content) {
+        const finalMatches = [...content.matchAll(/<final>\s*([\s\S]*?)\s*<\/final>/gi)];
+        if (finalMatches.length) {
+          content = finalMatches[finalMatches.length - 1][1];
+        } else {
+          const replyingMatches = [...content.matchAll(/<replying>\s*([\s\S]*?)\s*<\/replying>/gi)];
+          if (replyingMatches.length) {
+            content = replyingMatches[replyingMatches.length - 1][1];
+          }
+        }
+        content = content
+          .replace(/```(?:mood|pulse|reflect|think|analysis|commentary|summary)[\s\S]*?```\n*/gi, "")
+          .replace(/<(?:mood|pulse|reflect|think|analysis|commentary|summary)>[\s\S]*?<\/(?:mood|pulse|reflect|think|analysis|commentary|summary)>\s*/gi, "")
+          .replace(/<xing\s+title=["\u201C\u201D][^"\u201C\u201D]*["\u201C\u201D]>[\s\S]*?<\/xing>\s*/gi, "")
+          .replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/gi, "")
+          .replace(/<\/?(?:final|replying)\s*>/gi, "")
+          .trim();
+      }
       messages.push({
         role: msg.role,
         content,

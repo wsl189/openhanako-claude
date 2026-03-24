@@ -613,10 +613,6 @@
       "utilityModelHint": "生成标题、轻量分类等简单任务，推荐用便宜的小模型",
       "utilityLargeModel": "大工具模型",
       "utilityLargeModelHint": "活动摘要、任务拆解等需要理解力的场景，留空则复用小工具模型",
-      "searchProvider": "搜索服务",
-      "searchProviderField": "搜索引擎",
-      "searchApiKey": "搜索 API Key",
-      "searchApiKeyHint": "启用搜索时请填写所选 provider 的 API Key",
       "favorites": "收藏",
       "searchModel": "搜索模型...",
       "noFavorites": "点击 ☆ 收藏常用模型",
@@ -708,14 +704,6 @@
       "empty": "暂无经验积累",
       "edit": "编辑",
       "deleteCategory": "删除分类"
-    },
-    "search": {
-      "verify": "验证",
-      "verifying": "验证中...",
-      "verified": "验证通过，已保存 ✿",
-      "verifyFailed": "验证失败",
-      "noProvider": "请先选择搜索引擎",
-      "noKey": "请先输入 API Key"
     },
     "work": {
       "title": "巡检",
