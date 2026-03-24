@@ -17,6 +17,7 @@ import fs from "fs";
 import path from "path";
 import { createChannelTicker } from "../lib/channels/channel-ticker.js";
 import { appendMessage, formatMessagesForLLM } from "../lib/channels/channel-store.js";
+import { collectMentionedAgentIds } from "../lib/channels/channel-mentions.js";
 import { loadConfig } from "../lib/memory/config-loader.js";
 import { callProviderText } from "../lib/llm/provider-client.js";
 import { runAgentSession } from "./agent-executor.js";
@@ -120,7 +121,7 @@ export class ChannelRouter {
   // ──────────── Triage + Reply ────────────
 
   /**
-   * 频道检查回调：triage → 两轮 Agent Session → 写入回复
+   * 频道检查回调：triage → 单轮 Agent Session → 写入回复
    * 从 engine._executeChannelCheck 搬入
    */
   async _executeCheck(agentId, channelName, newMessages, _allChannelUpdates, { signal } = {}) {
@@ -153,7 +154,10 @@ export class ChannelRouter {
       : "";
 
     // ── 检测 @ ──
-    const isMentioned = msgText.includes(`@${agentName}`) || msgText.includes(`@${agentId}`);
+    const isMentioned = collectMentionedAgentIds(
+      msgText,
+      [{ id: agentId, name: agentName }],
+    ).includes(agentId);
 
     // ── Step 1: Triage ──
     let shouldReply = isMentioned;
@@ -210,9 +214,12 @@ export class ChannelRouter {
       return { replied: false };
     }
 
-    // ── Step 2: 两轮 Agent Session 生成回复 ──
+    // ── Step 2: 单轮 Agent Session 生成回复 ──
     try {
-      const replyText = await this._executeReply(agentId, channelName, msgText, { signal });
+      const replyText = await this._executeReply(agentId, channelName, msgText, {
+        signal,
+        forceReply: isMentioned,
+      });
 
       if (!replyText) {
         console.log(`\x1b[90m[channel] ${agentId} 回复为空 (#${channelName})\x1b[0m`);
@@ -238,9 +245,9 @@ export class ChannelRouter {
   }
 
   /**
-   * 两轮 Agent Session 生成频道回复
+   * 单轮 Agent Session 生成频道回复
    */
-  async _executeReply(agentId, channelName, msgText, { signal } = {}) {
+  async _executeReply(agentId, channelName, msgText, { signal, forceReply = false } = {}) {
     const isZh = getLocale().startsWith("zh");
     const text = await runAgentSession(
       agentId,
@@ -248,31 +255,23 @@ export class ChannelRouter {
         {
           text: isZh
             ? `#${channelName} 频道的最近消息：\n\n${msgText}\n\n`
-              + `请阅读这些消息，用 search_memory 查阅记忆来了解上下文和真实发生过的事。\n`
-              + `注意：你现在的回复用户看不到，这是你的内部思考环节，仅用于查阅资料和理解上下文。下一轮才是你真正发到群聊的内容。`
-            : `Recent messages in #${channelName}:\n\n${msgText}\n\n`
-              + `Read these messages and use search_memory to look up memories for context and real events.\n`
-              + `Note: your reply right now is invisible to users — this is your internal thinking phase, for research and understanding context only. The next round is what actually gets posted to the chat.`,
-          capture: false,
-        },
-        {
-          text: isZh
-            ? `现在请给出你想在 #${channelName} 群聊中发送的回复。这条回复会直接发送到群聊，所有人都能看到。\n\n`
+              + `你只有这一轮回复机会。请在这一轮里结合上下文，必要时用 search_memory 检索记忆，然后直接给出最终会发到群聊的内容。\n\n`
               + `回复规定：\n`
-              + `- 默认30字以内，像在群里说话，简短自然\n`
-              + `- 如果话题确实需要展开（比如讲故事、分析问题、详细解释），可以写到1000字\n`
               + `- 直接输出回复内容，不要加任何前缀、解释、MOOD 或代码块\n`
               + `- 不要重复别人已经说过的内容\n`
               + `- 只说真实发生过的事，不要编造你没做过的活动或经历\n`
-              + `- 如果你觉得没什么好说的，回复 [NO_REPLY]`
-            : `Now give the reply you want to post in #${channelName}. This reply will be sent directly to the group chat — everyone can see it.\n\n`
+              + (forceReply
+                ? `- 你被明确 @ 到，必须给出一条可见回复，不能输出 [NO_REPLY]`
+                : `- 如果你觉得没什么好说的，回复 [NO_REPLY]`)
+            : `Recent messages in #${channelName}:\n\n${msgText}\n\n`
+              + `You only have one reply round. In this same round, use context and call search_memory when needed, then output the final message to post in the group chat.\n\n`
               + `Reply rules:\n`
-              + `- Keep it under 30 words by default — short and natural, like chatting in a group\n`
-              + `- If the topic truly requires elaboration (storytelling, analysis, detailed explanation), you may write up to 1000 words\n`
               + `- Output the reply directly — no prefixes, explanations, MOOD blocks, or code fences\n`
               + `- Don't repeat what others have already said\n`
               + `- Only mention things that actually happened — don't fabricate activities or experiences\n`
-              + `- If you have nothing to say, reply [NO_REPLY]`,
+              + (forceReply
+                ? `- You were explicitly @-mentioned, so you must provide a visible reply and must not output [NO_REPLY]`
+                : `- If you have nothing to say, reply [NO_REPLY]`),
           capture: true,
         },
       ],
@@ -280,6 +279,9 @@ export class ChannelRouter {
     );
 
     if (!text || text.includes("[NO_REPLY]")) {
+      if (forceReply) {
+        return isZh ? "收到 @ 我了，我在。" : "I saw the @ and I'm here.";
+      }
       debugLog()?.log("channel", `${agentId}/#${channelName}: chose not to reply`);
       return null;
     }

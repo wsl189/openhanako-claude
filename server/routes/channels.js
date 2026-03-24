@@ -24,6 +24,7 @@ import {
   addBookmarkEntry,
   getChannelMeta,
 } from "../../lib/channels/channel-store.js";
+import { collectMentionedAgentIds } from "../../lib/channels/channel-mentions.js";
 
 export default async function channelsRoute(app, { engine, hub }) {
 
@@ -201,23 +202,11 @@ export default async function channelsRoute(app, { engine, hub }) {
 
       debugLog()?.log("api", `POST /channels/${name}/messages`);
 
-      // 提取 @ 提及
-      const atMatches = body.match(/@(\S+)/g) || [];
-      const mentionedAgents = [];
-      if (atMatches.length > 0) {
-        const meta = getChannelMeta(filePath);
-        const channelMembers = Array.isArray(meta.members) ? meta.members : [];
-        const allAgents = engine.listAgents?.() || [];
-        for (const at of atMatches) {
-          const atName = at.slice(1);
-          const matched = allAgents.find(a =>
-            a.name === atName || a.id === atName
-          );
-          if (matched && channelMembers.includes(matched.id)) {
-            mentionedAgents.push(matched.id);
-          }
-        }
-      }
+      // 提取 @ 提及（多提及时用于并行 triage）
+      const meta = getChannelMeta(filePath);
+      const channelMembers = Array.isArray(meta.members) ? meta.members : [];
+      const allAgents = engine.listAgents?.() || [];
+      const mentionedAgents = collectMentionedAgentIds(body, allAgents, channelMembers);
 
       hub.triggerChannelTriage(name, { mentionedAgents })?.catch(err =>
         console.error(`[channel] 触发立即 triage 失败: ${err.message}`)
