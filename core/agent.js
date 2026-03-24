@@ -268,8 +268,8 @@ export class Agent {
         agentsDir: this.agentsDir,
         agentId,
         listAgents,
-        onPost: (channelName, senderId) => {
-          this._channelPostHandler?.(channelName, senderId);
+        onPost: (channelName, senderId, content) => {
+          this._channelPostHandler?.(channelName, senderId, content);
         },
       });
 

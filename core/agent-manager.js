@@ -278,6 +278,7 @@ export class AgentManager {
     if (dmRouter) {
       ag._dmSentHandler = (fromId, toId) => dmRouter.handleNewDm(fromId, toId);
     }
+    hub?.channelRouter?.setupPostHandler?.();
 
     this.invalidateAgentListCache();
     log.log(`创建助手: ${safeNameInput} (${agentId})`);
