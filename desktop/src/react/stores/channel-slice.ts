@@ -6,6 +6,7 @@ export interface ChannelSlice {
   currentChannel: string | null;
   channelMessages: ChannelMessage[];
   channelMembers: string[];
+  channelAgentActivity: Record<string, Record<string, boolean>>;
   channelTotalUnread: number;
   channelHeaderName: string;
   channelHeaderMembersText: string;
@@ -32,6 +33,7 @@ export const createChannelSlice = (
   currentChannel: null,
   channelMessages: [],
   channelMembers: [],
+  channelAgentActivity: {},
   channelTotalUnread: 0,
   channelHeaderName: '',
   channelHeaderMembersText: '',

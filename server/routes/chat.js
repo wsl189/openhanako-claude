@@ -415,6 +415,13 @@ export default async function chatRoute(app, { engine, hub }) {
       broadcast({ type: "activity_update", activity: event.activity });
     } else if (event.type === "notification") {
       broadcast({ type: "notification", title: event.title, body: event.body });
+    } else if (event.type === "channel_agent_activity") {
+      broadcast({
+        type: "channel_agent_activity",
+        channelName: event.channelName,
+        agentId: event.agentId,
+        active: !!event.active,
+      });
     } else if (event.type === "channel_new_message") {
       broadcast({ type: "channel_new_message", channelName: event.channelName, sender: event.sender });
     } else if (event.type === "dm_new_message") {

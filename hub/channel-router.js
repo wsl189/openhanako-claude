@@ -132,119 +132,135 @@ export class ChannelRouter {
    */
   async _executeCheck(agentId, channelName, newMessages, _allChannelUpdates, { signal, forceReply = false } = {}) {
     const engine = this._engine;
-    const msgText = formatMessagesForLLM(newMessages);
+    this._emitChannelAgentActivity(channelName, agentId, true);
+    try {
+      const msgText = formatMessagesForLLM(newMessages);
 
-    // ── 读 agent 完整上下文 ──
-    const readFile = (p) => { try { return fs.readFileSync(p, "utf-8"); } catch { return ""; } };
-    const agentDir = path.join(engine.agentsDir, agentId);
+      // ── 读 agent 完整上下文 ──
+      const readFile = (p) => { try { return fs.readFileSync(p, "utf-8"); } catch { return ""; } };
+      const agentDir = path.join(engine.agentsDir, agentId);
 
-    // 复用 Agent 实例的 personality（identity + yuan + ishiki 已在内存中组装）
-    const agentInstance = engine.agents?.get(agentId);
-    const cfg = agentInstance?.config || loadConfig(path.join(agentDir, "config.yaml"));
+      // 复用 Agent 实例的 personality（identity + yuan + ishiki 已在内存中组装）
+      const agentInstance = engine.agents?.get(agentId);
+      const cfg = agentInstance?.config || loadConfig(path.join(agentDir, "config.yaml"));
 
-    const agentContext = agentInstance?.personality
-      || [readFile(path.join(agentDir, "identity.md")),
-          readFile(path.join(engine.productDir, "yuan", `${cfg.agent?.yuan || "hanako"}.md`)),
-          readFile(path.join(agentDir, "ishiki.md"))].filter(Boolean).join("\n\n");
+      const agentContext = agentInstance?.personality
+        || [readFile(path.join(agentDir, "identity.md")),
+            readFile(path.join(engine.productDir, "yuan", `${cfg.agent?.yuan || "hanako"}.md`)),
+            readFile(path.join(agentDir, "ishiki.md"))].filter(Boolean).join("\n\n");
 
-    // memory.md 和 user.md 内容会变，仍需从磁盘读取
-    const memoryMd = readFile(path.join(agentDir, "memory", "memory.md"));
-    const userMd = readFile(path.join(engine.userDir, "user.md"));
-    const isZh = getLocale().startsWith("zh");
-    const memoryContext = memoryMd?.trim()
-      ? (isZh ? `\n\n你的记忆：\n${memoryMd}` : `\n\nYour memory:\n${memoryMd}`)
-      : "";
-    const userContext = userMd?.trim()
-      ? (isZh ? `\n\n用户档案：\n${userMd}` : `\n\nUser profile:\n${userMd}`)
-      : "";
+      // memory.md 和 user.md 内容会变，仍需从磁盘读取
+      const memoryMd = readFile(path.join(agentDir, "memory", "memory.md"));
+      const userMd = readFile(path.join(engine.userDir, "user.md"));
+      const isZh = getLocale().startsWith("zh");
+      const memoryContext = memoryMd?.trim()
+        ? (isZh ? `\n\n你的记忆：\n${memoryMd}` : `\n\nYour memory:\n${memoryMd}`)
+        : "";
+      const userContext = userMd?.trim()
+        ? (isZh ? `\n\n用户档案：\n${userMd}` : `\n\nUser profile:\n${userMd}`)
+        : "";
 
-    // @ 是否命中以路由层显式解析结果为准，避免从历史窗口误判“被 @”。
-    const isMentioned = !!forceReply;
+      // @ 是否命中以路由层显式解析结果为准，避免从历史窗口误判“被 @”。
+      const isMentioned = !!forceReply;
 
-    // ── Step 1: Triage ──
-    let shouldReply = isMentioned;
+      // ── Step 1: Triage ──
+      let shouldReply = isMentioned;
 
-    if (!shouldReply) {
-      try {
-        const utilCfg = engine.resolveUtilityConfig() || {};
-        const { utility_large: model, large_api_key: api_key, large_base_url: base_url, large_api: api } = utilCfg;
-        if (api_key && base_url && api) {
-          const triageSystem = agentContext + memoryContext + userContext
-            + "\n\n---\n\n"
-            + (isZh
-              ? "你在一个群聊频道里。阅读以下最近的消息，判断你是否要回复。\n"
-                + "回答 YES 的情况：有人跟你说话、@你、问了你能回答的问题、或者你有想说的话。\n"
-                + "回答 NO 的情况：别人已经充分回答了问题（你没有新的补充）、话题跟你无关、你插不上话、或者你刚回复过且没人追问你。\n"
-                + "只回答 YES 或 NO。"
-              : "You are in a group chat channel. Read the recent messages below and decide whether you should reply.\n"
-                + "Answer YES if: someone is talking to you, @-mentions you, asks a question you can answer, or you have something to say.\n"
-                + "Answer NO if: the question has already been adequately answered (you have nothing new to add), the topic is irrelevant to you, you can't contribute, or you just replied and no one followed up.\n"
-                + "Answer only YES or NO.");
+      if (!shouldReply) {
+        try {
+          const utilCfg = engine.resolveUtilityConfig() || {};
+          const { utility_large: model, large_api_key: api_key, large_base_url: base_url, large_api: api } = utilCfg;
+          if (api_key && base_url && api) {
+            const triageSystem = agentContext + memoryContext + userContext
+              + "\n\n---\n\n"
+              + (isZh
+                ? "你在一个群聊频道里。阅读以下最近的消息，判断你是否要回复。\n"
+                  + "回答 YES 的情况：有人跟你说话、@你、问了你能回答的问题、或者你有想说的话。\n"
+                  + "回答 NO 的情况：别人已经充分回答了问题（你没有新的补充）、话题跟你无关、你插不上话、或者你刚回复过且没人追问你。\n"
+                  + "只回答 YES 或 NO。"
+                : "You are in a group chat channel. Read the recent messages below and decide whether you should reply.\n"
+                  + "Answer YES if: someone is talking to you, @-mentions you, asks a question you can answer, or you have something to say.\n"
+                  + "Answer NO if: the question has already been adequately answered (you have nothing new to add), the topic is irrelevant to you, you can't contribute, or you just replied and no one followed up.\n"
+                  + "Answer only YES or NO.");
 
-          const triageTimeout = AbortSignal.timeout(10_000);
-          const triageSignal = signal
-            ? AbortSignal.any([signal, triageTimeout])
-            : triageTimeout;
-          const answer = await callProviderText({
-            api,
-            model,
-            api_key,
-            base_url,
-            systemPrompt: triageSystem,
-            messages: [{ role: "user", content: isZh ? `#${channelName} 频道最近消息：\n${msgText}` : `#${channelName} recent messages:\n${msgText}` }],
-            temperature: 0,
-            max_tokens: 10,
-            timeoutMs: 10_000,
-            signal: triageSignal,
-          });
-          shouldReply = answer.trim().toUpperCase().includes("YES");
-        } else {
-          // utility_large 凭证不完整，跳过 triage 直接回复
+            const triageTimeout = AbortSignal.timeout(10_000);
+            const triageSignal = signal
+              ? AbortSignal.any([signal, triageTimeout])
+              : triageTimeout;
+            const answer = await callProviderText({
+              api,
+              model,
+              api_key,
+              base_url,
+              systemPrompt: triageSystem,
+              messages: [{ role: "user", content: isZh ? `#${channelName} 频道最近消息：\n${msgText}` : `#${channelName} recent messages:\n${msgText}` }],
+              temperature: 0,
+              max_tokens: 10,
+              timeoutMs: 10_000,
+              signal: triageSignal,
+            });
+            shouldReply = answer.trim().toUpperCase().includes("YES");
+          } else {
+            // utility_large 凭证不完整，跳过 triage 直接回复
+            shouldReply = true;
+          }
+        } catch (err) {
+          // utility 模型未配置或 triage 调用失败 → 默认回复（让 agent 自己在 reply 阶段判断要不要说话）
+          console.warn(`[channel] triage 不可用，默认回复 (${agentId}/#${channelName}): ${err.message}`);
           shouldReply = true;
         }
-      } catch (err) {
-        // utility 模型未配置或 triage 调用失败 → 默认回复（让 agent 自己在 reply 阶段判断要不要说话）
-        console.warn(`[channel] triage 不可用，默认回复 (${agentId}/#${channelName}): ${err.message}`);
-        shouldReply = true;
       }
-    }
 
-    console.log(`\x1b[90m[channel] triage ${agentId}/#${channelName}: ${shouldReply ? "YES" : "NO"}${isMentioned ? " (@)" : ""}\x1b[0m`);
-    debugLog()?.log("channel", `triage ${agentId}/#${channelName}: ${shouldReply ? "YES" : "NO"}${isMentioned ? " (mentioned)" : ""} (${newMessages.length} msgs)`);
+      console.log(`\x1b[90m[channel] triage ${agentId}/#${channelName}: ${shouldReply ? "YES" : "NO"}${isMentioned ? " (@)" : ""}\x1b[0m`);
+      debugLog()?.log("channel", `triage ${agentId}/#${channelName}: ${shouldReply ? "YES" : "NO"}${isMentioned ? " (mentioned)" : ""} (${newMessages.length} msgs)`);
 
-    if (!shouldReply) {
-      return { replied: false };
-    }
-
-    // ── Step 2: 单轮 Agent Session 生成回复 ──
-    try {
-      const replyText = await this._executeReply(agentId, channelName, msgText, {
-        signal,
-        forceReply: isMentioned,
-      });
-
-      if (!replyText) {
-        console.log(`\x1b[90m[channel] ${agentId} 回复为空 (#${channelName})\x1b[0m`);
+      if (!shouldReply) {
         return { replied: false };
       }
 
-      // 写入频道文件
-      const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
-      appendMessage(channelFile, agentId, replyText);
-      this._handleAgentPost(channelName, agentId, replyText);
+      // ── Step 2: 单轮 Agent Session 生成回复 ──
+      try {
+        const replyText = await this._executeReply(agentId, channelName, msgText, {
+          signal,
+          forceReply: isMentioned,
+        });
 
-      console.log(`\x1b[90m[channel] ${agentId} replied #${channelName} (${replyText.length} chars)\x1b[0m`);
-      debugLog()?.log("channel", `${agentId} replied #${channelName} (${replyText.length} chars)`);
+        if (!replyText) {
+          console.log(`\x1b[90m[channel] ${agentId} 回复为空 (#${channelName})\x1b[0m`);
+          return { replied: false };
+        }
 
-      // WS 广播
-      this._hub.eventBus.emit({ type: "channel_new_message", channelName, sender: agentId }, null);
+        // 写入频道文件
+        const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
+        appendMessage(channelFile, agentId, replyText);
+        this._handleAgentPost(channelName, agentId, replyText);
 
-      return { replied: true, replyContent: replyText };
-    } catch (err) {
-      console.error(`[channel] 回复失败 (${agentId}/#${channelName}): ${err.message}`);
-      debugLog()?.error("channel", `回复失败 (${agentId}/#${channelName}): ${err.message}`);
-      return { replied: false };
+        console.log(`\x1b[90m[channel] ${agentId} replied #${channelName} (${replyText.length} chars)\x1b[0m`);
+        debugLog()?.log("channel", `${agentId} replied #${channelName} (${replyText.length} chars)`);
+
+        // WS 广播
+        this._hub.eventBus.emit({ type: "channel_new_message", channelName, sender: agentId }, null);
+
+        return { replied: true, replyContent: replyText };
+      } catch (err) {
+        console.error(`[channel] 回复失败 (${agentId}/#${channelName}): ${err.message}`);
+        debugLog()?.error("channel", `回复失败 (${agentId}/#${channelName}): ${err.message}`);
+        return { replied: false };
+      }
+    } finally {
+      this._emitChannelAgentActivity(channelName, agentId, false);
     }
+  }
+
+  _emitChannelAgentActivity(channelName, agentId, active) {
+    if (!channelName || !agentId) return;
+    this._hub.eventBus.emit({
+      type: "channel_agent_activity",
+      channelName,
+      agentId,
+      active: !!active,
+      timestamp: new Date().toISOString(),
+    }, null);
   }
 
   /**

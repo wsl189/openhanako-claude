@@ -30,6 +30,7 @@
  *   { type: "skill_activated", skillName: "...", skillFilePath: "..." }  (skill 被激活时推送，用于聊天页显示卡片)
  *   { type: "cron_confirmation", jobData: { type, schedule, prompt, label } }  (cron add 操作需要用户确认)
  *   { type: "bridge_status", platform: "telegram"|"feishu", status: "connected"|"disconnected"|"error", error?: "..." }  (外部平台连接状态变更)
+ *   { type: "channel_agent_activity", channelName: "...", agentId: "...", active: bool }  (频道内 agent 活动状态)
  *   { type: "stream_resume", sessionPath: "...", streamId: "...", sinceSeq: number, nextSeq: number, reset: bool, truncated: bool, isStreaming: bool, events: [{ seq, event, ts }] }  (新协议)
  */
 

@@ -297,6 +297,23 @@ export function handleServerMessage(msg: any): void {
       break;
     }
 
+    case 'channel_agent_activity': {
+      const channelName = String(msg.channelName || '');
+      const agentId = String(msg.agentId || '');
+      if (!channelName || !agentId) break;
+      useStore.setState((prev: any) => {
+        const prevMap = (prev.channelAgentActivity || {}) as Record<string, Record<string, boolean>>;
+        const nextChannel = { ...(prevMap[channelName] || {}), [agentId]: !!msg.active };
+        return {
+          channelAgentActivity: {
+            ...prevMap,
+            [channelName]: nextChannel,
+          },
+        };
+      });
+      break;
+    }
+
     case 'dm_new_message': {
       const dmId = `dm:${msg.from}`;
       const store2 = useStore.getState();

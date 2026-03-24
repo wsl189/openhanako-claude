@@ -666,6 +666,7 @@ export function ChannelMessages() {
 export function ChannelMembers() {
   const currentChannel = useStore((s) => s.currentChannel);
   const channelMembers = useStore((s) => s.channelMembers);
+  const channelAgentActivity = useStore((s) => s.channelAgentActivity);
   const isDM = useStore((s) => s.channelIsDM);
   const agents = useStore((s) => s.agents);
   const userName = useStore((s) => s.userName);
@@ -692,6 +693,9 @@ export function ChannelMembers() {
               </div>
             )}
             <div className="channel-member-name">{info.displayName}</div>
+            {!info.isUser && (
+              <span className={`channel-member-status-dot${channelAgentActivity?.[currentChannel]?.[info.id] ? ' active' : ''}`} />
+            )}
           </div>
         ))}
       </>
@@ -714,6 +718,9 @@ export function ChannelMembers() {
               </div>
             )}
             <div className="channel-member-name">{info.displayName}</div>
+            {!info.isUser && (
+              <span className={`channel-member-status-dot${channelAgentActivity?.[currentChannel]?.[info.id] ? ' active' : ''}`} />
+            )}
           </div>
         );
       })}
