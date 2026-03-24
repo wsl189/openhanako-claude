@@ -796,6 +796,7 @@ export function ChannelInput() {
   const sendChannelMessage = useStore((s) => s.sendChannelMessage);
   const resetChannelContext = useStore((s) => s.resetChannelContext);
   const clearChannelMessages = useStore((s) => s.clearChannelMessages);
+  const stopChannelReplies = useStore((s) => s.stopChannelReplies);
   const attachedFiles = useStore((s) => s.attachedFiles);
   const removeAttachedFile = useStore((s) => s.removeAttachedFile);
   const clearAttachedFiles = useStore((s) => s.clearAttachedFiles);
@@ -879,6 +880,23 @@ export function ChannelInput() {
       return;
     }
 
+    if (cmd === '/stop') {
+      setSending(true);
+      try {
+        await stopChannelReplies();
+        setInputValue('');
+        setMentionActive(false);
+        setCommandActive(false);
+        clearAttachedFiles();
+      } catch (err) {
+        console.error('[channels] /stop failed:', err);
+        addToast(t('channel.stopFailed'), 'error', 3000);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
     let finalText = text;
     if (hasFiles) {
       const fileBlock = attachedFiles
@@ -897,7 +915,7 @@ export function ChannelInput() {
     } finally {
       setSending(false);
     }
-  }, [sending, inputValue, attachedFiles, sendChannelMessage, clearAttachedFiles, resetChannelContext, clearChannelMessages, addToast, t]);
+  }, [sending, inputValue, attachedFiles, sendChannelMessage, clearAttachedFiles, resetChannelContext, clearChannelMessages, stopChannelReplies, addToast, t]);
 
   const checkMention = useCallback(() => {
     if (!inputRef.current) return;
@@ -983,6 +1001,11 @@ export function ChannelInput() {
         id: 'clear',
         label: '/clear',
         desc: t('channel.commandClearDesc'),
+      },
+      {
+        id: 'stop',
+        label: '/stop',
+        desc: t('channel.commandStopDesc'),
       },
     ];
     const filtered = keyword

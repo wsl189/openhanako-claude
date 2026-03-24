@@ -199,6 +199,10 @@ export class Hub {
     return this._channelRouter.triggerImmediate(channelName, opts);
   }
 
+  stopChannelReplies(reason = "manual-stop") {
+    return this._channelRouter.stopUnfinishedReplies(reason);
+  }
+
   // ──────────── 生命周期 ────────────
 
   async dispose() {

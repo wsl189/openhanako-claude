@@ -83,6 +83,11 @@ export class ChannelRouter {
     return this._ticker?.triggerImmediate(channelName, opts);
   }
 
+  stopUnfinishedReplies(reason = "manual-stop") {
+    if (!this._ticker) return { aborted: false, version: 0 };
+    return this._ticker.stopUnfinishedReplies(reason);
+  }
+
   /**
    * 注入频道 post 回调到所有 agent
    * agent 用 channel tool 发消息后：

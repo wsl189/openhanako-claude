@@ -21,6 +21,7 @@ export interface ChannelSlice {
   sendChannelMessage: (text: string) => Promise<void>;
   resetChannelContext: () => Promise<void>;
   clearChannelMessages: () => Promise<void>;
+  stopChannelReplies: () => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
   createChannel: (name: string, members: string[], intro?: string) => Promise<string | null>;
 }
@@ -224,6 +225,30 @@ export const createChannelSlice = (
       await get!().loadChannels();
     } catch (err) {
       console.error('[channels] reset failed:', err);
+      throw err;
+    }
+  },
+
+  stopChannelReplies: async () => {
+    const s = get!();
+    if (!s.currentChannel || s.channelIsDM) return;
+
+    try {
+      const res = await hanaFetch(`/api/channels/${encodeURIComponent(s.currentChannel)}/stop`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data?.ok) throw new Error(data?.error || 'stop failed');
+
+      set({
+        channelAgentActivity: {
+          ...s.channelAgentActivity,
+          [s.currentChannel]: {},
+        },
+      });
+    } catch (err) {
+      console.error('[channels] stop failed:', err);
       throw err;
     }
   },

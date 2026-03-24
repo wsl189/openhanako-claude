@@ -198,7 +198,7 @@ export default async function channelsRoute(app, { engine, hub }) {
 
       const { body } = req.body || {};
 
-      if (!body) {
+      if (typeof body !== "string" || !body.trim()) {
         reply.code(400);
         return { error: "body is required" };
       }
@@ -224,6 +224,26 @@ export default async function channelsRoute(app, { engine, hub }) {
       );
 
       return { ok: true, timestamp: result.timestamp };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // ── 显式终止频道中未完成回复 ──
+  app.post("/api/channels/:name/stop", async (req, reply) => {
+    try {
+      const { name } = req.params;
+      const filePath = safeChannelPath(name);
+      if (!filePath) { reply.code(400); return { error: "Invalid channel id" }; }
+      if (!fs.existsSync(filePath)) {
+        reply.code(404);
+        return { error: "Channel not found" };
+      }
+
+      const stopResult = hub.stopChannelReplies?.(`channel:${name}:user-stop`) || { aborted: false, version: 0 };
+      debugLog()?.log("api", `POST /channels/${name}/stop — aborted=${!!stopResult?.aborted}`);
+      return { ok: true, stopped: true, aborted: !!stopResult?.aborted, version: stopResult?.version || 0 };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
