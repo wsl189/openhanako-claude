@@ -11,7 +11,6 @@ import { FactStore } from "../lib/memory/fact-store.js";
 import { SessionSummaryManager } from "../lib/memory/session-summary.js";
 import { createMemoryTicker } from "../lib/memory/memory-ticker.js";
 import { createMemorySearchTool } from "../lib/memory/memory-search.js";
-import { initWebSearch, createWebSearchTool } from "../lib/tools/web-search.js";
 import { createTodoTool } from "../lib/tools/todo.js";
 import { createDeskManager } from "../lib/desk/desk-manager.js";
 import { CronStore } from "../lib/desk/cron-store.js";
@@ -68,7 +67,6 @@ export class Agent {
     this._summaryManager = null;
     this._memoryTicker = null;
     this._memorySearchTool = null;
-    this._webSearchTool = null;
     this._webFetchTool = null;
     this._todoTool = null;
     this._pinnedMemoryTools = [];
@@ -119,8 +117,6 @@ export class Agent {
     this._memoryMasterEnabled = this._config.memory?.enabled !== false;
 
     // 3. 初始化各模块
-    log(`  [agent] 3. initWebSearch...`);
-    initWebSearch(this.configPath);
     log(`  [agent] 3. 模块初始化完成`);
 
     // 4. 记忆 v2：FactStore + SessionSummaryManager + ticker
@@ -216,7 +212,6 @@ export class Agent {
     // 7. 创建工具（记忆 + 通用）
     log(`  [agent] 7. 创建工具...`);
     this._memorySearchTool = createMemorySearchTool(this._factStore);
-    this._webSearchTool = createWebSearchTool();
     this._webFetchTool = createWebFetchTool();
     this._todoTool = createTodoTool();
     this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir);
@@ -367,7 +362,6 @@ export class Agent {
     ] : [];
     return [
       ...memTools,
-      this._webSearchTool,
       this._webFetchTool,
       this._todoTool,
       this._cronTool,
@@ -454,11 +448,6 @@ export class Agent {
     // 记忆总开关
     if (partial.memory && "enabled" in partial.memory) {
       this._memoryMasterEnabled = this._config.memory?.enabled !== false;
-    }
-
-    // 刷新受影响的模块
-    if (partial.search) {
-      initWebSearch(this.configPath);
     }
 
     // 重建 system prompt
@@ -610,22 +599,6 @@ export class Agent {
     if (this._enabledSkills?.length > 0) {
       parts.push(formatSkillsForPrompt(this._enabledSkills));
     }
-
-    // 网页工具选择优先级（跨工具编排，工具 description 里放不下）
-    parts.push(isZh
-      ? "\n## 网页工具优先级\n\n" +
-        "获取网页信息时，按以下顺序选择工具：\n" +
-        "1. **web_search** — 查找信息、获取 URL。大多数「帮我查一下 XX」的请求用这个就够了\n" +
-        "2. **web_fetch** — 已知 URL，需要提取页面文字内容。简单抓取必须用这个\n" +
-        "3. **browser** — 只在以下情况使用：页面需要登录/身份验证、需要填表或点击交互、web_fetch 返回的内容为空或不完整（JS 动态渲染页面）、需要查看页面视觉布局\n\n" +
-        "**禁止**在 web_search 或 web_fetch 能完成的场景下启动浏览器。浏览器启动成本高、会打开窗口干扰用户。"
-      : "\n## Web Tool Priority\n\n" +
-        "When fetching web information, choose tools in this order:\n" +
-        "1. **web_search** — Find information, get URLs. Most \"look up XX\" requests are handled by this alone\n" +
-        "2. **web_fetch** — Known URL, need to extract page text. Simple scraping must use this\n" +
-        "3. **browser** — Only use when: the page requires login/authentication, form filling or click interaction is needed, web_fetch returns empty or incomplete content (JS-rendered pages), or you need to see visual layout\n\n" +
-        "**Do not** launch the browser when web_search or web_fetch can do the job. Browser startup is expensive and opens a window that interrupts the user."
-    );
 
     // 设置工具路由
     parts.push(isZh

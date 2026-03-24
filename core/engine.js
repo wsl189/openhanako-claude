@@ -594,7 +594,7 @@ export class HanaEngine {
   static PATROL_TOOLS_DEFAULT = [
     "search_memory", "pin_memory", "unpin_memory",
     "recall_experience", "record_experience",
-    "web_search", "web_fetch",
+    "web_fetch",
     "todo", "cron", "notify",
     "present_files", "message_agent",
   ];
