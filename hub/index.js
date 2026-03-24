@@ -158,16 +158,11 @@ export class Hub {
    * 在 engine.init() 完成后由 server/index.js 调用
    */
   initSchedulers() {
-    const engine = this._engine;
-
     // Scheduler（heartbeat + cron）
     this._scheduler.start();
 
-    // ChannelRouter
-    const channelEnabled = engine.agent.config?.channels?.enabled !== false;
-    if (channelEnabled) {
-      this._channelRouter.start();
-    }
+    // ChannelRouter（默认始终开启）
+    this._channelRouter.start();
 
     // 注入频道 post 回调
     this._channelRouter.setupPostHandler();
@@ -202,10 +197,6 @@ export class Hub {
 
   triggerChannelTriage(channelName, opts) {
     return this._channelRouter.triggerImmediate(channelName, opts);
-  }
-
-  async toggleChannels(enabled) {
-    return this._channelRouter.toggle(enabled);
   }
 
   // ──────────── 生命周期 ────────────

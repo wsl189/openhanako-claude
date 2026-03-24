@@ -11617,6 +11617,17 @@ a.about-link:hover {
     position: relative;
 }
 
+/* 频道附件条：固定在输入框右上方（发送按钮左侧） */
+.channel-attached-files {
+    position: absolute;
+    right: 48px;
+    bottom: calc(100% + 6px);
+    width: calc(100% - 60px);
+    justify-content: flex-end;
+    padding: 0;
+    z-index: 45;
+}
+
 /* @ 联想下拉框 */
 .channel-mention-dropdown {
     position: absolute;

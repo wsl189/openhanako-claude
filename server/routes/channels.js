@@ -260,12 +260,4 @@ export default async function channelsRoute(app, { engine, hub }) {
       return { error: err.message };
     }
   });
-
-  // ── 频道开关（启停 channelTicker）──
-  app.post("/api/channels/toggle", async (req, _reply) => {
-    const { enabled } = req.body || {};
-    await hub.toggleChannels(!!enabled);
-    debugLog()?.log("api", `POST /channels/toggle enabled=${!!enabled}`);
-    return { ok: true, enabled: !!enabled };
-  });
 }

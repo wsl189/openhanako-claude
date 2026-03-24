@@ -236,66 +236,50 @@ async function handleDrop(e: React.DragEvent): Promise<void> {
   const files = e.dataTransfer?.files;
   if (!files || files.length === 0) return;
 
-  const store = useStore.getState();
-  if (store.attachedFiles.length >= 9) return;
-
   let srcPaths: string[] = [];
-  const nameMap: Record<string, string> = {};
+  const fileMetaMap = new Map<string, { name: string; isDirectoryGuess: boolean }>();
   for (const file of Array.from(files)) {
     const filePath = window.platform?.getFilePath?.(file);
     if (filePath) {
       srcPaths.push(filePath);
-      nameMap[filePath] = file.name;
+      fileMetaMap.set(filePath, {
+        name: file.name,
+        // Browser File 无法可靠区分目录；这里仅做弱推断，书桌路径会被后面的 deskFileMap 覆盖为准确信息。
+        isDirectoryGuess: file.type === '' && file.size === 0,
+      });
     }
   }
   if (srcPaths.length === 0) return;
 
-  // Desk 文件直接附加（保留原始路径，不走 upload）
+  const store = useStore.getState();
+
+  // 频道页：DM 只读，禁止挂附件
+  if (store.currentTab === 'channels') {
+    if (!store.currentChannel) return;
+    if (store.channelIsDM) {
+      store.addToast(t('channel.readOnly'), 'info', 3000);
+      return;
+    }
+  }
+
+  if (store.attachedFiles.length >= 9) return;
+
+  // 统一保留原始路径（不走 /api/upload，不复制到 .hanako-uploads）
   const s = useStore.getState();
   const deskBase = toSlash(s.deskBasePath ?? '').replace(/\/+$/, '');
-  if (deskBase) {
-    const prefix = deskBase + '/';
-    const deskFileMap = new Map(s.deskFiles.map((f: any) => [f.name, f]));
-    const isDeskPath = (p: string) => toSlash(p).startsWith(prefix);
-    const deskPaths = srcPaths.filter(isDeskPath);
-    srcPaths = srcPaths.filter((p) => !isDeskPath(p));
-    for (const p of deskPaths) {
-      if (useStore.getState().attachedFiles.length >= 9) break;
-      const name = baseName(p);
-      const knownFile = deskFileMap.get(name);
-      useStore.getState().addAttachedFile({
-        path: p,
-        name,
-        isDirectory: knownFile?.isDir ?? false,
-      });
-    }
-  }
-  if (srcPaths.length === 0) return;
-
-  try {
-    const res = await hanaFetch('/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths: srcPaths }),
+  const prefix = deskBase ? (deskBase + '/') : '';
+  const deskFileMap = new Map(s.deskFiles.map((f: any) => [f.name, f]));
+  for (const p of srcPaths) {
+    if (useStore.getState().attachedFiles.length >= 9) break;
+    const name = baseName(p);
+    const isDeskPath = prefix ? toSlash(p).startsWith(prefix) : false;
+    const knownFile = isDeskPath ? deskFileMap.get(name) : null;
+    const meta = fileMetaMap.get(p);
+    useStore.getState().addAttachedFile({
+      path: p,
+      name: meta?.name || name || p.split('/').pop() || p,
+      isDirectory: knownFile?.isDir ?? meta?.isDirectoryGuess ?? false,
     });
-    const data = await res.json();
-    for (const item of data.uploads || []) {
-      if (item.dest) {
-        useStore.getState().addAttachedFile({
-          path: item.dest,
-          name: item.name,
-          isDirectory: item.isDirectory || false,
-        });
-      }
-    }
-  } catch (err) {
-    console.error('[upload]', err);
-    for (const p of srcPaths) {
-      useStore.getState().addAttachedFile({
-        path: p,
-        name: nameMap[p] || p.split('/').pop() || p,
-      });
-    }
   }
 }
 
@@ -439,7 +423,7 @@ function App() {
             {/* 频道 tab 内容 */}
             <div className="sidebar-channel-content hidden" id="sidebarChannelContent">
               <div className="sidebar-header">
-                <span className="sidebar-title">{t('channel.tab')} <span className="beta-badge">Beta</span></span>
+                <span className="sidebar-title">{t('channel.tab')}</span>
                 <div className="sidebar-header-actions">
                   <button className="sidebar-action-btn" id="channelCreateBtn" title={t('channel.createTitle')}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -457,13 +441,6 @@ function App() {
               <div className="channel-list-wrap" id="channelListWrap">
                 <div className="channel-list" id="channelList">
                   <ChannelList />
-                </div>
-                <div className="channel-disabled-overlay hidden" id="channelDisabledOverlay">
-                  <span>{t('channel.disabled')}</span>
-                </div>
-                <div className="channel-toggle-bar">
-                  <span className="channel-toggle-bar-label">{t('channel.toggleLabel')}</span>
-                  <button className="hana-toggle on" id="channelToggle"></button>
                 </div>
               </div>
             </div>
@@ -637,8 +614,48 @@ function BridgeDot() {
 }
 
 function DropText() {
-  const agentName = useStore(s => s.agentName);
-  return <span className="drop-text">{t('drop.hint', { name: agentName })}</span>;
+  const targetName = useStore((s) => {
+    const findAgentName = (agentId: string | null | undefined): string | null => {
+      if (!agentId) return null;
+      return s.agents.find((a) => a.id === agentId)?.name || null;
+    };
+
+    if (s.currentTab === 'channels') {
+      const current = s.currentChannel ? s.channels.find((c) => c.id === s.currentChannel) : null;
+      if (current) {
+        if (current.isDM) {
+          return current.peerName || current.name || current.peerId || s.channelInfoName || t('channel.tab');
+        }
+        const base = current.name || s.channelInfoName || current.id;
+        return base.startsWith('#') ? base : `#${base}`;
+      }
+      if (s.channelInfoName) {
+        if (s.channelIsDM) return s.channelInfoName;
+        return s.channelInfoName.startsWith('#') ? s.channelInfoName : `#${s.channelInfoName}`;
+      }
+      return t('channel.tab');
+    }
+
+    const selectedAgentName = findAgentName(s.selectedAgentId);
+    if (selectedAgentName) return selectedAgentName;
+
+    if (s.sessionAgent?.name) return s.sessionAgent.name;
+
+    const currentSession = s.currentSessionPath
+      ? s.sessions.find((it) => it.path === s.currentSessionPath)
+      : null;
+    if (currentSession?.agentName) return currentSession.agentName;
+
+    const currentSessionAgentName = findAgentName(currentSession?.agentId || null);
+    if (currentSessionAgentName) return currentSessionAgentName;
+
+    const currentAgentName = findAgentName(s.currentAgentId);
+    if (currentAgentName) return currentAgentName;
+
+    return s.agentName || 'Hanako';
+  });
+
+  return <span className="drop-text">{t('drop.hint', { name: targetName })}</span>;
 }
 
 function ConnectionStatus() {

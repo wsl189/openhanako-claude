@@ -16,6 +16,7 @@ import { ContextMenu } from './ContextMenu';
 import type { ContextMenuItem } from './ContextMenu';
 import type { Channel, Agent } from '../types';
 import { yuanFallbackAvatar } from '../utils/agent-helpers';
+import { SVG_ICONS } from '../utils/icons';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -126,37 +127,21 @@ function MemberAvatar({ info, className }: { info: MemberInfo; className?: strin
 
 export function ChannelsPanel() {
   const currentTab = useStore((s) => s.currentTab);
-  const channelsEnabled = useStore((s) => s.channelsEnabled);
   const channels = useStore((s) => s.channels);
   const loadChannels = useStore((s) => s.loadChannels);
   const serverPort = useStore((s) => s.serverPort);
 
-  // 初始化：如果 channels 功能已启用且 tab 是 channels，加载数据
+  // 初始化：进入频道 tab 时加载数据
   useEffect(() => {
-    if (channelsEnabled && currentTab === 'channels' && channels.length === 0 && serverPort) {
+    if (currentTab === 'channels' && channels.length === 0 && serverPort) {
       loadChannels();
     }
-  }, [channelsEnabled, currentTab, channels.length, serverPort, loadChannels]);
+  }, [currentTab, channels.length, serverPort, loadChannels]);
 
-  // 初始化：如果 channelsEnabled 但还没加载过，在启动时加载
+  // 启动时加载频道数据
   useEffect(() => {
-    if (channelsEnabled && serverPort) {
-      // Sync enabled state to backend on app startup/reconnect.
-      // Otherwise UI may stay "enabled" (localStorage) while backend ticker is still off.
-      hanaFetch('/api/channels/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: true }),
-      })
-        .then(() => loadChannels())
-        .catch(() => {});
-    } else if (!channelsEnabled && serverPort) {
-      // Sync disabled state to backend
-      hanaFetch('/api/channels/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: false }),
-      }).catch(() => {});
+    if (serverPort) {
+      loadChannels();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverPort]);
@@ -312,97 +297,11 @@ function useTabClickHandler() {
 }
 
 // ══════════════════════════════════════════════════════
-// ChannelToggleController — toggle 开关 + disabled overlay
+// ChannelToggleController — 频道默认开启，保留空组件做兼容
 // ══════════════════════════════════════════════════════
 
 function ChannelToggleController() {
-  const channelsEnabled = useStore((s) => s.channelsEnabled);
-
-  useEffect(() => {
-    const toggle = document.getElementById('channelToggle');
-    const overlay = document.getElementById('channelDisabledOverlay');
-    const createBtn = document.getElementById('channelCreateBtn') as HTMLButtonElement | null;
-
-    if (toggle) toggle.classList.toggle('on', channelsEnabled);
-    if (overlay) overlay.classList.toggle('hidden', channelsEnabled);
-    if (createBtn) {
-      createBtn.disabled = !channelsEnabled;
-      createBtn.classList.toggle('btn-disabled', !channelsEnabled);
-    }
-  }, [channelsEnabled]);
-
-  useEffect(() => {
-    const toggle = document.getElementById('channelToggle');
-    if (!toggle) return;
-
-    const handler = async () => {
-      const s = useStore.getState();
-      const turningOn = !s.channelsEnabled;
-
-      if (turningOn) {
-        const accepted = await showChannelWarning();
-        if (!accepted) return;
-      }
-
-      await s.toggleChannelsEnabled();
-    };
-
-    toggle.addEventListener('click', handler);
-    return () => toggle.removeEventListener('click', handler);
-  }, []);
-
   return null;
-}
-
-// ── Warning 弹窗 ──
-
-function showChannelWarning(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const t = (window as any).t;
-    const overlay = document.createElement('div');
-    overlay.className = 'hana-warning-overlay';
-
-    const box = document.createElement('div');
-    box.className = 'hana-warning-box';
-
-    const title = document.createElement('h3');
-    title.className = 'hana-warning-title';
-    title.textContent = t('channel.warningTitle');
-    box.appendChild(title);
-
-    const body = document.createElement('div');
-    body.className = 'hana-warning-body';
-    const text = t('channel.warningBody') || '';
-    for (const para of text.split('\n\n')) {
-      const p = document.createElement('p');
-      const lines = para.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        if (i > 0) p.appendChild(document.createElement('br'));
-        p.appendChild(document.createTextNode(lines[i]));
-      }
-      body.appendChild(p);
-    }
-    box.appendChild(body);
-
-    const actions = document.createElement('div');
-    actions.className = 'hana-warning-actions';
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'hana-warning-cancel';
-    cancelBtn.textContent = t('channel.createCancel');
-    cancelBtn.addEventListener('click', () => { overlay.remove(); resolve(false); });
-
-    const confirmBtn = document.createElement('button');
-    confirmBtn.className = 'hana-warning-confirm';
-    confirmBtn.textContent = t('channel.warningConfirm');
-    confirmBtn.addEventListener('click', () => { overlay.remove(); resolve(true); });
-
-    actions.appendChild(cancelBtn);
-    actions.appendChild(confirmBtn);
-    box.appendChild(actions);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-  });
 }
 
 // ══════════════════════════════════════════════════════
@@ -835,6 +734,9 @@ export function ChannelInput() {
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
   const sendChannelMessage = useStore((s) => s.sendChannelMessage);
+  const attachedFiles = useStore((s) => s.attachedFiles);
+  const removeAttachedFile = useStore((s) => s.removeAttachedFile);
+  const clearAttachedFiles = useStore((s) => s.clearAttachedFiles);
 
   const [inputValue, setInputValue] = useState('');
   const [sending, setSending] = useState(false);
@@ -863,15 +765,27 @@ export function ChannelInput() {
   }, [currentChannel, isDM]);
 
   const handleSend = useCallback(async () => {
-    if (sending || !inputValue.trim()) return;
+    const text = inputValue.trim();
+    const hasFiles = attachedFiles.length > 0;
+    if (sending || (!text && !hasFiles)) return;
+
+    let finalText = text;
+    if (hasFiles) {
+      const fileBlock = attachedFiles
+        .map((f) => f.isDirectory ? `[目录] ${f.path}` : `[附件] ${f.path}`)
+        .join('\n');
+      finalText = text ? `${text}\n\n${fileBlock}` : fileBlock;
+    }
+
     setSending(true);
     try {
-      await sendChannelMessage(inputValue.trim());
+      await sendChannelMessage(finalText);
       setInputValue('');
+      clearAttachedFiles();
     } finally {
       setSending(false);
     }
-  }, [sending, inputValue, sendChannelMessage]);
+  }, [sending, inputValue, attachedFiles, sendChannelMessage, clearAttachedFiles]);
 
   const checkMention = useCallback(() => {
     if (!inputRef.current) return;
@@ -1024,6 +938,13 @@ export function ChannelInput() {
           ))}
         </div>
       )}
+      {attachedFiles.length > 0 && (
+        <AttachedFilesBar
+          files={attachedFiles}
+          onRemove={removeAttachedFile}
+          className="channel-attached-files"
+        />
+      )}
       <textarea
         ref={inputRef}
         className="channel-input-box"
@@ -1037,7 +958,7 @@ export function ChannelInput() {
       />
       <button
         className="channel-send-btn"
-        disabled={!inputValue.trim() || sending}
+        disabled={(!inputValue.trim() && attachedFiles.length === 0) || sending}
         onClick={handleSend}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1045,6 +966,29 @@ export function ChannelInput() {
           <polygon points="22 2 15 22 11 13 2 9 22 2" />
         </svg>
       </button>
+    </div>
+  );
+}
+
+function AttachedFilesBar({ files, onRemove, className }: {
+  files: Array<{ path: string; name: string; isDirectory?: boolean }>;
+  onRemove: (index: number) => void;
+  className?: string;
+}) {
+  return (
+    <div className={className ? `attached-files ${className}` : 'attached-files'}>
+      {files.map((f, i) => (
+        <span key={`${f.path}-${i}`} className="file-tag">
+          <span className="file-tag-name">
+            <span
+              className="file-tag-icon"
+              dangerouslySetInnerHTML={{ __html: f.isDirectory ? SVG_ICONS?.folder : SVG_ICONS?.clip }}
+            />
+            {f.name}
+          </span>
+          <button className="file-tag-remove" onClick={() => onRemove(i)}>✕</button>
+        </span>
+      ))}
     </div>
   );
 }

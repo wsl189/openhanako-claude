@@ -7,7 +7,6 @@ export interface ChannelSlice {
   channelMessages: ChannelMessage[];
   channelMembers: string[];
   channelTotalUnread: number;
-  channelsEnabled: boolean;
   channelHeaderName: string;
   channelHeaderMembersText: string;
   channelInfoName: string;
@@ -16,12 +15,10 @@ export interface ChannelSlice {
   setCurrentChannel: (channel: string | null) => void;
   setChannelMessages: (messages: ChannelMessage[]) => void;
   setChannelTotalUnread: (count: number) => void;
-  setChannelsEnabled: (enabled: boolean) => void;
   loadChannels: () => Promise<void>;
   openChannel: (channelId: string, isDM?: boolean) => Promise<void>;
   sendChannelMessage: (text: string) => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
-  toggleChannelsEnabled: () => Promise<boolean>;
   createChannel: (name: string, members: string[], intro?: string) => Promise<string | null>;
 }
 
@@ -36,7 +33,6 @@ export const createChannelSlice = (
   channelMessages: [],
   channelMembers: [],
   channelTotalUnread: 0,
-  channelsEnabled: (() => { try { return localStorage.getItem('hana-channels-enabled') === 'true'; } catch { return false; } })(),
   channelHeaderName: '',
   channelHeaderMembersText: '',
   channelInfoName: '',
@@ -45,10 +41,6 @@ export const createChannelSlice = (
   setCurrentChannel: (channel) => set({ currentChannel: channel }),
   setChannelMessages: (messages) => set({ channelMessages: messages }),
   setChannelTotalUnread: (count) => set({ channelTotalUnread: count }),
-  setChannelsEnabled: (enabled) => {
-    localStorage.setItem('hana-channels-enabled', String(enabled));
-    set({ channelsEnabled: enabled });
-  },
 
   loadChannels: async () => {
     const s = get!();
@@ -202,29 +194,6 @@ export const createChannelSlice = (
     } catch (err) {
       console.error('[channels] delete failed:', err);
     }
-  },
-
-  toggleChannelsEnabled: async () => {
-    const s = get!();
-    const newEnabled = !s.channelsEnabled;
-    localStorage.setItem('hana-channels-enabled', String(newEnabled));
-    set({ channelsEnabled: newEnabled });
-
-    if (newEnabled) {
-      await get!().loadChannels();
-    }
-
-    try {
-      await hanaFetch('/api/channels/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: newEnabled }),
-      });
-    } catch (err) {
-      console.error('[channels] toggle backend failed:', err);
-    }
-
-    return newEnabled;
   },
 
   createChannel: async (name: string, members: string[], intro?: string) => {

@@ -347,13 +347,13 @@ function InputAreaInner() {
         loadSessions();
       }
 
-      // 分离图片和非图片附件
+      // 分离图片附件（用于视觉输入）
       const imageFiles = hasFiles ? attachedFiles.filter(f => !f.isDirectory && isImageFile(f.name)) : [];
-      const otherFiles = hasFiles ? attachedFiles.filter(f => f.isDirectory || !isImageFile(f.name)) : [];
 
       let finalText = text;
-      if (otherFiles.length > 0) {
-        const fileBlock = otherFiles
+      if (hasFiles) {
+        // 无论是否图片，都把原始路径写入文本，避免模型只看到远端视觉 URL 而拿不到本地路径。
+        const fileBlock = attachedFiles
           .map(f => f.isDirectory ? `[目录] ${f.path}` : `[附件] ${f.path}`)
           .join('\n');
         finalText = text ? `${text}\n\n${fileBlock}` : fileBlock;
@@ -381,8 +381,7 @@ function InputAreaInner() {
               }
             }
           } catch {
-            // 读取失败的图片降级为路径文本
-            finalText = finalText ? `${finalText}\n\n[附件] ${img.path}` : `[附件] ${img.path}`;
+            // ignore: 路径文本已在上面的 fileBlock 中
           }
         }
       }
