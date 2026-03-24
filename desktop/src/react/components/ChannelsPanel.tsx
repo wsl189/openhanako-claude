@@ -739,7 +739,7 @@ export function ChannelMessages() {
                 </div>
               )}
               <div
-                className="channel-msg-text"
+                className="channel-msg-text md-content"
                 dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.body || '') }}
               />
             </div>

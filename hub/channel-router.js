@@ -255,30 +255,18 @@ export class ChannelRouter {
         {
           text: isZh
             ? `#${channelName} 频道的最近消息：\n\n${msgText}\n\n`
-              + `你只有这一轮回复机会。请在这一轮里结合上下文，必要时用 search_memory 检索记忆，然后直接给出最终会发到群聊的内容。\n\n`
-              + `回复规定：\n`
-              + `- 直接输出回复内容，不要加任何前缀、解释、MOOD 或代码块\n`
-              + `- 不要重复别人已经说过的内容\n`
-              + `- 只说真实发生过的事，不要编造你没做过的活动或经历\n`
-              + (forceReply
-                ? `- 你被明确 @ 到，必须给出一条可见回复，不能输出 [NO_REPLY]`
-                : `- 如果你觉得没什么好说的，回复 [NO_REPLY]`)
+              + `你只有这一轮回复机会。请在这一轮里结合上下文，必要时用 search_memory 检索记忆，然后直接给出你要发到群聊的回复内容。`
+              + (forceReply ? `\n你被明确 @ 到，必须给出一条可见回复。` : "")
             : `Recent messages in #${channelName}:\n\n${msgText}\n\n`
-              + `You only have one reply round. In this same round, use context and call search_memory when needed, then output the final message to post in the group chat.\n\n`
-              + `Reply rules:\n`
-              + `- Output the reply directly — no prefixes, explanations, MOOD blocks, or code fences\n`
-              + `- Don't repeat what others have already said\n`
-              + `- Only mention things that actually happened — don't fabricate activities or experiences\n`
-              + (forceReply
-                ? `- You were explicitly @-mentioned, so you must provide a visible reply and must not output [NO_REPLY]`
-                : `- If you have nothing to say, reply [NO_REPLY]`),
+              + `You only have one reply round. In this same round, use context and call search_memory when needed, then directly output the message you want to post in the group chat.`
+              + (forceReply ? `\nYou were explicitly @-mentioned, so you must provide a visible reply.` : ""),
           capture: true,
         },
       ],
       { engine: this._engine, signal, sessionSuffix: "channel-temp" },
     );
 
-    if (!text || text.includes("[NO_REPLY]")) {
+    if (!text?.trim()) {
       if (forceReply) {
         return isZh ? "收到 @ 我了，我在。" : "I saw the @ and I'm here.";
       }
@@ -286,7 +274,7 @@ export class ChannelRouter {
       return null;
     }
 
-    return text;
+    return text.trim();
   }
 
   /**

@@ -2010,8 +2010,9 @@ html[data-platform="linux"] .tb-toggle-right {
     line-height: 1.75;
 }
 
-/* 助手回答正文用宋体 */
-.message.assistant > .md-content {
+/* 助手回答正文 + 频道消息正文用宋体 */
+.message.assistant > .md-content,
+.channel-msg-text.md-content {
     font-family: var(--font-serif);
 }
 
@@ -2090,12 +2091,14 @@ html[data-platform="linux"] .tb-toggle-right {
 
 /* 列表 */
 .md-content ul, .md-content ol {
-    padding-left: 1.5em;
+    padding-left: 1.2em;
+    list-style-position: inside;
     margin: var(--space-xs) 0;
 }
 
 .md-content li {
     margin: 0.15em 0;
+    overflow-wrap: anywhere;
 }
 
 .md-content li > p {
@@ -10118,6 +10121,7 @@ a.about-link:hover {
 .compiled-memory-md ul,
 .compiled-memory-md ol {
     padding-left: 1.2em;
+    list-style-position: inside;
     margin: var(--space-xs) 0;
 }
 
