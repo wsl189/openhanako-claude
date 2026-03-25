@@ -748,7 +748,9 @@ export default async function chatRoute(app, { engine, hub }) {
           ss.titlePreview = "";
           beginSessionStream(ss);
           broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath });
-          await hub.send(promptText, { sessionPath: promptSessionPath });
+          // 透传图片给主对话模型：支持原生多模态模型直接看图回复，
+          // 同时仍保留 pendingImages 供 describe_images 工具按需使用。
+          await hub.send(promptText, { sessionPath: promptSessionPath, images: msg.images });
           broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
         } catch (err) {
           if (!err.message?.includes("aborted")) {

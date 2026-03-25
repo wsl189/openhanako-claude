@@ -631,6 +631,10 @@ export class Agent {
         "When the user mentions changing settings without specifying a particular application, assume they mean this application.\n" +
         "When the user asks to change preferences (including but not limited to: appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory), use the update_settings tool. Do not search the web or edit config files. When intent is clear, apply directly; when unsure, search first."
     );
+    parts.push(isZh
+      ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
+      : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser."
+    );
 
     // 书桌 = 当前工作目录（注入实际路径）
     const cwdPath = this._engine?.cwd || "";
