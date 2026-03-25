@@ -164,6 +164,7 @@ export function savePins() {
 export const PROVIDER_PRESETS = [
   { value: 'ollama', label: 'Ollama (Local)', url: 'http://localhost:11434/v1', api: 'openai-completions', local: true },
   { value: 'dashscope', label: 'DashScope (Qwen)', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', api: 'openai-completions' },
+  { value: 'modelscope', label: 'ModelScope', url: 'https://api-inference.modelscope.cn/v1', api: 'openai-completions' },
   { value: 'openai', label: 'OpenAI', url: 'https://api.openai.com/v1', api: 'openai-completions' },
   { value: 'deepseek', label: 'DeepSeek', url: 'https://api.deepseek.com/v1', api: 'openai-completions' },
   { value: 'volcengine', label: ((window as any).i18n?.locale?.startsWith?.('zh') ? 'Volcengine (豆包)' : 'Volcengine (Doubao)'), url: 'https://ark.cn-beijing.volces.com/api/v3', api: 'openai-completions' },

@@ -151,6 +151,7 @@ export class HanaEngine {
     // DevTools 日志
     this._devLogs = [];
     this._devLogsMax = 200;
+    this._pendingImagesBySession = new Map();
 
     // 设置起始 agentId
     this._agentMgr.activeAgentId = startId;
@@ -259,6 +260,9 @@ export class HanaEngine {
   getUtilityApi() { return this._configCoord.getUtilityApi(); }
   setUtilityApi(p) { return this._configCoord.setUtilityApi(p); }
   resolveUtilityConfig() { return this._configCoord.resolveUtilityConfig(); }
+  resolveModelWithCredentials(modelRef, agentConfig) {
+    return this._models.resolveModelWithCredentials(modelRef, agentConfig || this.agent?.config);
+  }
   readFavorites() { return this._configCoord.readFavorites(); }
   async saveFavorites(f) { return this._configCoord.saveFavorites(f); }
   readAgentOrder() { return this._configCoord.readAgentOrder(); }
@@ -283,6 +287,37 @@ export class HanaEngine {
 
   getPreferences() { return this._readPreferences(); }
   savePreferences(p) { return this._writePreferences(p); }
+
+  setSessionPendingImages(sessionPath, images = []) {
+    if (!sessionPath) return;
+    const normalized = (Array.isArray(images) ? images : [])
+      .map((img) => ({
+        data: String(img?.data || ""),
+        mimeType: String(img?.mimeType || "image/png"),
+      }))
+      .filter((img) => img.data);
+    if (normalized.length === 0) {
+      this._pendingImagesBySession.delete(sessionPath);
+      return;
+    }
+    this._pendingImagesBySession.set(sessionPath, normalized);
+  }
+
+  getSessionPendingImages(sessionPath) {
+    if (!sessionPath) return [];
+    return this._pendingImagesBySession.get(sessionPath) || [];
+  }
+
+  getLatestSessionPendingImages() {
+    if (!this._pendingImagesBySession.size) return [];
+    const values = Array.from(this._pendingImagesBySession.values());
+    return values[values.length - 1] || [];
+  }
+
+  clearSessionPendingImages(sessionPath) {
+    if (!sessionPath) return;
+    this._pendingImagesBySession.delete(sessionPath);
+  }
 
   // ════════════════════════════
   //  Channel 代理（→ ChannelManager）

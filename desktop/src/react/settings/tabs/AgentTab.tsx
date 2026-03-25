@@ -44,7 +44,7 @@ export function AgentTab() {
   } = store;
 
   // 记忆系统需要 utility 模型才能工作
-  const hasUtilityModel = !!(globalModelsConfig?.models?.utility && globalModelsConfig?.models?.utility_large);
+  const hasUtilityModel = !!globalModelsConfig?.models?.utility;
   const settingsAgentId = store.getSettingsAgentId();
   const selectedAgentId = store.settingsAgentId;
 

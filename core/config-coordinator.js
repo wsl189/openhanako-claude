@@ -26,6 +26,7 @@ export const READ_ONLY_BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
 export const SHARED_MODEL_KEYS = [
   ["utility",        "utility_model"],
   ["utility_large",  "utility_large_model"],
+  ["image_understanding", "image_understanding_model"],
   ["summarizer",     "summarizer_model"],
   ["compiler",       "compiler_model"],
 ];
@@ -82,17 +83,28 @@ export class ConfigCoordinator {
     for (const [field, prefKey] of SHARED_MODEL_KEYS) {
       result[field] = prefs[prefKey] || null;
     }
+    if (result.utility) {
+      result.utility_large = result.utility;
+    }
     return result;
   }
 
   setSharedModels(partial) {
+    const normalized = { ...partial };
+    if (normalized.utility !== undefined && normalized.utility_large === undefined) {
+      normalized.utility_large = normalized.utility;
+    }
+    if (normalized.utility_large !== undefined && normalized.utility === undefined) {
+      normalized.utility = normalized.utility_large;
+    }
+
     const prefs = this._prefs();
     const changed = [];
     for (const [field, prefKey] of SHARED_MODEL_KEYS) {
-      if (partial[field] !== undefined) {
-        if (partial[field] !== null && partial[field] !== "") prefs[prefKey] = partial[field];
+      if (normalized[field] !== undefined) {
+        if (normalized[field] !== null && normalized[field] !== "") prefs[prefKey] = normalized[field];
         else delete prefs[prefKey];
-        changed.push(`${field}=${partial[field] || "(cleared)"}`);
+        changed.push(`${field}=${normalized[field] || "(cleared)"}`);
       }
     }
     this._savePrefs(prefs);
@@ -100,6 +112,7 @@ export class ConfigCoordinator {
       const fresh = this.getSharedModels();
       const agent = this._d.getAgent();
       agent._utilityModel = fresh.utility || null;
+      agent._memoryModel = fresh.utility_large || fresh.utility || null;
       log.log(`setSharedModels: ${changed.join(", ")}`);
     }
   }

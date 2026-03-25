@@ -28,6 +28,7 @@ function isLocalBaseUrl(url) {
 const ROLE_TO_PREF_KEY = {
   utility: "utility_model",
   utility_large: "utility_large_model",
+  image_understanding: "image_understanding_model",
   summarizer: "summarizer_model",
   compiler: "compiler_model",
 };
@@ -113,7 +114,7 @@ export class ExecutionRouter {
   resolveUtilityConfig(agentConfig, sharedModels, utilApiOverride) {
     const cfg = agentConfig || {};
     const utilityModelRef = sharedModels?.utility || cfg.models?.utility;
-    const largeModelRef = sharedModels?.utility_large || cfg.models?.utility_large;
+    const largeModelRef = sharedModels?.utility_large || cfg.models?.utility_large || utilityModelRef;
 
     if (!utilityModelRef) throw new Error(t("error.noUtilityModel"));
     if (!largeModelRef) throw new Error(t("error.noUtilityLargeModel"));
@@ -190,7 +191,9 @@ export class ExecutionRouter {
       case "utility":
         return sharedModels?.utility || cfg.models?.utility || null;
       case "utility_large":
-        return sharedModels?.utility_large || cfg.models?.utility_large || null;
+        return sharedModels?.utility_large || cfg.models?.utility_large || sharedModels?.utility || cfg.models?.utility || null;
+      case "image_understanding":
+        return sharedModels?.image_understanding || cfg.models?.image_understanding || null;
       case "summarizer":
         return sharedModels?.summarizer || cfg.models?.summarizer || null;
       case "compiler":

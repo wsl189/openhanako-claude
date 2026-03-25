@@ -617,10 +617,10 @@
       "noModels": "No models added yet",
       "otherModelSection": "Other",
       "chatModel": "Primary model",
-      "utilityModel": "Utility (small)",
-      "utilityModelHint": "Titles, light classification, etc. A cheap small model is recommended",
+      "utilityModel": "Utility Model",
       "utilityLargeModel": "Utility (large)",
       "utilityLargeModelHint": "Activity summaries, task breakdown, etc. Falls back to small utility if empty",
+      "imageUnderstandingModel": "Image Understanding Model",
       "favorites": "Favorites",
       "searchModel": "Search models...",
       "noFavorites": "Click ☆ to favorite models",
@@ -1207,6 +1207,9 @@
     "modelNotFound": "Model not found: {id}",
     "noUtilityModel": "Utility model not configured, please add one in settings",
     "noUtilityLargeModel": "utility_large model not configured, please add one in settings",
+    "imageToolNoImages": "No images are available in this session. Ask the user to upload images first.",
+    "imageToolNoModel": "No image understanding model is configured. Configure Image Understanding Model or Utility Model in settings.",
+    "imageToolVisionFailed": "Image understanding failed: {msg}",
     "modelNoProvider": "{role} model \"{model}\" has no provider association",
     "providerMissingApi": "Provider \"{provider}\" missing API protocol config",
     "providerMissingCreds": "Provider \"{provider}\" missing credentials",
@@ -1356,6 +1359,12 @@
       "timeoutDesc": "Timeout in milliseconds (optional for wait, default 5000)",
       "stateDesc": "Wait state (optional for wait): domcontentloaded / idle",
       "pressEnterDesc": "Press Enter after typing (optional for type)"
+    },
+    "describeImages": {
+      "label": "Describe Images",
+      "description": "Read user-uploaded images in the current session and return textual descriptions.\nUse when the user's request depends on image content. You can pass image_ids (1-based) and prompt (focus instruction).",
+      "imageIdsDesc": "Array of image IDs to analyze (1-based). Omit to analyze all images",
+      "promptDesc": "Focus instruction for what to extract from images"
     },
     "channel": {
       "label": "Channel",

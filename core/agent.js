@@ -27,9 +27,11 @@ import { createExperienceTools } from "../lib/tools/experience.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
 import { createUpdateSettingsTool } from "../lib/tools/update-settings-tool.js";
 import { createDelegateTool } from "../lib/tools/delegate-tool.js";
+import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
 import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
 import { formatSkillsForPrompt } from "@mariozechner/pi-coding-agent";
 import { runCompatChecks } from "../lib/compat/index.js";
+import { t } from "../server/i18n.js";
 
 export class Agent {
   /**
@@ -85,6 +87,7 @@ export class Agent {
     this._channelTool = null;
     this._browserTool = null;
     this._notifyTool = null;
+    this._describeImagesTool = null;
   }
 
   // ════════════════════════════
@@ -159,7 +162,7 @@ export class Agent {
 
     // utility 模型（允许为空，首次安装时用户尚未配置）
     this._utilityModel = sharedModels.utility || null;
-    this._memoryModel = sharedModels.utility_large || null;
+    this._memoryModel = sharedModels.utility_large || sharedModels.utility || null;
 
     // 预解析记忆模型凭证（统一解析层）
     this._resolvedMemoryModel = null;
@@ -244,6 +247,24 @@ export class Agent {
       getConfirmStore: () => this._engine?.confirmStore,
       getSessionPath: () => this._engine?._sessionCoord?.currentSessionPath,
       emitEvent: (event) => this._engine?._emitEvent(event, this._engine?._sessionCoord?.currentSessionPath),
+    });
+
+    this._describeImagesTool = createDescribeImagesTool({
+      getSessionImages: (sessionPath) => this._engine?.getSessionPendingImages?.(sessionPath) || [],
+      getCurrentSessionPath: () => this._engine?.currentSessionPath || null,
+      getLatestSessionImages: () => this._engine?.getLatestSessionPendingImages?.() || [],
+      getSessionMessages: (sessionPath) => this._engine?.getMessages?.(sessionPath) || [],
+      resolveVisionModel: () => {
+        if (!this._engine) throw new Error(t("error.imageToolNoModel"));
+        const shared = this._engine.getSharedModels?.() || {};
+        const modelRef =
+          shared.image_understanding ||
+          shared.utility ||
+          this._config?.models?.utility ||
+          this._config?.models?.chat;
+        if (!modelRef) throw new Error(t("error.imageToolNoModel"));
+        return this._engine.resolveModelWithCredentials(modelRef, this._config);
+      },
     });
 
     // 9. 频道工具 + 私信工具（需要 channelsDir 和 agentsDir）
@@ -371,6 +392,7 @@ export class Agent {
       this._askAgentTool,
       this._dmTool,
       this._browserTool,
+      this._describeImagesTool,
       this._notifyTool,
       this._updateSettingsTool,
       this._delegateTool,

@@ -527,6 +527,9 @@ export default async function chatRoute(app, { engine, hub }) {
 
       emitStreamEvent(sessionPath, ss, { type: "turn_end" });
       finishSessionStream(ss);
+      if (sessionPath) {
+        engine.clearSessionPendingImages(sessionPath);
+      }
       ss.hasOutput = false;
       ss.hasToolCall = false;
       ss.thinkTagParser.reset();
@@ -724,9 +727,14 @@ export default async function chatRoute(app, { engine, hub }) {
         if (!promptText.trim() && msg.images?.length) {
           promptText = t("error.viewImage");
         }
+        const promptSessionPath = msg.sessionPath || engine.currentSessionPath;
+        if (msg.images?.length) {
+          engine.setSessionPendingImages(promptSessionPath, msg.images);
+        } else {
+          engine.clearSessionPendingImages(promptSessionPath);
+        }
         debugLog()?.log("ws", `user message (${promptText.length} chars, ${msg.images?.length || 0} images)`);
         // Phase 2: 客户端可指定 sessionPath，否则用焦点 session
-        const promptSessionPath = msg.sessionPath || engine.currentSessionPath;
         if (engine.isSessionStreaming(promptSessionPath)) {
           wsSend(ws, { type: "error", message: t("error.stillStreaming", { name: engine.agentName }) });
           return;
@@ -740,7 +748,7 @@ export default async function chatRoute(app, { engine, hub }) {
           ss.titlePreview = "";
           beginSessionStream(ss);
           broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath });
-          await hub.send(promptText, msg.images ? { images: msg.images, sessionPath: promptSessionPath } : { sessionPath: promptSessionPath });
+          await hub.send(promptText, { sessionPath: promptSessionPath });
           broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
         } catch (err) {
           if (!err.message?.includes("aborted")) {

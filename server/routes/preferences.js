@@ -46,7 +46,7 @@ export default async function preferencesRoute(app, { engine }) {
 
       const sections = [];
       let needsModelSync = false;
-      // 共享模型（utility / utility_large）
+      // 共享模型（utility / image_understanding / ...）
       if (body.models) {
         engine.setSharedModels(body.models);
         sections.push("models");

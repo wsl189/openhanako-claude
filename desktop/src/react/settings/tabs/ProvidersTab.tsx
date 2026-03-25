@@ -229,7 +229,13 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
 }) {
   const { showToast } = useSettingsStore();
   const [keyVal, setKeyVal] = useState('');
-  const baseUrl = summary.base_url || presetInfo?.url || '';
+  const baseUrl = summary.base_url || providerConfig?.base_url || presetInfo?.url || '';
+  const isCustomBaseUrlProvider = providerId === 'ollama';
+  const [baseUrlVal, setBaseUrlVal] = useState(baseUrl);
+  useEffect(() => {
+    setBaseUrlVal(baseUrl);
+  }, [baseUrl, providerId]);
+  const effectiveBaseUrl = isCustomBaseUrlProvider ? baseUrlVal.trim() : baseUrl;
   const api = summary.api || presetInfo?.api || '';
 
   // 验证 + 保存 API Key
@@ -241,16 +247,18 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
       const testRes = await hanaFetch('/api/providers/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base_url: baseUrl, api, api_key: key }),
+        body: JSON.stringify({ base_url: effectiveBaseUrl, api, api_key: key }),
       });
       const testData = await testRes.json();
       if (!testData.ok) {
         showToast(t('settings.providers.verifyFailed'), 'error');
         return;
       }
-      const payload = isPresetSetup
-        ? { base_url: baseUrl, api_key: key, api, models: [] }
-        : { api_key: key };
+      // 始终带上 base_url/api，避免已注册 provider 仅更新 api_key 时丢失基础配置
+      const payload: Record<string, any> = { api_key: key };
+      if (effectiveBaseUrl) payload.base_url = effectiveBaseUrl;
+      if (api) payload.api = api;
+      if (isPresetSetup) payload.models = [];
       await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -276,7 +284,7 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
       const testRes = await hanaFetch('/api/providers/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base_url: baseUrl, api, api_key: keyVal.trim() || undefined }),
+        body: JSON.stringify({ base_url: effectiveBaseUrl, api, api_key: keyVal.trim() || undefined }),
       });
       const testData = await testRes.json();
       setConnStatus(testData.ok ? 'ok' : 'fail');
@@ -320,7 +328,17 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
       </div>
       <div className="pv-cred-row">
         <span className="pv-cred-label">Base URL</span>
-        <span className="pv-cred-value muted">{baseUrl || '—'}</span>
+        {isCustomBaseUrlProvider ? (
+          <input
+            className="settings-input"
+            type="text"
+            value={baseUrlVal}
+            onChange={(e) => setBaseUrlVal(e.target.value)}
+            placeholder={presetInfo?.url || 'http://localhost:11434/v1'}
+          />
+        ) : (
+          <span className="pv-cred-value muted">{baseUrl || '—'}</span>
+        )}
       </div>
       <div className="pv-cred-row">
         <span className="pv-cred-label">{t('settings.providers.apiType')}</span>
@@ -708,10 +726,13 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
   const fetchModels = async (btn: HTMLButtonElement | null) => {
     if (btn) btn.classList.add('spinning');
     try {
+      const preset = PROVIDER_PRESETS.find((p) => p.value === providerId);
+      const effectiveBaseUrl = summary.base_url || preset?.url || '';
+      const effectiveApi = summary.api || preset?.api || '';
       const res = await hanaFetch('/api/providers/fetch-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: providerId, base_url: summary.base_url, api: summary.api }),
+        body: JSON.stringify({ name: providerId, base_url: effectiveBaseUrl, api: effectiveApi }),
       });
       const data = await res.json();
       if (data.error) { showFetchHint(t('settings.providers.fetchFailed'), false); return; }
@@ -1159,28 +1180,26 @@ function OtherModelsSection({ providers }: { providers: Record<string, any> }) {
               providers={providers}
               favorites={pendingFavorites}
               value={globalModelsConfig?.models?.utility || ''}
-              onSelect={(id) => autoSaveGlobalModels({ models: { utility: id } })}
+              onSelect={(id) => autoSaveGlobalModels({ models: { utility: id, utility_large: id } })}
               lookupModelMeta={lookupModelMeta}
               formatContext={formatContext}
             />
             <ToolModelTestBtn modelId={globalModelsConfig?.models?.utility || ''} />
           </div>
-          <span className="settings-field-hint">{t('settings.api.utilityModelHint')}</span>
         </div>
         <div className="settings-field settings-field-half">
-          <label className="settings-field-label">{t('settings.api.utilityLargeModel')}</label>
+          <label className="settings-field-label">{t('settings.api.imageUnderstandingModel')}</label>
           <div className="pv-tool-model-row">
             <ModelWidget
               providers={providers}
               favorites={pendingFavorites}
-              value={globalModelsConfig?.models?.utility_large || ''}
-              onSelect={(id) => autoSaveGlobalModels({ models: { utility_large: id } })}
+              value={globalModelsConfig?.models?.image_understanding || globalModelsConfig?.models?.utility || ''}
+              onSelect={(id) => autoSaveGlobalModels({ models: { image_understanding: id } })}
               lookupModelMeta={lookupModelMeta}
               formatContext={formatContext}
             />
-            <ToolModelTestBtn modelId={globalModelsConfig?.models?.utility_large || ''} />
+            <ToolModelTestBtn modelId={globalModelsConfig?.models?.image_understanding || globalModelsConfig?.models?.utility || ''} />
           </div>
-          <span className="settings-field-hint">{t('settings.api.utilityLargeModelHint')}</span>
         </div>
       </div>
     </>

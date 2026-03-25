@@ -94,6 +94,7 @@ export default async function providersRoute(app, { engine }) {
     for (const [name, p] of Object.entries(providers)) {
       const isOAuth = isOAuthProvider(name);
       const oauthInfo = getOAuthLoginInfo(name);
+      const registryEntry = provRegistry?.get(name) || null;
       const sdkIds = sdkByProvider.get(name) || [];
       // 合并：providers.yaml models + SDK 发现的模型
       const allModels = [...new Set([...(p.models || []), ...sdkIds])];
@@ -102,8 +103,9 @@ export default async function providersRoute(app, { engine }) {
       result[name] = {
         type: isOAuth ? "oauth" : "api-key",
         display_name: oauthInfo?.name || name,
-        base_url: p.base_url || "",
-        api: p.api || "",
+        // providers.yaml 可能只存了 api_key，base_url/api 缺失时回填 ProviderRegistry 默认值
+        base_url: p.base_url || registryEntry?.baseUrl || "",
+        api: p.api || registryEntry?.api || "",
         api_key_masked: p.api_key ? maskKey(p.api_key) : "",
         models: allModels,
         custom_models: customModels,

@@ -617,10 +617,10 @@
       "noModels": "还没有添加模型",
       "otherModelSection": "其他模型",
       "chatModel": "主模型",
-      "utilityModel": "小工具模型",
-      "utilityModelHint": "生成标题、轻量分类等简单任务，推荐用便宜的小模型",
+      "utilityModel": "工具模型",
       "utilityLargeModel": "大工具模型",
       "utilityLargeModelHint": "活动摘要、任务拆解等需要理解力的场景，留空则复用小工具模型",
+      "imageUnderstandingModel": "图片理解模型",
       "favorites": "收藏",
       "searchModel": "搜索模型...",
       "noFavorites": "点击 ☆ 收藏常用模型",
@@ -1207,6 +1207,9 @@
     "modelNotFound": "找不到模型: {id}",
     "noUtilityModel": "未配置 utility 模型，请在设置中添加",
     "noUtilityLargeModel": "未配置 utility_large 模型，请在设置中添加",
+    "imageToolNoImages": "当前会话没有可用图片。请先让用户上传图片后再调用 describe_images。",
+    "imageToolNoModel": "未配置可用的图片理解模型。请在设置中配置「图片理解模型」或「工具模型」。",
+    "imageToolVisionFailed": "图片理解失败: {msg}",
     "modelNoProvider": "{role} 模型 \"{model}\" 没有 provider 归属",
     "providerMissingApi": "provider \"{provider}\" 缺少 API 协议配置",
     "providerMissingCreds": "provider \"{provider}\" 缺少完整凭证",
@@ -1356,6 +1359,12 @@
       "timeoutDesc": "超时毫秒数（wait 时可选，默认 5000）",
       "stateDesc": "等待状态（wait 时可选）：domcontentloaded / idle",
       "pressEnterDesc": "输入后按回车（type 时可选）"
+    },
+    "describeImages": {
+      "label": "图片理解",
+      "description": "读取当前会话中用户上传的图片并输出文字描述。\n当用户问题依赖图片内容时调用；可指定 image_ids（从 1 开始）和 prompt（提取重点）。",
+      "imageIdsDesc": "要分析的图片编号数组（从 1 开始）。不传则分析全部图片",
+      "promptDesc": "你希望图片理解模型重点提取的内容"
     },
     "channel": {
       "label": "频道",
