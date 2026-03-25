@@ -6481,6 +6481,74 @@ body.resizing .jian-sidebar-inner {
     animation: dropdown-in 0.2s var(--ease-out);
 }
 
+/* 频道公告编辑浮层 */
+.channel-announcement-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 111;
+}
+
+.channel-announcement-overlay.visible {
+    display: flex;
+}
+
+.channel-announcement-card {
+    position: relative;
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    width: 520px;
+    max-width: 92vw;
+    box-shadow: 0 12px 48px var(--shadow);
+    animation: dropdown-in 0.2s var(--ease-out);
+}
+
+.channel-announcement-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0 28px var(--space-md) 0;
+    color: var(--text);
+}
+
+.channel-announcement-close-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s var(--ease-out);
+}
+
+.channel-announcement-close-btn:hover {
+    background: var(--overlay-light);
+    color: var(--text);
+}
+
+.channel-announcement-input {
+    min-height: 220px;
+    resize: vertical;
+    line-height: 1.55;
+}
+
+.channel-announcement-hint {
+    margin-top: var(--space-sm);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
 .agent-create-title {
     font-size: 0.95rem;
     font-weight: 500;
@@ -11901,6 +11969,31 @@ a.about-link:hover {
     text-transform: uppercase;
     letter-spacing: 0.06em;
     margin-bottom: var(--space-sm);
+}
+
+.channel-info-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+}
+
+.channel-announcement-open-btn {
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 3px 8px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-light);
+    cursor: pointer;
+    transition: all 0.15s var(--ease-out);
+    white-space: nowrap;
+}
+
+.channel-announcement-open-btn:hover {
+    filter: brightness(0.98);
+    transform: translateY(-1px);
 }
 
 .channel-info-name {

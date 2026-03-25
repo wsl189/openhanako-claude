@@ -44,7 +44,13 @@
     "disabled": "频道功能已关闭",
     "toggleLabel": "频道功能开关",
     "members": "成员",
-    "mentionAll": "全体成员"
+    "mentionAll": "全体成员",
+    "announcementBtn": "群公告",
+    "announcementTitle": "编辑群公告",
+    "announcementPlaceholder": "输入本频道群公告，关闭弹窗后自动保存",
+    "announcementHint": "保存后会在每个 Agent 每轮构建提示词时注入，并要求严格遵守。",
+    "announcementClose": "关闭并保存公告",
+    "announcementSaveFailed": "群公告保存失败"
   },
   "sidebar": {
     "title": "对话",

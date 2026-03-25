@@ -7,6 +7,7 @@
  * GET    /api/channels              — 列出所有频道 + 用户 bookmark + 未读数
  * POST   /api/channels              — 创建新频道
  * GET    /api/channels/:id          — 获取频道消息 + 成员列表
+ * POST   /api/channels/:id/announcement — 更新频道公告
  * POST   /api/channels/:id/messages — 用户发送群聊消息
  * POST   /api/channels/:id/new      — 开启新对话（重置上下文，保留历史）
  * POST   /api/channels/:id/reset    — 清空频道消息并重置
@@ -27,6 +28,8 @@ import {
   updateBookmark,
   addBookmarkEntry,
   getChannelMeta,
+  getChannelAnnouncementFromMeta,
+  setChannelAnnouncement,
   isContextResetMessage,
 } from "../../lib/channels/channel-store.js";
 import { collectMentionedAgentIds } from "../../lib/channels/channel-mentions.js";
@@ -99,6 +102,7 @@ export default async function channelsRoute(app, { engine, hub }) {
           id: channelId,
           name: meta.name || channelId,
           description: meta.description || "",
+          announcement: getChannelAnnouncementFromMeta(meta),
           members,
           messageCount: visibleMessages.length,
           newMessageCount,
@@ -255,9 +259,37 @@ export default async function channelsRoute(app, { engine, hub }) {
         id: meta.id || name,
         name: meta.name || name,
         description: meta.description || "",
+        announcement: getChannelAnnouncementFromMeta(meta),
         messages: apiMessages,
         members,
       };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // ── 更新频道公告 ──
+  app.post("/api/channels/:name/announcement", async (req, reply) => {
+    try {
+      const { name } = req.params;
+      const filePath = safeChannelPath(name);
+      if (!filePath) { reply.code(400); return { error: "Invalid channel id" }; }
+      if (!fs.existsSync(filePath)) {
+        reply.code(404);
+        return { error: "Channel not found" };
+      }
+
+      const { announcement } = req.body || {};
+      if (announcement !== undefined && typeof announcement !== "string") {
+        reply.code(400);
+        return { error: "announcement must be a string" };
+      }
+
+      const nextAnnouncement = String(announcement || "");
+      setChannelAnnouncement(filePath, nextAnnouncement);
+
+      return { ok: true, announcement: nextAnnouncement };
     } catch (err) {
       reply.code(500);
       return { error: err.message };

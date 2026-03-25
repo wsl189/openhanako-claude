@@ -139,6 +139,8 @@ export class HanaEngine {
       getPreferences: () => this._readPreferences(),
       buildTools: (cwd, customTools, opts) => this.buildTools(cwd, customTools, opts),
       getHomeCwd: () => this.homeCwd,
+      setSessionPendingImages: (sessionPath, images) => this.setSessionPendingImages(sessionPath, images),
+      clearSessionPendingImages: (sessionPath) => this.clearSessionPendingImages(sessionPath),
     });
 
     // Pi SDK resources（init 时填充）

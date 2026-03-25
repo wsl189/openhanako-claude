@@ -11,13 +11,16 @@ export interface ChannelSlice {
   channelHeaderName: string;
   channelHeaderMembersText: string;
   channelInfoName: string;
+  channelAnnouncement: string;
   channelIsDM: boolean;
   setChannels: (channels: Channel[]) => void;
   setCurrentChannel: (channel: string | null) => void;
   setChannelMessages: (messages: ChannelMessage[]) => void;
   setChannelTotalUnread: (count: number) => void;
+  setChannelAnnouncement: (announcement: string) => void;
   loadChannels: () => Promise<void>;
   openChannel: (channelId: string, isDM?: boolean) => Promise<void>;
+  saveChannelAnnouncement: (announcement: string) => Promise<boolean>;
   sendChannelMessage: (text: string) => Promise<void>;
   resetChannelContext: () => Promise<void>;
   clearChannelMessages: () => Promise<void>;
@@ -41,11 +44,13 @@ export const createChannelSlice = (
   channelHeaderName: '',
   channelHeaderMembersText: '',
   channelInfoName: '',
+  channelAnnouncement: '',
   channelIsDM: false,
   setChannels: (channels) => set({ channels }),
   setCurrentChannel: (channel) => set({ currentChannel: channel }),
   setChannelMessages: (messages) => set({ channelMessages: messages }),
   setChannelTotalUnread: (count) => set({ channelTotalUnread: count }),
+  setChannelAnnouncement: (announcement) => set({ channelAnnouncement: announcement }),
 
   loadChannels: async () => {
     const s = get!();
@@ -107,6 +112,7 @@ export const createChannelSlice = (
           channelHeaderMembersText: '',
           channelIsDM: true,
           channelInfoName: data.peerName || peerId,
+          channelAnnouncement: '',
         });
       } else {
         const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}`);
@@ -121,6 +127,7 @@ export const createChannelSlice = (
           channelHeaderMembersText: `${displayMembers.length} ${t('channel.membersCount')}`,
           channelIsDM: false,
           channelInfoName: data.name || channelId,
+          channelAnnouncement: String(data.announcement || ''),
         });
 
         // Mark as read
@@ -144,6 +151,25 @@ export const createChannelSlice = (
       }
     } catch (err) {
       console.error('[channels] open failed:', err);
+    }
+  },
+
+  saveChannelAnnouncement: async (announcement: string) => {
+    const s = get!();
+    if (!s.currentChannel || s.channelIsDM) return false;
+    try {
+      const res = await hanaFetch(`/api/channels/${encodeURIComponent(s.currentChannel)}/announcement`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ announcement }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      set({ channelAnnouncement: String(data.announcement || '') });
+      return true;
+    } catch (err) {
+      console.error('[channels] save announcement failed:', err);
+      return false;
     }
   },
 
@@ -268,6 +294,7 @@ export const createChannelSlice = (
             channelMessages: [],
             channelHeaderName: '',
             channelHeaderMembersText: '',
+            channelAnnouncement: '',
             channelIsDM: false,
           });
         }

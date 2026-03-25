@@ -35,6 +35,7 @@ import { initEditorEvents } from './stores/artifact-actions';
 import { WindowControls } from './components/WindowControls';
 import { ToastContainer } from './components/ToastContainer';
 import { initTheme, initDragPrevention } from './bootstrap';
+import { useI18n } from './hooks/use-i18n';
 
 declare const i18n: {
   locale: string;
@@ -294,13 +295,59 @@ function App() {
   useSidebarResize();
   // 订阅 locale 变化，驱动整棵树重渲染
   useStore(s => s.locale);
+  const { t } = useI18n();
   const serverPort = useStore(s => s.serverPort);
   const currentSessionPath = useStore(s => s.currentSessionPath);
   const sidebarOpen = useStore(s => s.sidebarOpen);
   const jianOpen = useStore(s => s.jianOpen);
   const currentTab = useStore(s => s.currentTab);
+  const currentChannel = useStore(s => s.currentChannel);
+  const channelIsDM = useStore(s => s.channelIsDM);
+  const channelAnnouncement = useStore(s => s.channelAnnouncement);
+  const saveChannelAnnouncement = useStore(s => s.saveChannelAnnouncement);
+  const addToast = useStore(s => s.addToast);
   const { floatCard, show: showFloat, scheduleHide: scheduleFloatHide, cancelHide: cancelFloatHide, hide: hideFloat } = useFloatCard();
   const automationCountReqRef = useRef(0);
+  const [announcementModalOpen, setAnnouncementModalOpen] = useState(false);
+  const [announcementDraft, setAnnouncementDraft] = useState('');
+  const [announcementSaving, setAnnouncementSaving] = useState(false);
+
+  const openAnnouncementModal = useCallback(() => {
+    if (!currentChannel || channelIsDM) return;
+    setAnnouncementDraft(channelAnnouncement || '');
+    setAnnouncementModalOpen(true);
+  }, [channelAnnouncement, channelIsDM, currentChannel]);
+
+  const closeAnnouncementModal = useCallback(async () => {
+    if (announcementSaving) return;
+    setAnnouncementModalOpen(false);
+    if (!currentChannel || channelIsDM) return;
+    if (announcementDraft === channelAnnouncement) return;
+
+    setAnnouncementSaving(true);
+    const ok = await saveChannelAnnouncement(announcementDraft);
+    setAnnouncementSaving(false);
+
+    if (!ok) {
+      addToast(t('channel.announcementSaveFailed'), 'error', 3000);
+    }
+  }, [
+    addToast,
+    announcementDraft,
+    announcementSaving,
+    channelAnnouncement,
+    channelIsDM,
+    currentChannel,
+    saveChannelAnnouncement,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (!announcementModalOpen) return;
+    if (!currentChannel || channelIsDM) {
+      setAnnouncementModalOpen(false);
+    }
+  }, [announcementModalOpen, channelIsDM, currentChannel]);
 
   useEffect(() => {
     init().catch((err: unknown) => {
@@ -513,7 +560,18 @@ function App() {
             <div className="jian-channel-content hidden" id="jianChannelContent">
               <div className="jian-card">
                 <div className="channel-info-section">
-                  <div className="channel-info-label">{t('channel.info')}</div>
+                  <div className="channel-info-label-row">
+                    <div className="channel-info-label">{t('channel.info')}</div>
+                    {!channelIsDM && currentChannel && (
+                      <button
+                        className="channel-announcement-open-btn"
+                        type="button"
+                        onClick={openAnnouncementModal}
+                      >
+                        {t('channel.announcementBtn')}
+                      </button>
+                    )}
+                  </div>
                   <div className="channel-info-name" id="channelInfoName"></div>
                 </div>
                 <div className="channel-info-section">
@@ -534,6 +592,34 @@ function App() {
       {/* Channel create overlay */}
       <div className="agent-create-overlay" id="channelCreateOverlay">
         <ChannelCreate />
+      </div>
+
+      <div
+        className={`channel-announcement-overlay${announcementModalOpen ? ' visible' : ''}`}
+        onClick={(e) => { if (e.target === e.currentTarget) void closeAnnouncementModal(); }}
+      >
+        <div className="channel-announcement-card">
+          <button
+            className="channel-announcement-close-btn"
+            type="button"
+            onClick={() => void closeAnnouncementModal()}
+            aria-label={t('channel.announcementClose')}
+            title={t('channel.announcementClose')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+          <h3 className="channel-announcement-title">{t('channel.announcementTitle')}</h3>
+          <textarea
+            className="settings-input channel-announcement-input"
+            value={announcementDraft}
+            onChange={(e) => setAnnouncementDraft(e.target.value)}
+            placeholder={t('channel.announcementPlaceholder')}
+          />
+          <div className="channel-announcement-hint">{t('channel.announcementHint')}</div>
+        </div>
       </div>
 
       {/* Float preview card */}

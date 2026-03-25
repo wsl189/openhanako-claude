@@ -16,7 +16,12 @@
 import fs from "fs";
 import path from "path";
 import { createChannelTicker } from "../lib/channels/channel-ticker.js";
-import { appendMessage, formatMessagesForLLM, getChannelMeta } from "../lib/channels/channel-store.js";
+import {
+  appendMessage,
+  formatMessagesForLLM,
+  getChannelMeta,
+  getChannelAnnouncementFromMeta,
+} from "../lib/channels/channel-store.js";
 import { collectMentionedAgentIds } from "../lib/channels/channel-mentions.js";
 import { loadConfig } from "../lib/memory/config-loader.js";
 import { compileToday, assemble } from "../lib/memory/compile.js";
@@ -143,6 +148,7 @@ export class ChannelRouter {
     const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
     const meta = getChannelMeta(channelFile);
     const members = Array.isArray(meta.members) ? meta.members : [];
+    const announcement = String(getChannelAnnouncementFromMeta(meta) || "").trim();
     const allAgents = engine.listAgents?.() || [];
     const memberLabels = members.map((id) => {
       const found = allAgents.find((a) => a.id === id);
@@ -151,7 +157,7 @@ export class ChannelRouter {
     });
 
     if (isZh) {
-      return [
+      const anchor = [
         "# 频道身份锚点",
         `- 你是助手「${agentName}」(agentId: ${agentId})。`,
         `- 人类用户是「${userName}」，用户不是任何 agent。`,
@@ -166,9 +172,22 @@ export class ChannelRouter {
         "- 如果你想让其他成员处理任务，请直接在消息里 @该成员并说清任务，不要说“我没办法让他回复”。",
         "- 你只代表自己发言，不要把自己当作用户，也不要把其他 agent 当作用户。",
       ].filter(Boolean).join("\n");
+
+      const announcementBlock = announcement
+        ? [
+            "",
+            "# 群公告（必须遵守）",
+            announcement,
+            "",
+            "- 你必须严格遵守以上群公告。",
+            "- 若群公告与一般偏好冲突，以群公告为准；若与系统或安全硬约束冲突，以系统或安全约束为准。",
+          ].join("\n")
+        : "";
+
+      return anchor + announcementBlock;
     }
 
-    return [
+    const anchor = [
       "# Channel Identity Anchor",
       `- You are assistant "${agentName}" (agentId: ${agentId}).`,
       `- The human user is "${userName}". The user is not any agent.`,
@@ -183,6 +202,19 @@ export class ChannelRouter {
       "- If you need another member to act, directly @mention that member with a concrete task. Do not claim you cannot trigger them.",
       "- Speak only as yourself. Do not treat yourself as the user, and do not treat other agents as the user.",
     ].filter(Boolean).join("\n");
+
+    const announcementBlock = announcement
+      ? [
+          "",
+          "# Channel Announcement (Must Follow)",
+          announcement,
+          "",
+          "- You must strictly follow the channel announcement above.",
+          "- If it conflicts with general preferences, prioritize the announcement. If it conflicts with system/safety hard constraints, prioritize system/safety constraints.",
+        ].join("\n")
+      : "";
+
+    return anchor + announcementBlock;
   }
 
   // ──────────── Triage + Reply ────────────
@@ -406,6 +438,7 @@ export class ChannelRouter {
         signal,
         sessionSuffix: "channel-temp",
         readOnly: true,
+        extractInlineImages: true,
         systemAppend: sessionRoleAppend,
       },
     );
@@ -434,6 +467,7 @@ export class ChannelRouter {
             signal,
             sessionSuffix: "channel-temp",
             readOnly: true,
+            extractInlineImages: true,
             systemAppend: sessionRoleAppend,
           },
         );

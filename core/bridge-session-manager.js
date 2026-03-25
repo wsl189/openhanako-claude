@@ -30,6 +30,8 @@ export class BridgeSessionManager {
    * @param {() => object} deps.getPreferences
    * @param {(cwd: string, customTools?, opts?) => {tools: any[], customTools: any[]}} deps.buildTools
    * @param {() => string} deps.getHomeCwd
+   * @param {(sessionPath: string, images: Array) => void} [deps.setSessionPendingImages]
+   * @param {(sessionPath: string) => void} [deps.clearSessionPendingImages]
    */
   constructor(deps) {
     this._deps = deps;
@@ -253,6 +255,15 @@ export class BridgeSessionManager {
 
       this._activeSessions.set(sessionKey, session);
 
+      const sessionPath = session.sessionManager?.getSessionFile?.();
+      if (sessionPath) {
+        if (opts.images?.length) {
+          this._deps.setSessionPendingImages?.(sessionPath, opts.images);
+        } else {
+          this._deps.clearSessionPendingImages?.(sessionPath);
+        }
+      }
+
       // 捕获文本输出
       let capturedText = "";
       const unsub = session.subscribe((event) => {
@@ -275,7 +286,6 @@ export class BridgeSessionManager {
       }
 
       // 更新索引 + 元数据
-      const sessionPath = session.sessionManager?.getSessionFile?.();
       if (sessionPath) {
         const fileName = `${subDir}/${path.basename(sessionPath)}`;
         if (!existingFile) {

@@ -44,7 +44,13 @@
     "toggleLabel": "Channel toggle",
     "members": "Members",
     "createIntroOptional": "Description",
-    "mentionAll": "All members"
+    "mentionAll": "All members",
+    "announcementBtn": "Announcement",
+    "announcementTitle": "Edit Channel Announcement",
+    "announcementPlaceholder": "Enter the channel announcement. It auto-saves when this dialog closes.",
+    "announcementHint": "After saving, it is injected into every agent round prompt and must be followed.",
+    "announcementClose": "Close and save announcement",
+    "announcementSaveFailed": "Failed to save announcement"
   },
   "sidebar": {
     "title": "Chats",
