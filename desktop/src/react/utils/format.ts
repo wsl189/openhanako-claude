@@ -4,6 +4,7 @@
 
 export function toSlash(s: string): string { return s.replace(/\\/g, '/'); }
 export function baseName(s: string): string { return s.replace(/\\/g, '/').split('/').pop() || s; }
+export function isHttpUrlPath(s: string): boolean { return /^https?:\/\//i.test((s || '').trim()); }
 
 export function escapeHtml(str: string): string {
   const div = document.createElement('div');

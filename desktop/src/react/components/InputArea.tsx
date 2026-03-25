@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useStore } from '../stores';
-import { isImageFile } from '../utils/format';
+import { isImageFile, isHttpUrlPath } from '../utils/format';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { ensureSession, loadSessions } from '../stores/session-actions';
@@ -334,7 +334,8 @@ function InputAreaInner() {
       }
     }
 
-    const hasFiles = attachedFiles.length > 0;
+    const safeAttachedFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path));
+    const hasFiles = safeAttachedFiles.length > 0;
     if ((!text && !hasFiles && !docContextAttached) || !connected) return;
     if (isStreaming) return; // streaming 时由 handleSteer 处理
     if (sending) return;
@@ -348,12 +349,12 @@ function InputAreaInner() {
       }
 
       // 分离图片附件（用于视觉输入）
-      const imageFiles = hasFiles ? attachedFiles.filter(f => !f.isDirectory && isImageFile(f.name)) : [];
+      const imageFiles = hasFiles ? safeAttachedFiles.filter(f => !f.isDirectory && isImageFile(f.name)) : [];
 
       let finalText = text;
       if (hasFiles) {
         // 无论是否图片，都把原始路径写入文本，避免模型只看到远端视觉 URL 而拿不到本地路径。
-        const fileBlock = attachedFiles
+        const fileBlock = safeAttachedFiles
           .map(f => f.isDirectory ? `[目录] ${f.path}` : `[附件] ${f.path}`)
           .join('\n');
         finalText = text ? `${text}\n\n${fileBlock}` : fileBlock;
@@ -398,7 +399,7 @@ function InputAreaInner() {
         setDocContextAttached(false);
       }
 
-      const filesToRender = hasFiles ? [...attachedFiles] : null;
+      const filesToRender = hasFiles ? [...safeAttachedFiles] : null;
       // 文档上下文渲染为附件卡片
       const allFiles = filesToRender ? [...filesToRender] : [];
       if (docForRender) {

@@ -10,6 +10,7 @@ import { useStore } from '../stores';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { renderMarkdown } from '../utils/markdown';
+import { isHttpUrlPath } from '../utils/format';
 import { toggleSidebar } from './SidebarLayout';
 import { toggleJianSidebar } from '../stores/desk-actions';
 import { ContextMenu } from './ContextMenu';
@@ -842,7 +843,8 @@ export function ChannelInput() {
 
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();
-    const hasFiles = attachedFiles.length > 0;
+    const safeAttachedFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path));
+    const hasFiles = safeAttachedFiles.length > 0;
     if (sending || (!text && !hasFiles)) return;
 
     const cmd = text.split(/\s+/)[0]?.toLowerCase();
@@ -899,7 +901,7 @@ export function ChannelInput() {
 
     let finalText = text;
     if (hasFiles) {
-      const fileBlock = attachedFiles
+      const fileBlock = safeAttachedFiles
         .map((f) => f.isDirectory ? `[目录] ${f.path}` : `[附件] ${f.path}`)
         .join('\n');
       finalText = text ? `${text}\n\n${fileBlock}` : fileBlock;

@@ -29,7 +29,7 @@ import { applyAgentIdentity, loadAgents, loadAvatars } from './stores/agent-acti
 import { createNewSession, loadSessions } from './stores/session-actions';
 import { connectWebSocket } from './services/websocket';
 import { setStatus, loadModels } from './utils/ui-helpers';
-import { toSlash, baseName } from './utils/format';
+import { toSlash, baseName, isHttpUrlPath } from './utils/format';
 import { initJian, toggleJianSidebar } from './stores/desk-actions';
 import { initEditorEvents } from './stores/artifact-actions';
 import { WindowControls } from './components/WindowControls';
@@ -240,7 +240,7 @@ async function handleDrop(e: React.DragEvent): Promise<void> {
   const fileMetaMap = new Map<string, { name: string; isDirectoryGuess: boolean }>();
   for (const file of Array.from(files)) {
     const filePath = window.platform?.getFilePath?.(file);
-    if (filePath) {
+    if (filePath && !isHttpUrlPath(filePath)) {
       srcPaths.push(filePath);
       fileMetaMap.set(filePath, {
         name: file.name,
