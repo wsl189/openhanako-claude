@@ -5,6 +5,7 @@
  */
 
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { debugLog } from "../../lib/debug-log.js";
 import {
@@ -693,21 +694,37 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
 
   /** 发送媒体到 bridge 平台（桌面端推送文件） */
   app.post("/api/bridge/send-media", async (req, reply) => {
-    const { platform, chatId, filePath } = req.body || {};
-    if (!platform || !chatId || !filePath) {
+    const { platform, chatId, filePath, path: pathArg } = req.body || {};
+    const targetPath = typeof filePath === "string" && filePath.trim()
+      ? filePath
+      : (typeof pathArg === "string" ? pathArg : "");
+    if (!platform || !chatId || !targetPath) {
       reply.code(400);
       return { error: "platform, chatId, filePath required" };
     }
 
     const hanaHome = path.resolve(engine.hanakoHome);
+    const homeFolder = typeof engine.getHomeFolder === "function" ? engine.getHomeFolder() : null;
     const deskHome = engine.agent?.deskManager?.homePath;
-    const rawRoots = [hanaHome, deskHome ? path.resolve(deskHome) : null].filter(Boolean);
+    const userHome = os.homedir();
+    const rawRoots = [
+      hanaHome,
+      homeFolder ? path.resolve(homeFolder) : null,
+      engine.homeCwd ? path.resolve(engine.homeCwd) : null,
+      engine.cwd ? path.resolve(engine.cwd) : null,
+      engine.deskCwd ? path.resolve(engine.deskCwd) : null,
+      deskHome ? path.resolve(deskHome) : null,
+      userHome ? path.join(userHome, "Documents") : null,
+      userHome ? path.join(userHome, "Desktop") : null,
+      userHome ? path.join(userHome, "Downloads") : null,
+      userHome ? path.join(userHome, "Pictures") : null,
+    ].filter(Boolean);
     const allowedRoots = rawRoots.map((root) => {
       try { return fs.realpathSync(root); }
       catch { return root; }
     });
 
-    const resolved = path.resolve(filePath);
+    const resolved = path.resolve(targetPath);
     if (!fs.existsSync(resolved)) {
       reply.code(404);
       return { error: "file not found" };

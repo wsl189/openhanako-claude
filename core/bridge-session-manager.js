@@ -209,7 +209,7 @@ export class BridgeSessionManager {
       }
 
       // Bridge 媒体协议：让模型通过 MEDIA:<url|file://|绝对路径> 返回媒体项。
-      const mediaInstruction = "当你需要发送媒体文件（图片、视频、音频、文件）时，在回复中单独一行写 MEDIA:<url>，例如：\nMEDIA:https://example.com/photo.jpg\n不要把 MEDIA: 写在代码块里。一行一个。";
+      const mediaInstruction = "当你需要发送媒体文件（图片、视频、音频、文件）时，在回复中单独一行写 MEDIA:<source>。\nsource 只能是 http(s) URL、file:// 绝对路径、或本地绝对路径。\n路径里如果有空格，请用 <...> 包裹，例如：\nMEDIA:https://example.com/photo.jpg\nMEDIA:</Users/me/Documents/volatility trading/book 2.pdf>\n不要把 MEDIA: 写在代码块里。一行一个。";
 
       // 外部会话统一走完整 agent 能力（记忆 + 工具）
       const prefs = this._deps.getPreferences();
