@@ -614,48 +614,52 @@ function BridgeDot() {
 }
 
 function DropText() {
-  const targetName = useStore((s) => {
+  const computeDropTarget = (s: any) => {
     const findAgentName = (agentId: string | null | undefined): string | null => {
       if (!agentId) return null;
-      return s.agents.find((a) => a.id === agentId)?.name || null;
+      return s.agents.find((a: any) => a.id === agentId)?.name || null;
     };
 
     if (s.currentTab === 'channels') {
-      const current = s.currentChannel ? s.channels.find((c) => c.id === s.currentChannel) : null;
+      const current = s.currentChannel ? s.channels.find((c: any) => c.id === s.currentChannel) : null;
       if (current) {
         if (current.isDM) {
-          return current.peerName || current.name || current.peerId || s.channelInfoName || t('channel.tab');
+          return { targetName: current.peerName || current.name || current.peerId || s.channelInfoName || t('channel.tab'), isGroupChannel: false };
         }
-        const base = current.name || s.channelInfoName || current.id;
-        return base.startsWith('#') ? base : `#${base}`;
+        return { targetName: current.name || s.channelInfoName || current.id, isGroupChannel: true };
       }
       if (s.channelInfoName) {
-        if (s.channelIsDM) return s.channelInfoName;
-        return s.channelInfoName.startsWith('#') ? s.channelInfoName : `#${s.channelInfoName}`;
+        return { targetName: s.channelInfoName, isGroupChannel: !s.channelIsDM };
       }
-      return t('channel.tab');
+      return { targetName: t('channel.tab'), isGroupChannel: false };
     }
 
     const selectedAgentName = findAgentName(s.selectedAgentId);
-    if (selectedAgentName) return selectedAgentName;
+    if (selectedAgentName) return { targetName: selectedAgentName, isGroupChannel: false };
 
-    if (s.sessionAgent?.name) return s.sessionAgent.name;
+    if (s.sessionAgent?.name) return { targetName: s.sessionAgent.name, isGroupChannel: false };
 
     const currentSession = s.currentSessionPath
-      ? s.sessions.find((it) => it.path === s.currentSessionPath)
+      ? s.sessions.find((it: any) => it.path === s.currentSessionPath)
       : null;
-    if (currentSession?.agentName) return currentSession.agentName;
+    if (currentSession?.agentName) return { targetName: currentSession.agentName, isGroupChannel: false };
 
     const currentSessionAgentName = findAgentName(currentSession?.agentId || null);
-    if (currentSessionAgentName) return currentSessionAgentName;
+    if (currentSessionAgentName) return { targetName: currentSessionAgentName, isGroupChannel: false };
 
     const currentAgentName = findAgentName(s.currentAgentId);
-    if (currentAgentName) return currentAgentName;
+    if (currentAgentName) return { targetName: currentAgentName, isGroupChannel: false };
 
-    return s.agentName || 'Hanako';
-  });
+    return { targetName: s.agentName || 'Hanako', isGroupChannel: false };
+  };
+  const targetName = useStore((s) => computeDropTarget(s).targetName);
+  const isGroupChannel = useStore((s) => computeDropTarget(s).isGroupChannel);
 
-  return <span className="drop-text">{t('drop.hint', { name: targetName })}</span>;
+  return (
+    <span className="drop-text">
+      {isGroupChannel ? t('drop.hintGroup', { name: targetName }) : t('drop.hint', { name: targetName })}
+    </span>
+  );
 }
 
 function ConnectionStatus() {

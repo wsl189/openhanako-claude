@@ -1854,6 +1854,14 @@ html[data-platform="linux"] .tb-toggle-right {
     line-height: 1;
 }
 
+.user-avatar-default {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #d9d9d6;
+    color: #4b4d52;
+}
+
 .avatar-name {
     font-size: 0.75rem;
     color: var(--text-muted);
@@ -11313,6 +11321,24 @@ a.about-link:hover {
     font-size: 0.75rem;
     flex-shrink: 0;
     color: var(--text-muted);
+}
+
+.channel-item-icon-btn {
+    border: none;
+    cursor: pointer;
+    padding: 0;
+}
+
+.channel-item-icon-btn:hover {
+    background: color-mix(in srgb, var(--overlay-light) 80%, var(--accent) 20%);
+}
+
+.channel-item-icon-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
 }
 
 /* ── DM 双头像 + 链接符号 ── */

@@ -117,7 +117,7 @@ export const createChannelSlice = (
         set({
           channelMessages: data.messages || [],
           channelMembers: members,
-          channelHeaderName: `# ${data.name || channelId}`,
+          channelHeaderName: data.name || channelId,
           channelHeaderMembersText: `${displayMembers.length} ${t('channel.membersCount')}`,
           channelIsDM: false,
           channelInfoName: data.name || channelId,

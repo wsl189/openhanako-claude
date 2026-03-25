@@ -160,7 +160,8 @@
     "agentSelector": "Choose agent"
   },
   "drop": {
-    "hint": "Drop to send files to {name}"
+    "hint": "Drop to send files to {name}",
+    "hintGroup": "Drop to send file paths to group {name}"
   },
   "attach": {
     "folder": "Folder",

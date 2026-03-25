@@ -496,6 +496,11 @@ interface ChannelItemProps {
 
 function ChannelItem({ channel, isDM, isActive, agents, userName, userAvatarUrl, currentAgentId, onOpen }: ChannelItemProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [avatarError, setAvatarError] = useState(false);
+  const addToast = useStore((s) => s.addToast);
+  const loadChannels = useStore((s) => s.loadChannels);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const t = window.t ?? ((k: string) => k);
 
   const handleClick = useCallback(() => {
     onOpen(channel.id, channel.isDM);
@@ -512,7 +517,54 @@ function ChannelItem({ channel, isDM, isActive, agents, userName, userAvatarUrl,
     setCtxMenu(null);
   }, []);
 
+  const uploadGroupAvatar = useCallback(async (file: File) => {
+    if (!file) return;
+    const type = String(file.type || "").toLowerCase();
+    if (!["image/png", "image/jpeg", "image/webp"].includes(type)) {
+      addToast(t('error.unsupportedImageFormat', { mime: type || 'unknown' }), 'error', 2500);
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('read file failed'));
+      reader.readAsDataURL(file);
+    });
+
+    const res = await hanaFetch(`/api/channels/${encodeURIComponent(channel.id)}/avatar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: dataUrl }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.error) {
+      throw new Error(data?.error || `HTTP ${res.status}`);
+    }
+    setAvatarError(false);
+    refreshAvatarTs();
+    await loadChannels();
+    addToast(t('settings.saved'), 'success', 1800);
+  }, [addToast, channel.id, loadChannels, t]);
+
+  const onGroupIconClick = useCallback((e: React.MouseEvent) => {
+    if (isDM) return;
+    e.stopPropagation();
+    fileInputRef.current?.click();
+  }, [isDM]);
+
+  const onGroupIconFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+    try {
+      await uploadGroupAvatar(file);
+    } catch (err: any) {
+      addToast(err?.message || t('settings.saveFailed'), 'error', 2500);
+    }
+  }, [addToast, t, uploadGroupAvatar]);
+
   const selfInfo = resolveChannelMember(currentAgentId || '', userName, userAvatarUrl, agents, currentAgentId);
+  const groupAvatarUrl = !isDM ? hanaUrl(`/api/channels/${encodeURIComponent(channel.id)}/avatar?t=${_avatarTs}`) : null;
 
   const ctxMenuItems: ContextMenuItem[] = ctxMenu ? [
     {
@@ -532,7 +584,27 @@ function ChannelItem({ channel, isDM, isActive, agents, userName, userAvatarUrl,
       {isDM ? (
         <DmIcon channel={channel} selfInfo={selfInfo} agents={agents} userName={userName} userAvatarUrl={userAvatarUrl} currentAgentId={currentAgentId} />
       ) : (
-        <div className="channel-item-icon">#</div>
+        <>
+          <button className="channel-item-icon channel-item-icon-btn" onClick={onGroupIconClick} title={t('settings.me.changeAvatar')}>
+            {groupAvatarUrl && !avatarError ? (
+              <img
+                className="channel-item-icon-img"
+                src={groupAvatarUrl}
+                alt={channel.name || channel.id}
+                onError={() => setAvatarError(true)}
+              />
+            ) : (
+              <span>{(channel.name || channel.id || '?').charAt(0).toUpperCase()}</span>
+            )}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            style={{ display: 'none' }}
+            onChange={onGroupIconFileChange}
+          />
+        </>
       )}
       <div className="channel-item-body">
         <div className="channel-item-name">

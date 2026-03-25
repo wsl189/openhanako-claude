@@ -226,7 +226,8 @@
     }
   },
   "drop": {
-    "hint": "松手发送文件路径给 {name}"
+    "hint": "松手发送文件路径给 {name}",
+    "hintGroup": "发送文件路径给群 {name}"
   },
   "attach": {
     "folder": "文件夹",
