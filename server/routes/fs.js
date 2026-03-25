@@ -8,11 +8,26 @@
  */
 
 import fs from "fs";
+import os from "os";
 import path from "path";
+
+function toRealPath(p) {
+  if (!p) return null;
+  try {
+    return fs.realpathSync(path.resolve(p));
+  } catch {
+    try {
+      return path.resolve(p);
+    } catch {
+      return null;
+    }
+  }
+}
 
 /** 安全路径校验：resolved 必须在 allowedRoots 之一内部 */
 function isSafePath(filePath, allowedRoots) {
-  const resolved = path.resolve(filePath);
+  const resolved = toRealPath(filePath);
+  if (!resolved) return false;
   return allowedRoots.some(
     (root) => resolved === root || resolved.startsWith(root + path.sep)
   );
@@ -41,20 +56,21 @@ export default async function fsRoute(app, { engine }) {
     // 2) 书桌 home（配置）
     // 3) 当前 desk 工作目录（会话 cwd）
     // 4) 当前会话 cwd（与 deskCwd 基本一致，但保守兜底）
+    // 5) 用户 Home（与 /api/desk/files 的目录覆盖规则保持一致）
     const candidates = [
       hanakoHome,
       engine.getHomeFolder?.(),
+      engine.homeCwd,
       engine.deskCwd,
       engine.cwd,
       engine.agent?.deskManager?.homePath,
+      os.homedir(),
     ].filter(Boolean);
 
     const roots = [];
     for (const p of candidates) {
-      try {
-        const resolved = path.resolve(p);
-        if (!roots.includes(resolved)) roots.push(resolved);
-      } catch {}
+      const resolved = toRealPath(p);
+      if (resolved && !roots.includes(resolved)) roots.push(resolved);
     }
     return roots;
   }
