@@ -9310,11 +9310,14 @@ a.about-link:hover {
 
 .pv-model-dropdown-panel {
     /* position/left/bottom/width/zIndex set by JS */
+    display: flex;
+    flex-direction: column;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     box-shadow: 0 4px 16px var(--shadow);
     overflow: hidden;
+    -webkit-app-region: no-drag;
 }
 
 .pv-model-dropdown-search {
@@ -9330,7 +9333,8 @@ a.about-link:hover {
 }
 
 .pv-model-dropdown-list {
-    max-height: 240px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 4px 0;
 }

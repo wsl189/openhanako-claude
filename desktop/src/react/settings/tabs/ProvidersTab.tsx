@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useSettingsStore, type ProviderSummary } from '../store';
 import { hanaFetch } from '../api';
 import {
@@ -759,20 +760,44 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
 
-  // 计算面板位置（fixed，从触发器上方展开）
-  useEffect(() => {
-    if (!dropdownOpen || !triggerRef.current) return;
+  const computePanelStyle = useCallback(() => {
+    if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const w = rect.width + 80;
-    const left = Math.min(rect.left, window.innerWidth - w - 8);
+    const viewportPadding = 8;
+    const panelWidth = Math.min(
+      Math.max(rect.width + 80, 260),
+      Math.max(260, window.innerWidth - viewportPadding * 2),
+    );
+    const left = Math.min(
+      Math.max(viewportPadding, rect.left),
+      Math.max(viewportPadding, window.innerWidth - panelWidth - viewportPadding),
+    );
+
+    const topSpace = rect.top - viewportPadding;
+    const bottomSpace = window.innerHeight - rect.bottom - viewportPadding;
+    const preferOpenAbove = topSpace > bottomSpace && topSpace > 120;
+    const availableSpace = Math.max(0, (preferOpenAbove ? topSpace : bottomSpace) - 4);
+
     setPanelStyle({
       position: 'fixed',
-      left: Math.max(8, left),
-      width: w,
-      bottom: window.innerHeight - rect.top + 4,
+      left,
+      width: panelWidth,
+      maxHeight: Math.min(420, availableSpace),
+      ...(preferOpenAbove
+        ? { bottom: window.innerHeight - rect.top + 4 }
+        : { top: rect.bottom + 4 }),
       zIndex: 9999,
     });
-  }, [dropdownOpen]);
+  }, []);
+
+  // 打开时计算位置，并在窗口变化时重算
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    computePanelStyle();
+    const handleResize = () => computePanelStyle();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [dropdownOpen, computePanelStyle]);
 
   // 点击外部关闭
   useEffect(() => {
@@ -785,6 +810,14 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
+  }, [dropdownOpen]);
+
+  // 滚动时关闭，避免 fixed 面板与触发器位置脱轨
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const close = () => setDropdownOpen(false);
+    window.addEventListener('scroll', close, true);
+    return () => window.removeEventListener('scroll', close, true);
   }, [dropdownOpen]);
 
   return (
@@ -810,67 +843,68 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
         </button>
       </div>
       {fetchHint && <div className={`pv-fetch-hint ${fetchHint.ok ? 'ok' : 'fail'}`}>{fetchHint.msg}</div>}
-      {dropdownOpen && (
-          <div className="pv-model-dropdown-panel" ref={panelRef} style={panelStyle}>
-            <input
-              className="pv-model-dropdown-search"
-              type="text"
-              placeholder={t('settings.api.searchModel')}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-            />
-            <div className="pv-model-dropdown-list">
-              {filtered.map(mid => {
-                const isFav = pendingFavorites.has(mid);
-                const meta = lookupModelMeta(mid) || {};
-                const isCustom = customModelSet.has(mid);
-                return (
-                  <div key={mid} className={`pv-model-dropdown-option${isFav ? ' added' : ''}`}>
+      {dropdownOpen && createPortal(
+        <div className="pv-model-dropdown-panel" ref={panelRef} style={panelStyle}>
+          <input
+            className="pv-model-dropdown-search"
+            type="text"
+            placeholder={t('settings.api.searchModel')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            autoFocus
+          />
+          <div className="pv-model-dropdown-list">
+            {filtered.map(mid => {
+              const isFav = pendingFavorites.has(mid);
+              const meta = lookupModelMeta(mid) || {};
+              const isCustom = customModelSet.has(mid);
+              return (
+                <div key={mid} className={`pv-model-dropdown-option${isFav ? ' added' : ''}`}>
+                  <button
+                    className="pv-model-dropdown-option-main"
+                    onClick={() => { if (!isFav) { toggleFavorite(mid); } }}
+                  >
+                    <span className="pv-model-dropdown-option-name">{mid}</span>
+                    {isFav && <span className="pv-model-dropdown-option-check">✓</span>}
+                    {meta.context && <span className="pv-model-ctx">{formatContext(meta.context)}</span>}
+                  </button>
+                  {isCustom && (
                     <button
-                      className="pv-model-dropdown-option-main"
-                      onClick={() => { if (!isFav) { toggleFavorite(mid); } }}
+                      className="pv-model-dropdown-option-remove"
+                      title={t('settings.api.removeModel')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeCustomModel(mid);
+                      }}
                     >
-                      <span className="pv-model-dropdown-option-name">{mid}</span>
-                      {isFav && <span className="pv-model-dropdown-option-check">✓</span>}
-                      {meta.context && <span className="pv-model-ctx">{formatContext(meta.context)}</span>}
+                      ×
                     </button>
-                    {isCustom && (
-                      <button
-                        className="pv-model-dropdown-option-remove"
-                        title={t('settings.api.removeModel')}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeCustomModel(mid);
-                        }}
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-              {filtered.length === 0 && (
-                <div className="pv-model-dropdown-empty">{t('settings.providers.noModels')}</div>
-              )}
-            </div>
-            {/* 自定义模型输入 */}
-            <div className="pv-model-dropdown-custom">
-              <input
-                className="pv-model-dropdown-custom-input"
-                type="text"
-                placeholder={t('settings.oauth.customModelPlaceholder')}
-                value={customInput}
-                onChange={(e) => setCustomInput(e.target.value)}
-                onKeyDown={(e) => {
-                  const composing = (e.nativeEvent as any)?.isComposing || (e as any).isComposing || (e as any).keyCode === 229;
-                  if (!composing && e.key === 'Enter') addCustomModel();
-                }}
-              />
-              <button className="pv-model-add-btn" onClick={addCustomModel}>↵</button>
-            </div>
+                  )}
+                </div>
+              );
+            })}
+            {filtered.length === 0 && (
+              <div className="pv-model-dropdown-empty">{t('settings.providers.noModels')}</div>
+            )}
           </div>
-        )}
+          {/* 自定义模型输入 */}
+          <div className="pv-model-dropdown-custom">
+            <input
+              className="pv-model-dropdown-custom-input"
+              type="text"
+              placeholder={t('settings.oauth.customModelPlaceholder')}
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              onKeyDown={(e) => {
+                const composing = (e.nativeEvent as any)?.isComposing || (e as any).isComposing || (e as any).keyCode === 229;
+                if (!composing && e.key === 'Enter') addCustomModel();
+              }}
+            />
+            <button className="pv-model-add-btn" onClick={addCustomModel}>↵</button>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

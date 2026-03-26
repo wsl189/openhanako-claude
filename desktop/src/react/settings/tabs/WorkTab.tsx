@@ -6,13 +6,13 @@ import { Toggle } from '../widgets/Toggle';
 export function WorkTab() {
   const { settingsConfig } = useSettingsStore();
   const [hbEnabled, setHbEnabled] = useState(true);
-  const [hbInterval, setHbInterval] = useState(17);
+  const [hbIntervalInput, setHbIntervalInput] = useState('17');
   const [cronAutoApprove, setCronAutoApprove] = useState(true);
 
   useEffect(() => {
     if (settingsConfig) {
       setHbEnabled(settingsConfig.desk?.heartbeat_enabled !== false);
-      setHbInterval(settingsConfig.desk?.heartbeat_interval ?? 17);
+      setHbIntervalInput(String(settingsConfig.desk?.heartbeat_interval ?? 17));
       setCronAutoApprove(settingsConfig.desk?.cron_auto_approve !== false);
     }
   }, [settingsConfig]);
@@ -28,7 +28,11 @@ export function WorkTab() {
   };
 
   const saveWork = async () => {
-    const interval = Math.max(1, Math.min(120, hbInterval));
+    const parsed = Number(hbIntervalInput);
+    const interval = Number.isFinite(parsed)
+      ? Math.max(1, Math.min(120, Math.floor(parsed)))
+      : 17;
+    setHbIntervalInput(String(interval));
     await autoSaveConfig({ desk: { heartbeat_interval: interval } });
   };
 
@@ -58,9 +62,12 @@ export function WorkTab() {
                 className="settings-input small"
                 min={1}
                 max={120}
-                value={hbInterval}
+                value={hbIntervalInput}
                 disabled={!hbEnabled}
-                onChange={(e) => setHbInterval(parseInt(e.target.value) || 15)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next === '' || /^\d+$/.test(next)) setHbIntervalInput(next);
+                }}
               />
               <span className="settings-input-unit">{t('settings.work.heartbeatUnit')}</span>
             </div>
