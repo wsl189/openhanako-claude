@@ -51,6 +51,7 @@ export function AgentTab() {
   const [agentName, setAgentName] = useState('');
   const [identity, setIdentity] = useState('');
   const [ishiki, setIshiki] = useState('');
+  const [agentWorkspace, setAgentWorkspace] = useState('');
   const [pinInput, setPinInput] = useState('');
   const [expCategories, setExpCategories] = useState<ExpCategory[]>([]);
 
@@ -59,6 +60,7 @@ export function AgentTab() {
       setAgentName(settingsConfig.agent?.name || '');
       setIdentity(settingsConfig._identity || '');
       setIshiki(settingsConfig._ishiki || '');
+      setAgentWorkspace(settingsConfig.desk?.home_folder || '');
       setExpCategories(parseExperience(settingsConfig._experience || ''));
     }
   }, [settingsConfig]);
@@ -81,6 +83,26 @@ export function AgentTab() {
     useSettingsStore.setState({ currentPins: newPins });
     setPinInput('');
     savePins();
+  };
+
+  const pickAgentWorkspace = async () => {
+    const folder = await platform?.selectFolder?.();
+    if (!folder) return;
+    setAgentWorkspace(folder);
+    await autoSaveConfig({ desk: { home_folder: folder } });
+    const agentId = store.getSettingsAgentId();
+    if (agentId === currentAgentId) {
+      platform?.settingsChanged?.('agent-updated', { agentId, homeFolder: folder });
+    }
+  };
+
+  const clearAgentWorkspace = async () => {
+    setAgentWorkspace('');
+    await autoSaveConfig({ desk: { home_folder: '' } });
+    const agentId = store.getSettingsAgentId();
+    if (agentId === currentAgentId) {
+      platform?.settingsChanged?.('agent-updated', { agentId, homeFolder: '' });
+    }
   };
 
   const deletePin = (index: number) => {
@@ -279,6 +301,37 @@ export function AgentTab() {
             placeholder={t('settings.api.selectModel')}
           />
           <span className="settings-field-hint">{t('settings.agent.chatModelHint')}</span>
+        </div>
+        <div className="settings-field">
+          <label className="settings-field-label">{t('settings.agent.workspace')}</label>
+          <span className="settings-field-hint">{t('settings.agent.workspaceHint')}</span>
+          <div className="settings-folder-picker">
+            <input
+              type="text"
+              className="settings-input settings-folder-input"
+              readOnly
+              value={agentWorkspace}
+              placeholder={t('settings.agent.workspacePlaceholder')}
+              onClick={pickAgentWorkspace}
+            />
+            <button className="settings-folder-browse" onClick={pickAgentWorkspace}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+            {agentWorkspace && (
+              <button
+                className="settings-folder-clear"
+                onClick={clearAgentWorkspace}
+                title={t('settings.agent.workspaceClear')}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
       </section>
 

@@ -636,15 +636,19 @@ export class Agent {
       : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser."
     );
 
-    // 书桌 = 当前工作目录（注入实际路径）
+    // 工作区提示（注入默认工作区 + 当前 cwd）
+    const agentId = path.basename(this.agentDir || "");
+    const defaultWorkspace = this._engine?.getHomeFolder?.(agentId) || this._config?.desk?.home_folder || "";
     const cwdPath = this._engine?.cwd || "";
     parts.push(isZh
-      ? `\n## 书桌\n\n` +
-        `用户所说的「书桌」「工作空间」指的是你当前的工作目录（cwd），不是系统桌面（~/Desktop）。` +
-        (cwdPath ? `\n当前工作目录：${cwdPath}` : "")
-      : `\n## Desk\n\n` +
-        `When the user says "desk" (书桌) or "workspace", they mean your current working directory (cwd), NOT the system Desktop (~/Desktop).` +
-        (cwdPath ? `\nCurrent working directory: ${cwdPath}` : "")
+      ? `\n## 工作区\n\n` +
+        `用户所说的「书桌」「工作空间」指的是你的工作目录（workspace/cwd），不是系统桌面（~/Desktop）。` +
+        (defaultWorkspace ? `\n默认工作区：${defaultWorkspace}` : "") +
+        (cwdPath ? `\n当前执行目录（cwd）：${cwdPath}` : "")
+      : `\n## Workspace\n\n` +
+        `When the user says "desk" (书桌) or "workspace", they mean your working directory (workspace/cwd), NOT the system Desktop (~/Desktop).` +
+        (defaultWorkspace ? `\nDefault workspace: ${defaultWorkspace}` : "") +
+        (cwdPath ? `\nCurrent execution directory (cwd): ${cwdPath}` : "")
     );
 
     // 日期时间

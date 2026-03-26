@@ -136,7 +136,7 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
   tempResourceLoader.getSkills = () => ctx.getSkillsForAgent(agent);
 
   // 3. 临时 session
-  const cwd = engine.homeCwd || process.cwd();
+  const cwd = agent?.config?.desk?.home_folder || engine.getHomeFolder(agentId) || process.cwd();
   const sessionDir = path.join(agentDir, "sessions", sessionSuffix);
   fs.mkdirSync(sessionDir, { recursive: true });
   const tempSessionMgr = SessionManager.create(cwd, sessionDir);
@@ -147,7 +147,7 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
     tools = [];
     customTools = [];
   } else {
-    const built = ctx.buildTools(cwd, agent.tools, { agentDir, workspace: engine.homeCwd });
+    const built = ctx.buildTools(cwd, agent.tools, { agentDir, workspace: cwd });
     if (readOnly) {
       // 频道群聊：放开工具白名单，允许使用完整工具集（含 describe_images 等）。
       tools = built.tools;

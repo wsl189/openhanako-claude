@@ -112,13 +112,6 @@ export default async function configRoute(app, { engine }) {
         delete partial.sandbox;
       }
 
-      // desk.home_folder
-      if (partial.desk?.home_folder !== undefined) {
-        engine.setHomeFolder(partial.desk.home_folder || null);
-        delete partial.desk.home_folder;
-        if (partial.desk && Object.keys(partial.desk).length === 0) delete partial.desk;
-      }
-
       // providers 块 → 全局 providers.yaml
       let providersChanged = false;
       if (partial.providers) {

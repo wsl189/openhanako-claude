@@ -205,7 +205,7 @@ export class BridgeSessionManager {
           mgr = null;
         }
       }
-      const homeCwd = this._deps.getHomeCwd() || process.cwd();
+      const homeCwd = agent?.config?.desk?.home_folder || this._deps.getHomeCwd() || process.cwd();
       if (!mgr) {
         mgr = SessionManager.create(homeCwd, sessionDir);
       }

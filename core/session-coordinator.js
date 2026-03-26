@@ -495,7 +495,8 @@ export class SessionCoordinator {
       const sessionDir = opts.persist || targetAgent.sessionDir;
       fs.mkdirSync(sessionDir, { recursive: true });
 
-      const execCwd = opts.cwd || this._d.getHomeCwd() || process.cwd();
+      const agentWorkspace = targetAgent?.config?.desk?.home_folder;
+      const execCwd = opts.cwd || agentWorkspace || this._d.getHomeCwd() || process.cwd();
       const models = this._d.getModels();
       const agentPreferredModel = targetAgent.config?.models?.chat;
       const modelId = opts.model ? null : agentPreferredModel;
@@ -519,7 +520,9 @@ export class SessionCoordinator {
       const execModel = models.resolveExecutionModel(resolvedModel);
       tempSessionMgr = SessionManager.create(execCwd, sessionDir);
       const { tools: allBuiltinTools, customTools: allCustomTools } = this._d.buildTools(
-        execCwd, targetAgent.tools, { agentDir: targetAgent.agentDir, workspace: this._d.getHomeCwd() }
+        execCwd,
+        targetAgent.tools,
+        { agentDir: targetAgent.agentDir, workspace: agentWorkspace || this._d.getHomeCwd() },
       );
 
       const patrolAllowed = opts.toolFilter

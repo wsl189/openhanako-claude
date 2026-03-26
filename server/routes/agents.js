@@ -259,7 +259,7 @@ export default async function agentsRoute(app, { engine }) {
 
       // 注入全局设置（存于 preferences，跨 agent 共享）
       if (!config.desk) config.desk = {};
-      config.desk.home_folder = engine.getHomeFolder() || "";
+      config.desk.home_folder = engine.getHomeFolder(id) || "";
       config.sandbox = engine.getSandbox();
       const globalLocale = engine.getLocale();
       if (globalLocale) config.locale = globalLocale;
@@ -338,13 +338,6 @@ export default async function agentsRoute(app, { engine }) {
       if (partial.timezone !== undefined) {
         engine.setTimezone(partial.timezone);
         delete partial.timezone;
-      }
-
-      // desk.home_folder
-      if (partial.desk?.home_folder !== undefined) {
-        engine.setHomeFolder(partial.desk.home_folder || null);
-        delete partial.desk.home_folder;
-        if (Object.keys(partial.desk).length === 0) delete partial.desk;
       }
 
       // providers 块 → 全局 providers.yaml

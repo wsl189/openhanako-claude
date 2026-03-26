@@ -197,7 +197,7 @@ async function init(): Promise<void> {
         break;
       case 'agent-updated': {
         const payload = data || {};
-        const { agentId, agentName, yuan, avatarUpdated } = payload;
+        const { agentId, agentName, yuan, avatarUpdated, homeFolder } = payload;
         const state = useStore.getState();
 
         if (avatarUpdated) {
@@ -222,6 +222,12 @@ async function init(): Promise<void> {
           if (state.currentAgentId === agentId) {
             if (typeof agentName === 'string') patch.agentName = agentName;
             if (typeof yuan === 'string') patch.agentYuan = yuan;
+            if (typeof homeFolder === 'string') {
+              patch.homeFolder = homeFolder || null;
+              if (state.pendingNewSession) {
+                patch.selectedFolder = homeFolder || null;
+              }
+            }
           }
           useStore.setState(patch);
         }

@@ -246,7 +246,7 @@ export class HanaEngine {
   get availableModels() { return this._models.availableModels; }
   get memoryEnabled() { return this.agent.memoryEnabled; }
   get planMode() { return this._configCoord.planMode; }
-  get homeCwd() { return this._configCoord.getHomeFolder() || null; }
+  get homeCwd() { return this._configCoord.getHomeFolder(this.currentAgentId) || null; }
   get authStorage() { return this._models.authStorage; }
   get modelRegistry() { return this._models.modelRegistry; }
   get providerRegistry() { return this._models.providerRegistry; }
@@ -255,8 +255,8 @@ export class HanaEngine {
   /** 刷新可用模型列表（含 OAuth 自定义模型注入） */
   async refreshModels() { return this._models.refreshAvailable(); }
 
-  getHomeFolder() { return this._configCoord.getHomeFolder(); }
-  setHomeFolder(f) { return this._configCoord.setHomeFolder(f); }
+  getHomeFolder(agentId = null) { return this._configCoord.getHomeFolder(agentId || this.currentAgentId); }
+  setHomeFolder(f, agentId = null) { return this._configCoord.setHomeFolder(f, agentId || this.currentAgentId); }
   getSharedModels() { return this._configCoord.getSharedModels(); }
   setSharedModels(p) { return this._configCoord.setSharedModels(p); }
   getUtilityApi() { return this._configCoord.getUtilityApi(); }

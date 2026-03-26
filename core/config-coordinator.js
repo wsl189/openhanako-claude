@@ -57,22 +57,46 @@ export class ConfigCoordinator {
 
   // ── Home Folder ──
 
-  getHomeFolder() {
-    const configured = this._prefs().home_folder;
+  getHomeFolder(agentId = null) {
+    const agent = agentId
+      ? this._d.getAgents?.()?.get?.(agentId)
+      : this._d.getAgent?.();
+    const configured = agent?.config?.desk?.home_folder;
     if (configured && fs.existsSync(configured)) return configured;
+
+    // 兼容历史全局配置（将逐步迁移到 per-agent）
+    const legacy = this._prefs().home_folder;
+    if (legacy && fs.existsSync(legacy)) return legacy;
+
     // 配置的文件夹已被删除 → fallback 到桌面
     return path.join(os.homedir(), "Desktop");
   }
 
-  setHomeFolder(folder) {
-    const prefs = this._prefs();
-    if (folder) {
-      prefs.home_folder = folder;
-    } else {
-      delete prefs.home_folder;
+  setHomeFolder(folder, agentId = null) {
+    const normalized = String(folder || "").trim();
+    const targetAgent = agentId
+      ? this._d.getAgents?.()?.get?.(agentId)
+      : this._d.getAgent?.();
+
+    if (targetAgent?.updateConfig) {
+      targetAgent.updateConfig({ desk: { home_folder: normalized } });
+      log.log(`setHomeFolder(${targetAgent.agentName || targetAgent.agentId || "active"}): ${normalized || "(cleared)"}`);
+      return;
     }
-    this._savePrefs(prefs);
-    log.log(`setHomeFolder: ${folder || "(cleared)"}`);
+
+    // fallback：直接写对应 agent config（通常不会走到这里）
+    const targetId = agentId || path.basename(this._d.getAgent?.()?.agentDir || "");
+    if (!targetId) return;
+    const configPath = path.join(this._d.agentsDir, targetId, "config.yaml");
+    try {
+      const raw = YAML.load(fs.readFileSync(configPath, "utf-8")) || {};
+      raw.desk = raw.desk || {};
+      raw.desk.home_folder = normalized;
+      fs.writeFileSync(configPath, YAML.dump(raw, { lineWidth: 120 }), "utf-8");
+      log.log(`setHomeFolder(${targetId}) [fallback]: ${normalized || "(cleared)"}`);
+    } catch (err) {
+      log.warn(`setHomeFolder(${targetId}) fallback failed: ${err.message}`);
+    }
   }
 
   // ── Shared Models ──
