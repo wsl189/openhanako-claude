@@ -9333,10 +9333,32 @@ a.about-link:hover {
 }
 
 .pv-model-dropdown-list {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+    flex: none;
+    height: var(--pv-model-list-height, 272px);
+    max-height: var(--pv-model-list-height, 272px);
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
     padding: 4px 0;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(120, 120, 120, 0.45) transparent;
+}
+
+.pv-model-dropdown-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.pv-model-dropdown-list::-webkit-scrollbar-thumb {
+    background: rgba(120, 120, 120, 0.45);
+    border-radius: 6px;
+}
+
+.pv-model-dropdown-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(120, 120, 120, 0.65);
+}
+
+.pv-model-dropdown-list::-webkit-scrollbar-track {
+    background: transparent;
 }
 
 .pv-model-dropdown-option {
@@ -9344,6 +9366,7 @@ a.about-link:hover {
     align-items: center;
     gap: 6px;
     width: 100%;
+    min-height: 34px;
     padding: 5px 10px;
     font-family: inherit;
     font-size: 0.78rem;

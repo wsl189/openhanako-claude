@@ -764,6 +764,17 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const viewportPadding = 8;
+    const gap = 4;
+    const optionRowHeight = 34;
+    const optionVisibleCount = 8;
+    const preferredListHeight = optionRowHeight * optionVisibleCount;
+    const panelChromeHeight = 86; // search + custom input + borders/paddings
+    const preferredPanelHeight = panelChromeHeight + preferredListHeight;
+    const titlebarEl = document.querySelector('.titlebar') as HTMLElement | null;
+    const titlebarBottom = titlebarEl ? Math.ceil(titlebarEl.getBoundingClientRect().bottom) : 0;
+    const safeTop = Math.max(viewportPadding, titlebarBottom + 4);
+    const safeBottom = viewportPadding;
+
     const panelWidth = Math.min(
       Math.max(rect.width + 80, 260),
       Math.max(260, window.innerWidth - viewportPadding * 2),
@@ -773,20 +784,25 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
       Math.max(viewportPadding, window.innerWidth - panelWidth - viewportPadding),
     );
 
-    const topSpace = rect.top - viewportPadding;
-    const bottomSpace = window.innerHeight - rect.bottom - viewportPadding;
-    const preferOpenAbove = topSpace > bottomSpace && topSpace > 120;
-    const availableSpace = Math.max(0, (preferOpenAbove ? topSpace : bottomSpace) - 4);
+    const spaceAbove = rect.top - safeTop - gap;
+    const spaceBelow = window.innerHeight - rect.bottom - safeBottom - gap;
+    const openAbove = spaceAbove > spaceBelow && spaceAbove > 120;
+    const availableSpace = Math.max(0, (openAbove ? spaceAbove : spaceBelow));
+    const maxHeight = Math.min(preferredPanelHeight, availableSpace);
+    const listHeight = Math.max(0, Math.min(preferredListHeight, maxHeight - panelChromeHeight));
+
+    const top = openAbove
+      ? Math.max(safeTop, rect.top - gap - maxHeight)
+      : rect.bottom + gap;
 
     setPanelStyle({
       position: 'fixed',
       left,
       width: panelWidth,
-      maxHeight: Math.min(420, availableSpace),
-      ...(preferOpenAbove
-        ? { bottom: window.innerHeight - rect.top + 4 }
-        : { top: rect.bottom + 4 }),
+      top,
+      maxHeight,
       zIndex: 9999,
+      ['--pv-model-list-height' as any]: `${listHeight}px`,
     });
   }, []);
 
@@ -815,9 +831,14 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
   // 滚动时关闭，避免 fixed 面板与触发器位置脱轨
   useEffect(() => {
     if (!dropdownOpen) return;
-    const close = () => setDropdownOpen(false);
-    window.addEventListener('scroll', close, true);
-    return () => window.removeEventListener('scroll', close, true);
+    const handleScroll = (e: Event) => {
+      const target = e.target as Node | null;
+      if (target && panelRef.current?.contains(target)) return;
+      if (target && triggerRef.current?.contains(target)) return;
+      setDropdownOpen(false);
+    };
+    window.addEventListener('scroll', handleScroll, true);
+    return () => window.removeEventListener('scroll', handleScroll, true);
   }, [dropdownOpen]);
 
   return (
