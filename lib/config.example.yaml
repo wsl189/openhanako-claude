@@ -57,6 +57,17 @@ search:
 skills:
   enabled: []                        # 启用的 skill 名称，如 ["pdf", "literary-craft"]
 
+# 沙盒（per-agent）
+sandbox:
+  mode: standard                     # standard / full-access
+  path_rules: []                     # 额外路径白名单（绝对路径），每项: { path, access: read_only|read_write }
+
+# 工具权限（per-agent）
+# 内建工具 read/grep/find/ls 永远启用，builtin_enabled 仅控制 write/edit/bash
+tools:
+  builtin_enabled: ["write", "edit", "bash"]
+  custom_enabled: []                 # 留空表示允许该 agent 的全部 custom tools；非空表示白名单
+
 # 频道系统（agent 间协作通信）
 channels:
   enabled: false                     # 是否参与频道轮转

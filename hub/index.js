@@ -8,14 +8,12 @@
  * 模块：
  *   EventBus      — 统一事件总线
  *   ChannelRouter  — 频道 triage + 调度
- *   GuestHandler   — Guest 留言机
  *   Scheduler      — Heartbeat + Cron
  */
 
 import path from "path";
 import { EventBus } from "./event-bus.js";
 import { ChannelRouter } from "./channel-router.js";
-import { GuestHandler } from "./guest-handler.js";
 import { Scheduler } from "./scheduler.js";
 import { AgentMessenger } from "./agent-messenger.js";
 import { DmRouter } from "./dm-router.js";
@@ -29,7 +27,6 @@ export class Hub {
     this._engine = engine;
     this._eventBus = new EventBus();
     this._channelRouter = new ChannelRouter({ hub: this });
-    this._guestHandler = new GuestHandler({ hub: this });
     this._scheduler = new Scheduler({ hub: this });
     this._agentMessenger = new AgentMessenger({ hub: this });
     this._dmRouter = new DmRouter({ hub: this });
@@ -80,7 +77,7 @@ export class Hub {
    * @param {string} text  消息文本
    * @param {object} [opts]
    * @param {string}  [opts.sessionKey]  Bridge/频道的 session 标识
-   * @param {string}  [opts.role]        "owner" | "agent" | "guest"（默认 "owner"）
+   * @param {string}  [opts.role]        "owner" | "agent"（默认 "owner"）
    * @param {boolean} [opts.ephemeral]   true = 不持久化 session（cron/heartbeat/channel）
    * @param {object}  [opts.meta]        Bridge 元数据 { name, avatarUrl, userId }
    * @param {boolean} [opts.isGroup]     是否群聊（影响 guest 上下文标签）
@@ -122,13 +119,9 @@ export class Hub {
           ? this._engine.promptSession(o.sessionPath, text, { images: o.images })
           : this._engine.prompt(text, { images: o.images }),
       },
-      { // Bridge guest
-        match: o => o.sessionKey && o.role === "guest",
-        handle: () => this._guestHandler.handle(text, o.sessionKey, o.meta, { isGroup: o.isGroup, agentId: o.agentId, onDelta: o.onDelta, images: o.images }),
-      },
-      { // Bridge owner
+      { // Bridge（统一权限路径）
         match: o => o.sessionKey && !o.ephemeral,
-        handle: () => this._engine.executeExternalMessage(text, o.sessionKey, o.meta, { guest: false, agentId: o.agentId, onDelta: o.onDelta, images: o.images }),
+        handle: () => this._engine.executeExternalMessage(text, o.sessionKey, o.meta, { agentId: o.agentId, onDelta: o.onDelta, images: o.images }),
       },
       { // 隔离执行（cron/heartbeat/channel）
         match: o => o.ephemeral,

@@ -9,6 +9,33 @@ import { debugLog } from "../../lib/debug-log.js";
 import { getRawConfig, getAllProviders, saveGlobalProviders, clearConfigCache } from "../../lib/memory/config-loader.js";
 import { FactStore } from "../../lib/memory/fact-store.js";
 
+function normalizeSandboxPatch(rawSandbox) {
+  if (rawSandbox === undefined || rawSandbox === null) return null;
+  if (typeof rawSandbox === "boolean") {
+    return { mode: rawSandbox ? "standard" : "full-access" };
+  }
+  if (typeof rawSandbox !== "object") throw new Error("sandbox must be an object");
+  const next = {};
+  if (rawSandbox.mode !== undefined) {
+    const mode = String(rawSandbox.mode || "").trim();
+    if (mode !== "standard" && mode !== "full-access") {
+      throw new Error("sandbox.mode must be \"standard\" or \"full-access\"");
+    }
+    next.mode = mode;
+  }
+  if (rawSandbox.path_rules !== undefined) {
+    if (!Array.isArray(rawSandbox.path_rules)) throw new Error("sandbox.path_rules must be an array");
+    next.path_rules = rawSandbox.path_rules.map((rule) => {
+      const p = String(rule?.path || "").trim();
+      const access = String(rule?.access || "").trim();
+      if (!p || !path.isAbsolute(p)) throw new Error(`sandbox.path_rules.path must be absolute: ${p || "(empty)"}`);
+      if (access !== "read_only" && access !== "read_write") throw new Error(`invalid sandbox.path_rules.access: ${access || "(empty)"}`);
+      return { path: p, access };
+    });
+  }
+  return next;
+}
+
 export default async function configRoute(app, { engine }) {
 
   // 读取配置（脱敏：隐藏 API key，附带 _raw 原始结构 + providers）
@@ -65,7 +92,10 @@ export default async function configRoute(app, { engine }) {
         config.cwd_history = config.cwd_history.filter(p => existsSync(p));
       }
       config.thinking_level = engine.getThinkingLevel();
-      config.sandbox = engine.getSandbox();
+      const permissions = engine.getAgentPermissionConfig();
+      config.sandbox = permissions.sandbox;
+      config.tools = permissions.tools;
+      config._toolCatalog = permissions.tool_catalog;
       const globalLocale = engine.getLocale();
       if (globalLocale) config.locale = globalLocale;
       const globalTz = engine.getTimezone();
@@ -106,10 +136,9 @@ export default async function configRoute(app, { engine }) {
         delete partial.timezone;
       }
 
-      // sandbox → 全局 preferences
+      // sandbox（per-agent）
       if (partial.sandbox !== undefined) {
-        engine.setSandbox(partial.sandbox);
-        delete partial.sandbox;
+        partial.sandbox = normalizeSandboxPatch(partial.sandbox);
       }
 
       // providers 块 → 全局 providers.yaml
@@ -201,7 +230,9 @@ export default async function configRoute(app, { engine }) {
       return { ok: true };
     } catch (err) {
       debugLog()?.error("api", `PUT /api/config failed: ${err.message}`);
-      reply.code(500);
+      const msg = String(err?.message || "");
+      if (msg.startsWith("sandbox.")) reply.code(400);
+      else reply.code(500);
       return { error: err.message };
     }
   });

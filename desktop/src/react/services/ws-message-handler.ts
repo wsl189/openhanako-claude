@@ -283,10 +283,6 @@ export function handleServerMessage(msg: any): void {
       }
       break;
 
-    case 'plan_mode':
-      window.dispatchEvent(new CustomEvent('hana-plan-mode', { detail: { enabled: !!msg.enabled } }));
-      break;
-
     case 'channel_new_message': {
       const store = useStore.getState();
       if (msg.channelName && store.currentChannel === msg.channelName) {

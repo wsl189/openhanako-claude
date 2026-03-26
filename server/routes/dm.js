@@ -14,7 +14,7 @@ import { parseChannel } from "../../lib/channels/channel-store.js";
 
 export default async function dmRoute(app, { engine }) {
 
-  // ── 列出所有 DM 对话（包含未聊过的 agent 作为占位） ──
+  // ── 列出所有 DM 对话（仅返回已有聊天记录） ──
   app.get("/api/dm", async (_req, reply) => {
     try {
       const agent = engine.agent;
@@ -22,7 +22,6 @@ export default async function dmRoute(app, { engine }) {
         return { dms: [] };
       }
 
-      const currentAgentId = engine.currentAgentId;
       const dmDir = path.join(agent.agentDir, "dm");
 
       // 已有 DM 文件 → 读取消息摘要
@@ -44,21 +43,19 @@ export default async function dmRoute(app, { engine }) {
         }
       }
 
-      // 所有其他 agent 都作为 DM 条目（没聊过的也显示）
+      // 只返回已有 DM 文件的对话，避免新建 agent 时出现“占位频道”
       const allAgents = engine.listAgents?.() || [];
-      const dms = allAgents
-        .filter(a => a.id !== currentAgentId)
-        .map(a => {
-          const existing = existingDms.get(a.id);
-          return {
-            peerId: a.id,
-            peerName: a.name || a.id,
-            lastMessage: existing?.lastMessage || "",
-            lastSender: existing?.lastSender || "",
-            lastTimestamp: existing?.lastTimestamp || "",
-            messageCount: existing?.messageCount || 0,
-          };
-        });
+      const agentNameMap = new Map(
+        allAgents.map(a => [a.id, a.name || a.id])
+      );
+      const dms = Array.from(existingDms.entries()).map(([peerId, existing]) => ({
+        peerId,
+        peerName: agentNameMap.get(peerId) || peerId,
+        lastMessage: existing.lastMessage || "",
+        lastSender: existing.lastSender || "",
+        lastTimestamp: existing.lastTimestamp || "",
+        messageCount: existing.messageCount || 0,
+      }));
 
       // 有消息的排前面（按最后消息时间倒序），没消息的按名字排
       dms.sort((a, b) => {

@@ -208,14 +208,6 @@ app.post("/api/log", async (req) => {
   return { ok: true };
 });
 
-// Plan Mode（只读探索模式）
-app.get("/api/plan-mode", async () => ({ enabled: engine.planMode }));
-app.post("/api/plan-mode", async (req) => {
-  const { enabled } = req.body || {};
-  engine.setPlanMode(!!enabled);
-  return { ok: true, enabled: engine.planMode };
-});
-
 // 远程关闭（供 desktop 端复用 server 退出时调用，跨平台可靠的 graceful shutdown）
 app.post("/api/shutdown", async () => {
   console.log("[server] 收到 HTTP shutdown 请求，正在清理...");

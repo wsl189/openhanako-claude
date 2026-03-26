@@ -156,6 +156,46 @@ export class SessionCoordinator {
     return session;
   }
 
+  _readSessionMemoryEnabled(sessionPath, agent = this._d.getAgent()) {
+    try {
+      const metaPath = path.join(agent.sessionDir, "session-meta.json");
+      const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+      const sessKey = path.basename(sessionPath);
+      return meta[sessKey]?.memoryEnabled !== false;
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        log.warn(`session-meta.json 读取失败: ${err.message}`);
+      }
+      return true;
+    }
+  }
+
+  async refreshCurrentSessionTools() {
+    const sessionPath = this.currentSessionPath;
+    if (!sessionPath) return { reloaded: false, reason: "no-active-session" };
+
+    const currentEntry = this._sessions.get(sessionPath);
+    const currentSession = currentEntry?.session || this._session;
+    if (!currentSession) return { reloaded: false, reason: "session-not-cached" };
+    if (currentSession.isStreaming) return { reloaded: false, reason: "streaming" };
+
+    const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
+    if (targetAgentId && targetAgentId !== this._d.getActiveAgentId()) {
+      await this._d.switchAgentOnly(targetAgentId);
+      this._d.getSkills()?.syncAgentSkills?.(this._d.getAgent());
+    }
+
+    const agent = this._d.getAgentById(targetAgentId) || this._d.getAgent();
+    const sessionMgr = SessionManager.open(sessionPath, agent.sessionDir);
+    const cwd = sessionMgr.getCwd?.() || undefined;
+    const memoryEnabled = this._readSessionMemoryEnabled(sessionPath, agent);
+    const wasStarted = this._sessionStarted;
+
+    await this.createSession(sessionMgr, cwd, memoryEnabled);
+    this._sessionStarted = wasStarted;
+    return { reloaded: true, sessionPath };
+  }
+
   async switchSession(sessionPath) {
     const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
     if (targetAgentId && targetAgentId !== this._d.getActiveAgentId()) {
@@ -165,17 +205,7 @@ export class SessionCoordinator {
     }
 
     // 从 session-meta.json 恢复记忆开关
-    let memoryEnabled = true;
-    try {
-      const metaPath = path.join(this._d.getAgent().sessionDir, "session-meta.json");
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-      const sessKey = path.basename(sessionPath);
-      if (meta[sessKey]?.memoryEnabled === false) memoryEnabled = false;
-    } catch (err) {
-      if (err.code !== "ENOENT") {
-        log.warn(`session-meta.json 读取失败: ${err.message}`);
-      }
-    }
+    const memoryEnabled = this._readSessionMemoryEnabled(sessionPath, this._d.getAgent());
 
     // 如果已在 map 中，切指针
     const existing = this._sessions.get(sessionPath);

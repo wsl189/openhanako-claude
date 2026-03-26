@@ -113,11 +113,10 @@ function readImagesFromText(text = "", maxCount = 10) {
  * @param {boolean} [opts.keepSession=false] - 是否保留 session 文件
  * @param {boolean} [opts.noMemory=false] - 不注入记忆，只用 personality
  * @param {boolean} [opts.noTools=false] - 不注入工具
- * @param {boolean} [opts.readOnly=false] - 只读模式（只保留读取类工具，排除写/编辑/ask_agent/dm 等）
  * @param {boolean} [opts.extractInlineImages=false] - 是否从 round 文本中的附件路径自动读取图片
  * @returns {Promise<string>}  capture 轮的输出（已去掉 MOOD 块）
  */
-export async function runAgentSession(agentId, rounds, { engine, signal, sessionSuffix = "temp", systemAppend, keepSession = false, noMemory = false, noTools = false, readOnly = false, extractInlineImages = false } = {}) {
+export async function runAgentSession(agentId, rounds, { engine, signal, sessionSuffix = "temp", systemAppend, keepSession = false, noMemory = false, noTools = false, extractInlineImages = false } = {}) {
   // 1. 从长驻 Map 获取 Agent 实例
   const agent = engine.getAgent(agentId);
   if (!agent) {
@@ -141,21 +140,15 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
   fs.mkdirSync(sessionDir, { recursive: true });
   const tempSessionMgr = SessionManager.create(cwd, sessionDir);
 
-  // 工具模式：noTools = 无工具，readOnly = 只读工具，默认 = 全部
+  // 工具模式：noTools = 无工具，默认 = 按 agent 配置
   let tools, customTools;
   if (noTools) {
     tools = [];
     customTools = [];
   } else {
     const built = ctx.buildTools(cwd, agent.tools, { agentDir, workspace: cwd });
-    if (readOnly) {
-      // 频道群聊：放开工具白名单，允许使用完整工具集（含 describe_images 等）。
-      tools = built.tools;
-      customTools = built.customTools;
-    } else {
-      tools = built.tools;
-      customTools = built.customTools;
-    }
+    tools = built.tools;
+    customTools = built.customTools;
   }
   const model = ctx.resolveModel(agent.config);
   const contextWindow = model?.contextWindow || 200_000;

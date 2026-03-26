@@ -178,7 +178,7 @@ export class BridgeSessionManager {
    * @param {string} prompt - 格式化后的用户消息
    * @param {string} sessionKey - 会话标识（如 tg_dm_12345）
    * @param {object} [meta] - 元数据（name, avatarUrl, userId）
-   * @param {object} [opts] - { guest: boolean, onDelta? }
+   * @param {object} [opts] - { onDelta? }
    * @returns {Promise<string|null>} agent 的回复文本
    */
   async executeExternalMessage(prompt, sessionKey, meta, opts = {}) {
@@ -186,7 +186,7 @@ export class BridgeSessionManager {
     const agent = this._resolveAgent(opts.agentId);
     const mm = this._deps.getModelManager();
     const bridgeDir = path.join(agent.sessionDir, "bridge");
-    const subDir = opts.guest ? "guests" : "owner";
+    const subDir = "owner";
     const sessionDir = path.join(bridgeDir, subDir);
     fs.mkdirSync(sessionDir, { recursive: true });
 

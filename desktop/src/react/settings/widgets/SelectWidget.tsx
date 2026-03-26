@@ -33,11 +33,19 @@ export function SelectWidget({ options, value, onChange, placeholder }: SelectWi
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
     const openAbove = spaceBelow < 200 && spaceAbove > spaceBelow;
+    const viewportPadding = 8;
+    const popupMinWidth = 180;
+    const maxWidth = Math.max(120, window.innerWidth - viewportPadding * 2);
+    const popupWidth = Math.min(Math.max(rect.width, popupMinWidth), maxWidth);
+    let left = rect.left;
+    if (left + popupWidth > window.innerWidth - viewportPadding) {
+      left = Math.max(viewportPadding, window.innerWidth - popupWidth - viewportPadding);
+    }
 
     setPanelStyle({
       position: 'fixed',
-      left: rect.left,
-      width: rect.width,
+      left,
+      width: popupWidth,
       ...(openAbove
         ? { bottom: window.innerHeight - rect.top + 2 }
         : { top: rect.bottom + 2 }),

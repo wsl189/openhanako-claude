@@ -375,6 +375,26 @@ export class Agent {
   get resolvedMemoryModel() { return this._resolvedMemoryModel; }
   get summaryManager() { return this._summaryManager; }
   get memoryTicker() { return this._memoryTicker; }
+  getAllCustomTools() {
+    return [
+      this._memorySearchTool,
+      ...this._pinnedMemoryTools,
+      ...this._experienceTools,
+      this._webFetchTool,
+      this._todoTool,
+      this._cronTool,
+      this._presentFilesTool,
+      this._artifactTool,
+      this._channelTool,
+      this._askAgentTool,
+      this._dmTool,
+      this._browserTool,
+      this._describeImagesTool,
+      this._notifyTool,
+      this._updateSettingsTool,
+      this._delegateTool,
+    ].filter(Boolean);
+  }
   get tools() {
     const memTools = this.memoryEnabled ? [
       this._memorySearchTool,
@@ -546,6 +566,23 @@ export class Agent {
   /** 组装 system prompt */
   buildSystemPrompt() {
     const isZh = String(this._config.locale || "").startsWith("zh");
+    const agentId = path.basename(this.agentDir || "");
+
+    const toolProfile = this._engine?.getAgentPermissionConfig?.(agentId) || null;
+    const runtimeCustomNames = new Set((this.tools || []).map((tool) => tool?.name).filter(Boolean));
+    const enabledBuiltin = Array.isArray(toolProfile?.tools?.builtin_enabled)
+      ? toolProfile.tools.builtin_enabled
+      : ["read", "grep", "find", "ls", "write", "edit", "bash"];
+    const enabledCustom = Array.isArray(toolProfile?.tools?.custom_enabled)
+      ? toolProfile.tools.custom_enabled.filter((name) => runtimeCustomNames.has(name))
+      : [...runtimeCustomNames];
+    const builtinRequired = Array.isArray(toolProfile?.tool_catalog?.builtin_required)
+      ? toolProfile.tool_catalog.builtin_required
+      : ["read", "grep", "find", "ls"];
+    const builtinOptional = Array.isArray(toolProfile?.tool_catalog?.builtin_optional)
+      ? toolProfile.tool_catalog.builtin_optional
+      : ["write", "edit", "bash"];
+    const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
 
     const readFile = (filePath) => {
       try { return fs.readFileSync(filePath, "utf-8"); } catch { return ""; }
@@ -622,22 +659,47 @@ export class Agent {
       parts.push(formatSkillsForPrompt(this._enabledSkills));
     }
 
-    // 设置工具路由
-    parts.push(isZh
-      ? "\n## 设置修改\n\n" +
-        "用户提到修改设置而未指明具体软件时，默认指本应用的设置。\n" +
-        "用户要求修改偏好设置（包括但不限于：外观主题、语言地区、模型选择、安全权限、记忆功能、个人信息、工作目录）时，使用 update_settings 工具。不要搜索网页，不要编辑配置文件。意图明确时直接 apply，不确定时先 search。"
-      : "\n## Settings Changes\n\n" +
-        "When the user mentions changing settings without specifying a particular application, assume they mean this application.\n" +
-        "When the user asks to change preferences (including but not limited to: appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory), use the update_settings tool. Do not search the web or edit config files. When intent is clear, apply directly; when unsure, search first."
-    );
-    parts.push(isZh
-      ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
-      : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser."
+    const optionalEnabled = builtinOptional.filter((name) => enabledBuiltin.includes(name));
+    parts.push(
+      isZh
+        ? "\n## 可用工具\n\n" +
+          `内置工具（必开）：${builtinRequired.join(", ")}\n` +
+          `内置工具（已开启）：${optionalEnabled.length ? optionalEnabled.join(", ") : "无"}\n` +
+          `自定义工具（已开启）：${enabledCustom.length ? enabledCustom.join(", ") : "无"}\n\n` +
+          "如果工具不在以上清单中，视为不可用，不要尝试调用。"
+        : "\n## Available Tools\n\n" +
+          `Built-in required: ${builtinRequired.join(", ")}\n` +
+          `Built-in enabled: ${optionalEnabled.length ? optionalEnabled.join(", ") : "none"}\n` +
+          `Custom enabled: ${enabledCustom.length ? enabledCustom.join(", ") : "none"}\n\n` +
+          "If a tool is not listed above, treat it as unavailable and do not call it."
     );
 
+    // 设置工具路由
+    parts.push(hasTool("update_settings")
+      ? (isZh
+          ? "\n## 设置修改\n\n" +
+            "用户提到修改设置而未指明具体软件时，默认指本应用的设置。\n" +
+            "用户要求修改偏好设置（包括但不限于：外观主题、语言地区、模型选择、安全权限、记忆功能、个人信息、工作目录）时，使用 update_settings 工具。不要搜索网页，不要编辑配置文件。意图明确时直接 apply，不确定时先 search。"
+          : "\n## Settings Changes\n\n" +
+            "When the user mentions changing settings without specifying a particular application, assume they mean this application.\n" +
+            "When the user asks to change preferences (including but not limited to: appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory), use the update_settings tool. Do not search the web or edit config files. When intent is clear, apply directly; when unsure, search first.")
+      : (isZh
+          ? "\n## 设置修改\n\nupdate_settings 工具当前不可用。你不能声称已修改应用设置；需要明确告知用户该限制，并给出手动操作步骤。"
+          : "\n## Settings Changes\n\nThe update_settings tool is currently unavailable. Do not claim settings were changed; clearly explain this limit and provide manual steps.")
+    );
+
+    const hasSearchTool = hasTool("web_search") || hasTool("web_fetch");
+    if (!hasSearchTool && hasTool("browser")) {
+      parts.push(isZh
+        ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
+        : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser.");
+    } else if (!hasSearchTool && !hasTool("browser")) {
+      parts.push(isZh
+        ? "当前无可用联网检索工具（search/browser）；需要联网信息时请明确说明能力受限。"
+        : "No web lookup tools are available (search/browser). If internet data is required, clearly state this limitation.");
+    }
+
     // 工作区提示（注入默认工作区 + 当前 cwd）
-    const agentId = path.basename(this.agentDir || "");
     const defaultWorkspace = this._engine?.getHomeFolder?.(agentId) || this._config?.desk?.home_folder || "";
     const cwdPath = this._engine?.cwd || "";
     parts.push(isZh

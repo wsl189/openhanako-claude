@@ -70,6 +70,62 @@ function fillPersonaTemplate(tmpl, ctx) {
     .replace(/\{\{agentId\}\}/g, ctx.agentId || "");
 }
 
+function normalizeSandboxPatch(rawSandbox) {
+  if (rawSandbox === undefined || rawSandbox === null) return null;
+  if (typeof rawSandbox === "boolean") {
+    return { mode: rawSandbox ? "standard" : "full-access" };
+  }
+  if (typeof rawSandbox !== "object") return null;
+  const next = {};
+  if (rawSandbox.mode !== undefined) {
+    const mode = String(rawSandbox.mode || "").trim();
+    if (mode !== "standard" && mode !== "full-access") {
+      throw new Error("sandbox.mode must be \"standard\" or \"full-access\"");
+    }
+    next.mode = mode;
+  }
+  if (rawSandbox.path_rules !== undefined) {
+    if (!Array.isArray(rawSandbox.path_rules)) {
+      throw new Error("sandbox.path_rules must be an array");
+    }
+    const out = [];
+    for (const rule of rawSandbox.path_rules) {
+      const rulePath = String(rule?.path || "").trim();
+      const access = String(rule?.access || "").trim();
+      if (!rulePath || !path.isAbsolute(rulePath)) {
+        throw new Error(`sandbox.path_rules.path must be an absolute path: ${rulePath || "(empty)"}`);
+      }
+      if (access !== "read_only" && access !== "read_write") {
+        throw new Error(`sandbox.path_rules.access must be read_only/read_write: ${access || "(empty)"}`);
+      }
+      out.push({ path: rulePath, access });
+    }
+    next.path_rules = out;
+  }
+  return next;
+}
+
+function normalizeToolsPatch(rawTools) {
+  if (rawTools === undefined || rawTools === null) return null;
+  if (typeof rawTools !== "object") {
+    throw new Error("tools must be an object");
+  }
+  const next = {};
+  if (rawTools.builtin_enabled !== undefined) {
+    if (!Array.isArray(rawTools.builtin_enabled)) {
+      throw new Error("tools.builtin_enabled must be an array");
+    }
+    next.builtin_enabled = rawTools.builtin_enabled.map(v => String(v || "").trim()).filter(Boolean);
+  }
+  if (rawTools.custom_enabled !== undefined) {
+    if (!Array.isArray(rawTools.custom_enabled)) {
+      throw new Error("tools.custom_enabled must be an array");
+    }
+    next.custom_enabled = rawTools.custom_enabled.map(v => String(v || "").trim()).filter(Boolean);
+  }
+  return next;
+}
+
 function buildDefaultPersonaSet(productDir, kind, ctx) {
   const out = new Set();
   for (const isZh of [true, false]) {
@@ -103,7 +159,9 @@ export default async function agentsRoute(app, { engine }) {
     try {
       return { agents: engine.listAgents() };
     } catch (err) {
-      reply.code(500);
+      const msg = String(err?.message || "");
+      if (msg.startsWith("sandbox.") || msg.startsWith("tools")) reply.code(400);
+      else reply.code(500);
       return { error: err.message };
     }
   });
@@ -260,7 +318,10 @@ export default async function agentsRoute(app, { engine }) {
       // 注入全局设置（存于 preferences，跨 agent 共享）
       if (!config.desk) config.desk = {};
       config.desk.home_folder = engine.getHomeFolder(id) || "";
-      config.sandbox = engine.getSandbox();
+      const permissions = engine.getAgentPermissionConfig(id);
+      config.sandbox = permissions.sandbox;
+      config.tools = permissions.tools;
+      config._toolCatalog = permissions.tool_catalog;
       const globalLocale = engine.getLocale();
       if (globalLocale) config.locale = globalLocale;
       const globalTz = engine.getTimezone();
@@ -322,10 +383,12 @@ export default async function agentsRoute(app, { engine }) {
         delete partial.thinking_level;
       }
 
-      // sandbox → 全局 preferences
       if (partial.sandbox !== undefined) {
-        engine.setSandbox(partial.sandbox);
-        delete partial.sandbox;
+        partial.sandbox = normalizeSandboxPatch(partial.sandbox);
+      }
+
+      if (partial.tools !== undefined) {
+        partial.tools = normalizeToolsPatch(partial.tools);
       }
 
       // locale → 全局 preferences

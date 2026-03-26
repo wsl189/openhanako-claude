@@ -16,13 +16,7 @@ import fs from "fs";
 import path from "path";
 import {
   DefaultResourceLoader,
-  codingTools,
-  grepTool,
-  findTool,
-  lsTool,
 } from "@mariozechner/pi-coding-agent";
-
-const allBuiltInTools = [...codingTools, grepTool, findTool, lsTool];
 
 import { PreferencesManager } from "./preferences-manager.js";
 import { ModelManager } from "./model-manager.js";
@@ -41,6 +35,23 @@ import {
 import { debugLog } from "../lib/debug-log.js";
 import { createSandboxedTools } from "../lib/sandbox/index.js";
 import { t } from "../server/i18n.js";
+
+const REQUIRED_BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
+const OPTIONAL_BUILTIN_TOOLS = ["write", "edit", "bash"];
+const ALL_BUILTIN_TOOL_NAMES = [...REQUIRED_BUILTIN_TOOLS, ...OPTIONAL_BUILTIN_TOOLS];
+const PATH_RULE_ACCESS = new Set(["read_only", "read_write"]);
+
+function uniqStrings(list = []) {
+  const out = [];
+  const seen = new Set();
+  for (const item of list) {
+    const s = String(item || "").trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
 
 export class HanaEngine {
   /**
@@ -127,6 +138,7 @@ export class HanaEngine {
       emitEvent: (e, sp) => this._emitEvent(e, sp),
       emitDevLog: (t, l) => this.emitDevLog(t, l),
       getCurrentModel: () => this.currentModel?.name,
+      refreshCurrentSessionTools: () => this._sessionCoord.refreshCurrentSessionTools(),
     });
 
     // ── Bridge Session Manager ──
@@ -245,7 +257,6 @@ export class HanaEngine {
   get currentModel() { return this._sessionCoord.session?.model ?? this._models.currentModel; }
   get availableModels() { return this._models.availableModels; }
   get memoryEnabled() { return this.agent.memoryEnabled; }
-  get planMode() { return this._configCoord.planMode; }
   get homeCwd() { return this._configCoord.getHomeFolder(this.currentAgentId) || null; }
   get authStorage() { return this._models.authStorage; }
   get modelRegistry() { return this._models.modelRegistry; }
@@ -273,8 +284,15 @@ export class HanaEngine {
   async setModel(id) { return this._configCoord.setModel(id); }
   getThinkingLevel() { return this._configCoord.getThinkingLevel(); }
   setThinkingLevel(l) { return this._configCoord.setThinkingLevel(l); }
-  getSandbox() { return this._prefs.getSandbox(); }
-  setSandbox(v) { this._prefs.setSandbox(v); }
+  getSandbox(agentId = null) {
+    return this.getAgentPermissionConfig(agentId).sandbox.mode !== "full-access";
+  }
+  setSandbox(v, agentId = null) {
+    const target = agentId ? this.getAgent(agentId) : this.agent;
+    if (!target) return;
+    const mode = v === false ? "full-access" : "standard";
+    target.updateConfig({ sandbox: { ...(target.config?.sandbox || {}), mode } });
+  }
   getLearnSkills() { return this._prefs.getLearnSkills(); }
   setLearnSkills(p) { this._prefs.setLearnSkills(p); }
   getLocale() { return this._prefs.getLocale(); }
@@ -284,7 +302,6 @@ export class HanaEngine {
   setMemoryEnabled(v) { return this._configCoord.setMemoryEnabled(v); }
   setMemoryMasterEnabled(id, v) { return this._configCoord.setMemoryMasterEnabled(id, v); }
   persistMemoryEnabled() { return this._configCoord.persistMemoryEnabled(); }
-  setPlanMode(enabled) { return this._configCoord.setPlanMode(enabled, allBuiltInTools); }
   async updateConfig(p) { return this._configCoord.updateConfig(p); }
 
   getPreferences() { return this._readPreferences(); }
@@ -372,6 +389,8 @@ export class HanaEngine {
   async refreshAvailableModels() { return this._models.refreshAvailable(); }
 
   static SHARED_MODEL_KEYS = SHARED_MODEL_KEYS;
+  static REQUIRED_BUILTIN_TOOLS = REQUIRED_BUILTIN_TOOLS;
+  static OPTIONAL_BUILTIN_TOOLS = OPTIONAL_BUILTIN_TOOLS;
 
   // ════════════════════════════
   //  生命周期
@@ -468,9 +487,9 @@ export class HanaEngine {
     // 7. Bridge 孤儿清理
     try { this._bridge.reconcile(); } catch {}
 
-    // 8. 沙盒日志
-    const sandboxEnabled = this._readPreferences().sandbox !== false;
-    log(`✿ 沙盒${sandboxEnabled ? "已启用" : "已关闭"}`);
+    // 8. 沙盒日志（per-agent）
+    const sandboxMode = this.getAgentPermissionConfig().sandbox.mode;
+    log(`✿ 沙盒模式: ${sandboxMode}`);
 
     const totalTime = ((Date.now() - startupTimer) / 1000).toFixed(1);
     log(`✿ 初始化完成（${totalTime}s）`);
@@ -486,19 +505,105 @@ export class HanaEngine {
   //  工具构建
   // ════════════════════════════
 
-  buildTools(cwd, customTools, opts = {}) {
-    const ct = customTools || this.agent.tools;
-    const effectiveAgentDir = opts.agentDir || this.agent.agentDir;
-    const effectiveWorkspace = opts.workspace !== undefined ? opts.workspace : this.homeCwd;
-    const sandboxEnabled = this._readPreferences().sandbox !== false;
-    const effectiveMode = opts.mode || (sandboxEnabled ? "standard" : "full-access");
+  _resolveAgentForToolBuild(opts = {}) {
+    if (opts.agentId) {
+      const ag = this.getAgent(opts.agentId);
+      if (ag) return ag;
+    }
+    if (opts.agentDir) {
+      const matched = [...this.agents.values()].find(ag => ag?.agentDir === opts.agentDir);
+      if (matched) return matched;
+    }
+    return this.agent;
+  }
 
-    return createSandboxedTools(cwd, ct, {
+  _legacySandboxMode() {
+    return this._readPreferences().sandbox === false ? "full-access" : "standard";
+  }
+
+  _normalizePathRules(rawRules) {
+    if (!Array.isArray(rawRules)) return [];
+    const out = [];
+    for (const item of rawRules) {
+      const p = String(item?.path || "").trim();
+      const access = String(item?.access || "").trim();
+      if (!p || !path.isAbsolute(p)) continue;
+      if (!PATH_RULE_ACCESS.has(access)) continue;
+      out.push({ path: p, access });
+    }
+    return out;
+  }
+
+  getToolCatalog(agentId = null) {
+    const ag = agentId ? this.getAgent(agentId) : this.agent;
+    const customNames = uniqStrings(
+      (ag?.getAllCustomTools?.() || [])
+        .map(t => t?.name)
+        .filter(Boolean),
+    );
+    return {
+      builtin_required: [...REQUIRED_BUILTIN_TOOLS],
+      builtin_optional: [...OPTIONAL_BUILTIN_TOOLS],
+      custom: customNames,
+    };
+  }
+
+  getAgentPermissionConfig(agentId = null) {
+    const ag = agentId ? this.getAgent(agentId) : this.agent;
+    const catalog = this.getToolCatalog(agentId);
+    const legacyMode = this._legacySandboxMode();
+    const configuredMode = ag?.config?.sandbox?.mode;
+    const mode = configuredMode === "full-access" || configuredMode === "standard"
+      ? configuredMode
+      : legacyMode;
+    const pathRules = this._normalizePathRules(ag?.config?.sandbox?.path_rules);
+
+    const hasBuiltinConfig = Array.isArray(ag?.config?.tools?.builtin_enabled);
+    const configuredBuiltin = uniqStrings(ag?.config?.tools?.builtin_enabled || []);
+    const builtin_enabled = hasBuiltinConfig
+      ? uniqStrings([...configuredBuiltin, ...REQUIRED_BUILTIN_TOOLS])
+          .filter(n => ALL_BUILTIN_TOOL_NAMES.includes(n))
+      : uniqStrings([...REQUIRED_BUILTIN_TOOLS, ...OPTIONAL_BUILTIN_TOOLS]);
+
+    const hasCustomConfig = Array.isArray(ag?.config?.tools?.custom_enabled);
+    const configuredCustom = uniqStrings(ag?.config?.tools?.custom_enabled || []);
+    const custom_enabled = hasCustomConfig
+      ? configuredCustom.filter(n => catalog.custom.includes(n))
+      : [...catalog.custom];
+
+    return {
+      sandbox: { mode, path_rules: pathRules },
+      tools: { builtin_enabled, custom_enabled },
+      tool_catalog: catalog,
+    };
+  }
+
+  buildTools(cwd, customTools, opts = {}) {
+    const targetAgent = this._resolveAgentForToolBuild(opts);
+    const ct = customTools || targetAgent.tools;
+    const effectiveAgentDir = opts.agentDir || targetAgent.agentDir;
+    const effectiveWorkspace = opts.workspace !== undefined
+      ? opts.workspace
+      : this._configCoord.getHomeFolder(path.basename(effectiveAgentDir));
+    const profile = this.getAgentPermissionConfig(path.basename(effectiveAgentDir));
+    const effectiveMode = opts.mode || profile.sandbox.mode;
+
+    const built = createSandboxedTools(cwd, ct, {
       agentDir: effectiveAgentDir,
       workspace: effectiveWorkspace,
       hanakoHome: this.hanakoHome,
       mode: effectiveMode,
+      pathRules: profile.sandbox.path_rules,
     });
+
+    const requiredSet = new Set(REQUIRED_BUILTIN_TOOLS);
+    const builtinSet = new Set(profile.tools.builtin_enabled);
+    const customSet = new Set(profile.tools.custom_enabled);
+
+    return {
+      tools: built.tools.filter(t => requiredSet.has(t.name) || builtinSet.has(t.name)),
+      customTools: built.customTools.filter(t => customSet.has(t.name)),
+    };
   }
 
   // ════════════════════════════

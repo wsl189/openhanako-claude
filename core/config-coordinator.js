@@ -19,7 +19,7 @@ import {
 
 const log = createModuleLogger("config");
 
-/** Plan Mode / Bridge 只读工具名白名单 */
+/** 只读内建工具白名单（delegate 等场景） */
 export const READ_ONLY_BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
 
 /** 全局共享模型字段 → preferences key 映射 */
@@ -47,13 +47,11 @@ export class ConfigCoordinator {
    * @param {(event, sp) => void} deps.emitEvent
    * @param {(text, level?) => void} deps.emitDevLog
    * @param {() => string|null} deps.getCurrentModel - currentModel name
+   * @param {() => Promise<{ reloaded: boolean, reason?: string, sessionPath?: string }>} [deps.refreshCurrentSessionTools]
    */
   constructor(deps) {
     this._d = deps;
-    this._planMode = false;
   }
-
-  get planMode() { return this._planMode; }
 
   // ── Home Folder ──
 
@@ -293,32 +291,12 @@ export class ConfigCoordinator {
     }
   }
 
-  // ── Plan Mode ──
-
-  setPlanMode(enabled, allBuiltInTools) {
-    this._planMode = !!enabled;
-    const session = this._d.getSession();
-    if (!session) return;
-    const agent = this._d.getAgent();
-
-    if (this._planMode) {
-      const customNames = (agent.tools || []).map(t => t.name);
-      session.setActiveToolsByName([...READ_ONLY_BUILTIN_TOOLS, ...customNames]);
-    } else {
-      const allNames = allBuiltInTools.map(t => t.name);
-      const customNames = (agent.tools || []).map(t => t.name);
-      session.setActiveToolsByName([...allNames, ...customNames]);
-    }
-
-    this._d.emitEvent({ type: "plan_mode", enabled: this._planMode }, null);
-    this._d.emitDevLog(`Plan Mode: ${this._planMode ? "ON (只读)" : "OFF (正常)"}`, "info");
-  }
-
   // ── updateConfig ──
 
   async updateConfig(partial) {
     const keys = Object.keys(partial);
     if (keys.length) log.log(`updateConfig: keys=[${keys.join(",")}]`);
+    const shouldRefreshSessionTools = partial.sandbox !== undefined || partial.tools !== undefined;
 
     const agent = this._d.getAgent();
     const models = this._d.getModels();
@@ -371,6 +349,21 @@ export class ConfigCoordinator {
           if (entry?.agentId !== activeAgentId) continue;
           refreshPrompt(entry.session, "skills update (cached session)");
         }
+      }
+    }
+
+    if (shouldRefreshSessionTools && typeof this._d.refreshCurrentSessionTools === "function") {
+      try {
+        const refreshed = await this._d.refreshCurrentSessionTools();
+        if (refreshed?.reloaded) {
+          log.log(`current session tools refreshed: ${refreshed.sessionPath || "(unknown)"}`);
+        } else if (refreshed?.reason && refreshed.reason !== "no-active-session") {
+          const msg = `current session tools refresh skipped: ${refreshed.reason}`;
+          if (refreshed.reason === "streaming") log.warn(msg);
+          else log.log(msg);
+        }
+      } catch (err) {
+        log.warn(`refresh current session tools failed: ${err.message}`);
       }
     }
 

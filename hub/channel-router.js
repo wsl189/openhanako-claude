@@ -458,13 +458,10 @@ export class ChannelRouter {
           capture: true,
         },
       ],
-      // 频道回复仅允许只读工具（如 search_memory / web_search），
-      // 禁止 channel/dm/ask_agent 等写操作，避免 @ 触发回环。
       {
         engine: this._engine,
         signal,
         sessionSuffix: "channel-temp",
-        readOnly: true,
         extractInlineImages: true,
         systemAppend: sessionRoleAppend,
       },
@@ -493,7 +490,6 @@ export class ChannelRouter {
             engine: this._engine,
             signal,
             sessionSuffix: "channel-temp",
-            readOnly: true,
             extractInlineImages: true,
             systemAppend: sessionRoleAppend,
           },

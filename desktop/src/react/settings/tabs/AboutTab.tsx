@@ -19,7 +19,7 @@ export function AboutTab() {
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showFullAccessWarning, setShowFullAccessWarning] = useState(false);
 
-  const sandboxEnabled = settingsConfig?.sandbox !== false;
+  const sandboxEnabled = settingsConfig?.sandbox?.mode !== 'full-access';
 
   const handleIconTap = () => {
     tapCount.current += 1;
@@ -133,7 +133,7 @@ export function AboutTab() {
                   if (on) {
                     setShowFullAccessWarning(true);
                   } else {
-                    await autoSaveConfig({ sandbox: true }, { silent: true });
+                    await autoSaveConfig({ sandbox: { mode: 'standard' } }, { silent: true });
                     await loadSettingsConfig();
                   }
                 }}
@@ -160,7 +160,7 @@ export function AboutTab() {
               </button>
               <button className="hana-warning-confirm" onClick={async () => {
                 setShowFullAccessWarning(false);
-                await autoSaveConfig({ sandbox: false }, { silent: true });
+                await autoSaveConfig({ sandbox: { mode: 'full-access' } }, { silent: true });
                 await loadSettingsConfig();
               }}>
                 {t('settings.about.fullAccessConfirm')}

@@ -9,14 +9,10 @@
 import fs from "fs";
 import path from "path";
 import { createModuleLogger } from "../lib/debug-log.js";
-import { t, getLocale } from "../server/i18n.js";
+import { t } from "../server/i18n.js";
 import {
-  createChannel as createChannelFile,
-  generateChannelId,
   addBookmarkEntry,
-  addChannelMember,
   getChannelMembers,
-  getChannelMeta,
   removeChannelMember,
   removeBookmarkEntry,
   deleteChannel,
@@ -111,37 +107,20 @@ export class ChannelManager {
   }
 
   /**
-   * 为新 agent 设置默认频道
-   * - 确保 ch_crew 频道存在并加入
-   * - 写 agent 的 channels.md
+   * 为新 agent 初始化频道书签
+   * - 不自动创建任何频道
+   * - 仅同步当前已包含该 agent 的频道到 channels.md
    */
   setupChannelsForNewAgent(agentId) {
     const channelsMdPath = path.join(this._agentsDir, agentId, "channels.md");
 
-    // 确保 ch_crew 频道存在
-    const crewFile = path.join(this._channelsDir, "ch_crew.md");
-    if (!fs.existsSync(crewFile)) {
-      const chName = t("error.defaultChannelName");
-      const chDesc = t("error.defaultChannelDesc");
-      createChannelFile(this._channelsDir, {
-        id: "ch_crew",
-        name: chName,
-        description: chDesc,
-        members: [agentId],
-        intro: chDesc,
-      });
-    } else {
-      addChannelMember(crewFile, agentId);
-    }
-
     // 写 agent 的 channels.md（扫描所有频道，加入包含该 agent 的）
-    const allChannels = ["ch_crew"];
+    const allChannels = [];
     try {
       const files = fs.readdirSync(this._channelsDir);
       for (const f of files) {
         if (!f.endsWith(".md")) continue;
         const channelId = f.replace(".md", "");
-        if (channelId === "ch_crew") continue;
         const members = getChannelMembers(path.join(this._channelsDir, f));
         if (members.includes(agentId)) {
           allChannels.push(channelId);

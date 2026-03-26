@@ -3,11 +3,80 @@ import { useSettingsStore } from '../store';
 import { hanaFetch, hanaUrl, yuanFallbackAvatar } from '../api';
 import { t, autoSaveConfig, savePins } from '../helpers';
 import { SelectWidget } from '../widgets/SelectWidget';
+import { Toggle } from '../widgets/Toggle';
 import { browseAgent, loadSettingsConfig, loadAgents } from '../actions';
 
 import kongBannerUrl from '../../../assets/kong-banner.jpg';
 
 const platform = (window as any).platform;
+const REQUIRED_BUILTINS = ['read', 'grep', 'find', 'ls'];
+const OPTIONAL_BUILTINS = ['write', 'edit', 'bash'];
+const ABS_PATH_RE = /^([A-Za-z]:[\\/]|\/)/;
+const AGENT_CARD_NAME_MAX_UNITS = 4;
+const BUILTIN_TOOL_HINT_KEYS: Record<string, string> = {
+  read: 'settings.agent.builtinReadLabel',
+  grep: 'settings.agent.builtinGrepLabel',
+  find: 'settings.agent.builtinFindLabel',
+  ls: 'settings.agent.builtinLsLabel',
+  write: 'settings.agent.builtinWriteLabel',
+  edit: 'settings.agent.builtinEditLabel',
+  bash: 'settings.agent.builtinBashLabel',
+};
+const BUILTIN_TOOL_DESC_KEYS: Record<string, string> = {
+  read: 'settings.agent.builtinReadDesc',
+  grep: 'settings.agent.builtinGrepDesc',
+  find: 'settings.agent.builtinFindDesc',
+  ls: 'settings.agent.builtinLsDesc',
+  write: 'settings.agent.builtinWriteDesc',
+  edit: 'settings.agent.builtinEditDesc',
+  bash: 'settings.agent.builtinBashDesc',
+};
+const CUSTOM_TOOL_HINT_KEYS: Record<string, string> = {
+  web_search: 'toolDef.webSearch.label',
+  web_fetch: 'toolDef.webFetch.label',
+  browser: 'toolDef.browser.label',
+  search_memory: 'error.memorySearchLabel',
+  pin_memory: 'toolDef.pinnedMemory.pinLabel',
+  unpin_memory: 'toolDef.pinnedMemory.unpinLabel',
+  recall_experience: 'toolDef.experience.recallLabel',
+  record_experience: 'toolDef.experience.recordLabel',
+  todo: 'toolDef.todo.label',
+  cron: 'toolDef.cron.label',
+  notify: 'toolDef.notify.label',
+  present_files: 'toolDef.outputFile.label',
+  create_artifact: 'toolDef.artifact.label',
+  channel: 'toolDef.channel.label',
+  ask_agent: 'toolDef.askAgent.label',
+  dm: 'toolDef.dm.label',
+  message_agent: 'toolDef.messageAgent.label',
+  describe_images: 'toolDef.describeImages.label',
+  update_settings: 'toolDef.updateSettings.label',
+  delegate: 'toolDef.delegate.label',
+  install_skill: 'toolDef.installSkill.label',
+};
+const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
+  web_search: 'toolDef.webSearch.description',
+  web_fetch: 'toolDef.webFetch.description',
+  browser: 'toolDef.browser.description',
+  search_memory: 'error.memorySearchDesc',
+  pin_memory: 'toolDef.pinnedMemory.pinDescription',
+  unpin_memory: 'toolDef.pinnedMemory.unpinDescription',
+  recall_experience: 'toolDef.experience.recallDescription',
+  record_experience: 'toolDef.experience.recordDescription',
+  todo: 'toolDef.todo.description',
+  cron: 'toolDef.cron.description',
+  notify: 'toolDef.notify.description',
+  present_files: 'toolDef.outputFile.description',
+  create_artifact: 'toolDef.artifact.description',
+  channel: 'toolDef.channel.description',
+  ask_agent: 'toolDef.askAgent.description',
+  dm: 'toolDef.dm.description',
+  message_agent: 'toolDef.messageAgent.description',
+  describe_images: 'toolDef.describeImages.description',
+  update_settings: 'toolDef.updateSettings.description',
+  delegate: 'toolDef.delegate.description',
+  install_skill: 'toolDef.installSkill.description',
+};
 
 interface ExpCategory { name: string; entries: string[]; }
 
@@ -35,6 +104,24 @@ function serializeExperience(cats: ExpCategory[]): string {
     .join('\n\n') + (cats.length ? '\n' : '');
 }
 
+function truncateAgentCardName(name: string, maxUnits = AGENT_CARD_NAME_MAX_UNITS): string {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  const chars = Array.from(raw);
+  let units = 0;
+  let cut = chars.length;
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    const w = /^[\u0000-\u007F]$/.test(ch) ? 0.5 : 1;
+    if (units + w > maxUnits) {
+      cut = i;
+      break;
+    }
+    units += w;
+  }
+  return cut < chars.length ? `${chars.slice(0, cut).join('')}...` : raw;
+}
+
 export function AgentTab() {
   const store = useSettingsStore();
   const {
@@ -52,8 +139,43 @@ export function AgentTab() {
   const [identity, setIdentity] = useState('');
   const [ishiki, setIshiki] = useState('');
   const [agentWorkspace, setAgentWorkspace] = useState('');
+  const [sandboxMode, setSandboxMode] = useState<'standard' | 'full-access'>('standard');
+  const [sandboxPathRules, setSandboxPathRules] = useState<Array<{ path: string; access: 'read_only' | 'read_write' }>>([]);
+  const [sandboxPathInput, setSandboxPathInput] = useState('');
+  const [sandboxPathAccess, setSandboxPathAccess] = useState<'read_only' | 'read_write'>('read_only');
+  const [sandboxConfigOpen, setSandboxConfigOpen] = useState(false);
+  const sandboxPathRulesRef = useRef<Array<{ path: string; access: 'read_only' | 'read_write' }>>([]);
+  const sandboxPathInputRef = useRef('');
+  const sandboxPathAccessRef = useRef<'read_only' | 'read_write'>('read_only');
+  const [builtinEnabled, setBuiltinEnabled] = useState<string[]>([...REQUIRED_BUILTINS, ...OPTIONAL_BUILTINS]);
+  const [customEnabled, setCustomEnabled] = useState<string[]>([]);
+  const [builtinExpanded, setBuiltinExpanded] = useState(false);
+  const [customExpanded, setCustomExpanded] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [expCategories, setExpCategories] = useState<ExpCategory[]>([]);
+
+  const updateSandboxPathRules = (nextRules: Array<{ path: string; access: 'read_only' | 'read_write' }>) => {
+    sandboxPathRulesRef.current = nextRules;
+    setSandboxPathRules(nextRules);
+  };
+
+  const updateSandboxPathInput = (nextPath: string) => {
+    sandboxPathInputRef.current = nextPath;
+    setSandboxPathInput(nextPath);
+  };
+
+  const updateSandboxPathAccess = (nextAccess: 'read_only' | 'read_write') => {
+    sandboxPathAccessRef.current = nextAccess;
+    setSandboxPathAccess(nextAccess);
+  };
+
+  const toolCatalog = (() => {
+    const raw = settingsConfig?._toolCatalog || {};
+    const builtinRequired = Array.isArray(raw.builtin_required) ? raw.builtin_required.map(String) : REQUIRED_BUILTINS;
+    const builtinOptional = Array.isArray(raw.builtin_optional) ? raw.builtin_optional.map(String) : OPTIONAL_BUILTINS;
+    const custom = Array.isArray(raw.custom) ? raw.custom.map(String) : [];
+    return { builtinRequired, builtinOptional, custom };
+  })();
 
   useEffect(() => {
     if (settingsConfig) {
@@ -61,9 +183,47 @@ export function AgentTab() {
       setIdentity(settingsConfig._identity || '');
       setIshiki(settingsConfig._ishiki || '');
       setAgentWorkspace(settingsConfig.desk?.home_folder || '');
+      const mode = settingsConfig.sandbox?.mode === 'full-access' ? 'full-access' : 'standard';
+      setSandboxMode(mode);
+      const rules = Array.isArray(settingsConfig.sandbox?.path_rules)
+        ? settingsConfig.sandbox.path_rules
+            .filter((r: any) => r?.path && (r?.access === 'read_only' || r?.access === 'read_write'))
+            .map((r: any) => ({ path: String(r.path), access: r.access }))
+        : [];
+      updateSandboxPathRules(rules);
+      setSandboxConfigOpen(false);
+      updateSandboxPathInput('');
+      updateSandboxPathAccess('read_only');
+      const cfgBuiltin = Array.isArray(settingsConfig.tools?.builtin_enabled)
+        ? settingsConfig.tools.builtin_enabled.map(String)
+        : [...toolCatalog.builtinRequired, ...toolCatalog.builtinOptional];
+      const nextBuiltin = Array.from(new Set([
+        ...toolCatalog.builtinRequired,
+        ...cfgBuiltin.filter((n: string) => toolCatalog.builtinOptional.includes(n)),
+      ]));
+      setBuiltinEnabled(nextBuiltin);
+      const cfgCustom = Array.isArray(settingsConfig.tools?.custom_enabled)
+        ? settingsConfig.tools.custom_enabled.map(String)
+        : [...toolCatalog.custom];
+      setCustomEnabled(cfgCustom.filter((n: string) => toolCatalog.custom.includes(n)));
       setExpCategories(parseExperience(settingsConfig._experience || ''));
     }
   }, [settingsConfig]);
+
+  const getToolHint = (name: string, group: 'builtin' | 'custom') => {
+    const descKey = group === 'builtin' ? BUILTIN_TOOL_DESC_KEYS[name] : CUSTOM_TOOL_DESC_KEYS[name];
+    if (descKey) {
+      const resolvedDesc = t(descKey);
+      if (resolvedDesc !== descKey) return resolvedDesc;
+    }
+    const labelKey = group === 'builtin' ? BUILTIN_TOOL_HINT_KEYS[name] : CUSTOM_TOOL_HINT_KEYS[name];
+    if (labelKey) {
+      const resolvedLabel = t(labelKey);
+      if (resolvedLabel !== labelKey) return resolvedLabel;
+    }
+    const fallback = t('settings.agent.toolDescFallback');
+    return fallback === 'settings.agent.toolDescFallback' ? name : fallback;
+  };
 
   // 仅在“明确选中了其他助手”时，才显示删除等仅针对非当前助手的操作。
   const isViewingOther = !!selectedAgentId && selectedAgentId !== currentAgentId;
@@ -103,6 +263,120 @@ export function AgentTab() {
     if (agentId === currentAgentId) {
       platform?.settingsChanged?.('agent-updated', { agentId, homeFolder: '' });
     }
+  };
+
+  const saveSandbox = async (nextMode: 'standard' | 'full-access', nextRules: Array<{ path: string; access: 'read_only' | 'read_write' }>) => {
+    await autoSaveConfig({
+      sandbox: {
+        mode: nextMode,
+        path_rules: nextRules,
+      },
+    }, { silent: true });
+  };
+
+  const appendSandboxPathRuleToRules = (
+    baseRules: Array<{ path: string; access: 'read_only' | 'read_write' }>,
+    rawPath: string,
+    access: 'read_only' | 'read_write',
+    notify = true,
+  ) => {
+    const raw = rawPath.trim();
+    if (!raw) return baseRules;
+    if (!ABS_PATH_RE.test(raw)) {
+      if (notify) showToast(t('settings.agent.pathMustAbsolute'), 'error');
+      return null;
+    }
+    if (baseRules.some(r => r.path === raw)) {
+      if (notify) showToast(t('settings.agent.pathDuplicate'), 'error');
+      return null;
+    }
+    return [...baseRules, { path: raw, access }];
+  };
+
+  const finalizeSandboxPathRules = (
+    notify = true,
+    baseRules = sandboxPathRulesRef.current,
+    rawPath = sandboxPathInputRef.current,
+    access = sandboxPathAccessRef.current,
+  ) => {
+    const pending = rawPath.trim();
+    if (!pending) return baseRules;
+    const merged = appendSandboxPathRuleToRules(baseRules, pending, access, notify);
+    if (!merged) return notify ? null : baseRules;
+    return merged;
+  };
+
+  const setSandboxModeAndSave = async (nextMode: 'standard' | 'full-access') => {
+    let rulesToSave = sandboxPathRulesRef.current;
+    if (sandboxConfigOpen) {
+      const finalized = finalizeSandboxPathRules(false);
+      if (!finalized) return;
+      rulesToSave = finalized;
+      setSandboxConfigOpen(false);
+      updateSandboxPathRules(finalized);
+      updateSandboxPathInput('');
+    }
+    setSandboxMode(nextMode);
+    await saveSandbox(nextMode, rulesToSave);
+  };
+
+  const addSandboxPathRule = async () => {
+    const next = appendSandboxPathRuleToRules(
+      sandboxPathRulesRef.current,
+      sandboxPathInputRef.current,
+      sandboxPathAccessRef.current,
+      true,
+    );
+    if (!next) return;
+    updateSandboxPathRules(next);
+    updateSandboxPathInput('');
+    await saveSandbox(sandboxMode, next);
+  };
+
+  const pickSandboxPathInput = async () => {
+    const folder = await platform?.selectFolder?.();
+    if (!folder) return;
+    updateSandboxPathInput(folder);
+  };
+
+  const openSandboxConfig = () => {
+    updateSandboxPathInput('');
+    updateSandboxPathAccess('read_only');
+    setSandboxConfigOpen(true);
+  };
+
+  const closeSandboxConfigAndSave = async () => {
+    const finalized = finalizeSandboxPathRules(false);
+    if (!finalized) return;
+    setSandboxConfigOpen(false);
+    updateSandboxPathRules(finalized);
+    updateSandboxPathInput('');
+    await saveSandbox(sandboxMode, finalized);
+  };
+
+  const removeSavedSandboxPathRule = async (rulePath: string) => {
+    const next = sandboxPathRulesRef.current.filter(r => r.path !== rulePath);
+    updateSandboxPathRules(next);
+    await saveSandbox(sandboxMode, next);
+  };
+
+  const setBuiltinEnabledAndSave = async (name: string, enabled: boolean) => {
+    if (toolCatalog.builtinRequired.includes(name)) return;
+    const optionalSelected = builtinEnabled.filter(n => toolCatalog.builtinOptional.includes(n));
+    const nextOptional = enabled
+      ? Array.from(new Set([...optionalSelected, name]))
+      : optionalSelected.filter(n => n !== name);
+    const next = Array.from(new Set([...toolCatalog.builtinRequired, ...nextOptional]));
+    setBuiltinEnabled(next);
+    await autoSaveConfig({ tools: { builtin_enabled: next } }, { silent: true });
+  };
+
+  const setCustomEnabledAndSave = async (name: string, enabled: boolean) => {
+    const next = enabled
+      ? Array.from(new Set([...customEnabled, name]))
+      : customEnabled.filter(n => n !== name);
+    setCustomEnabled(next);
+    await autoSaveConfig({ tools: { custom_enabled: next } }, { silent: true });
   };
 
   const deletePin = (index: number) => {
@@ -281,6 +555,9 @@ export function AgentTab() {
           />
           <span className="settings-field-hint">{t('settings.agent.ishikiHint')}</span>
         </div>
+        <div className="agent-basic-divider">
+          <span>{t('settings.agent.basicConfig')}</span>
+        </div>
         <div className="settings-field">
           <label className="settings-field-label">{t('settings.agent.chatModel')}</label>
           <SelectWidget
@@ -330,6 +607,186 @@ export function AgentTab() {
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
+            )}
+          </div>
+        </div>
+
+        <div className="settings-subsection">
+          <div className="settings-subsection-header agent-sandbox-header">
+            <div className="agent-sandbox-title-wrap">
+              <h3 className="settings-subsection-title">{t('settings.agent.sandboxTitle')}</h3>
+              <span className="settings-subsection-hint">{t('settings.agent.sandboxHint')}</span>
+            </div>
+            <Toggle
+              on={sandboxMode === 'standard'}
+              onChange={(on) => setSandboxModeAndSave(on ? 'standard' : 'full-access')}
+            />
+          </div>
+          {sandboxMode === 'standard' && (
+            <>
+              <button className="agent-sandbox-add-card" onClick={openSandboxConfig}>
+                {t('settings.agent.pathQuickAdd')}
+              </button>
+              {sandboxConfigOpen && (
+                <div className="agent-sandbox-config-box">
+                  <div className="agent-sandbox-config-head">
+                    <div className="settings-field-hint">{t('settings.agent.pathInputGuide')}</div>
+                    <button className="settings-folder-clear agent-sandbox-config-close" onClick={closeSandboxConfigAndSave} title={t('settings.agent.pathConfigClose')}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="agent-path-add-row">
+                    <input
+                      className="settings-input"
+                      type="text"
+                      value={sandboxPathInput}
+                      placeholder={t('settings.agent.sandboxPathPlaceholder')}
+                      onChange={(e) => updateSandboxPathInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSandboxPathRule(); } }}
+                    />
+                    <button className="settings-folder-browse" onClick={pickSandboxPathInput} title={t('settings.agent.pathPick')}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                    </button>
+                    <div className="agent-path-access-select">
+                      <SelectWidget
+                        options={[
+                          { value: 'read_only', label: t('settings.agent.pathAccessReadOnly') },
+                          { value: 'read_write', label: t('settings.agent.pathAccessReadWrite') },
+                        ]}
+                        value={sandboxPathAccess}
+                        onChange={(v) => updateSandboxPathAccess(v as 'read_only' | 'read_write')}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+              {!sandboxConfigOpen && (
+                <div className="agent-sandbox-saved-list">
+                  {sandboxPathRules.length === 0 ? (
+                    <div className="pin-empty">{t('settings.agent.pathEmpty')}</div>
+                  ) : sandboxPathRules.map(rule => (
+                    <div key={rule.path} className="agent-sandbox-saved-item">
+                      <div className="agent-sandbox-path-chip">
+                        <code className="agent-path-text">{rule.path}</code>
+                        <span className="agent-sandbox-access-inline">{rule.access === 'read_only' ? 'r' : 'rw'}</span>
+                      </div>
+                      <button
+                        className="settings-folder-clear"
+                        title={t('settings.agent.pathRemove')}
+                        onClick={() => removeSavedSandboxPathRule(rule.path)}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="settings-subsection">
+          <div className="settings-subsection-header">
+            <h3 className="settings-subsection-title">{t('settings.agent.toolsTitle')}</h3>
+            <span className="settings-subsection-hint">{t('settings.agent.toolsHint')}</span>
+          </div>
+          <div className="agent-tool-block">
+            <button
+              className="agent-tool-collapse"
+              onClick={() => {
+                setBuiltinExpanded(v => !v);
+              }}
+            >
+              <span className="settings-field-label">{t('settings.agent.builtinTools')}</span>
+              <span className="agent-tool-collapse-meta">
+                {builtinExpanded ? t('settings.agent.toolsCollapse') : t('settings.agent.toolsExpand')}
+                {' · '}
+                {[...toolCatalog.builtinRequired, ...toolCatalog.builtinOptional].length}
+              </span>
+            </button>
+            {builtinExpanded && (
+              <div className="agent-tool-list">
+                {[...toolCatalog.builtinRequired, ...toolCatalog.builtinOptional].map((name) => {
+                  const enabled = builtinEnabled.includes(name) || toolCatalog.builtinRequired.includes(name);
+                  const locked = toolCatalog.builtinRequired.includes(name);
+                  return (
+                    <div
+                      className="agent-tool-item"
+                      key={name}
+                    >
+                      <div className="agent-tool-row">
+                        <code>{name}</code>
+                        <div
+                          className="agent-tool-toggle-wrap"
+                        >
+                          <button
+                            className={`hana-toggle mini${enabled ? ' on' : ''}${locked ? ' disabled' : ''}`}
+                            onClick={() => !locked && setBuiltinEnabledAndSave(name, !enabled)}
+                            disabled={locked}
+                            title={locked ? t('settings.agent.builtinLocked') : undefined}
+                          />
+                          <div className="agent-tool-tooltip">
+                            {getToolHint(name, 'builtin')}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="agent-tool-block">
+            <button
+              className="agent-tool-collapse"
+              onClick={() => {
+                setCustomExpanded(v => !v);
+              }}
+            >
+              <span className="settings-field-label">{t('settings.agent.customTools')}</span>
+              <span className="agent-tool-collapse-meta">
+                {customExpanded ? t('settings.agent.toolsCollapse') : t('settings.agent.toolsExpand')}
+                {' · '}
+                {toolCatalog.custom.length}
+              </span>
+            </button>
+            {customExpanded && (
+              <div className="agent-tool-list">
+                {toolCatalog.custom.length === 0 ? (
+                  <div className="pin-empty">{t('settings.agent.customToolsEmpty')}</div>
+                ) : toolCatalog.custom.map((name: string) => {
+                  const enabled = customEnabled.includes(name);
+                  return (
+                    <div
+                      className="agent-tool-item"
+                      key={name}
+                    >
+                      <div className="agent-tool-row">
+                        <code>{name}</code>
+                        <div
+                          className="agent-tool-toggle-wrap"
+                        >
+                          <button
+                            className={`hana-toggle mini${enabled ? ' on' : ''}`}
+                            onClick={() => setCustomEnabledAndSave(name, !enabled)}
+                          />
+                          <div className="agent-tool-tooltip">
+                            {getToolHint(name, 'custom')}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
@@ -836,7 +1293,9 @@ function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, onAvatar
                   </div>
                 )}
               </div>
-              <span className="agent-card-name">{agent.name}</span>
+              <span className="agent-card-name" title={agent.name}>
+                {truncateAgentCardName(agent.name)}
+              </span>
             </div>
           );
         })}
