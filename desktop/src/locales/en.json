@@ -1334,6 +1334,10 @@
     "cantRead": "Cannot read file",
     "copied": "Copied to skill list",
     "installFailed": "Install failed: ",
+    "saveFailed": "Save failed",
+    "saved": "Saved",
+    "saving": "Saving...",
+    "unsaved": "Unsaved changes",
     "structure": "Folder Tree",
     "expandAll": "Expand all",
     "collapseAll": "Collapse all"

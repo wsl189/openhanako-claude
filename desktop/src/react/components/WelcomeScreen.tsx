@@ -6,7 +6,7 @@
  * 通过 portal 渲染到 #welcome，从 Zustand 状态驱动。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { useStore } from '../stores';
 import { hanaUrl } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
@@ -120,24 +120,18 @@ function WelcomeAvatar({ agentId, hasAvatar, agentAvatarUrl, yuan, name }: {
   yuan: string;
   name: string;
 }) {
-  const [src, setSrc] = useState(() => {
-    if (agentId && hasAvatar) return hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`);
-    return agentAvatarUrl || yuanFallbackAvatar(yuan);
-  });
+  const fallback = yuanFallbackAvatar(yuan);
+  const src = agentId && hasAvatar
+    ? hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`)
+    : (agentAvatarUrl || fallback);
 
-  useEffect(() => {
-    if (agentId && hasAvatar) {
-      setSrc(hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`));
-    } else if (agentAvatarUrl) {
-      setSrc(agentAvatarUrl);
-    } else {
-      setSrc(yuanFallbackAvatar(yuan));
+  const handleError = useCallback((e: SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    if (img.src !== fallback) {
+      img.onerror = null;
+      img.src = fallback;
     }
-  }, [agentId, hasAvatar, agentAvatarUrl, yuan]);
-
-  const handleError = useCallback(() => {
-    setSrc(yuanFallbackAvatar(yuan));
-  }, [yuan]);
+  }, [fallback]);
 
   return (
     <img
@@ -179,21 +173,18 @@ function AgentChip({ agent, isSelected, onClick }: {
   isSelected: boolean;
   onClick: (id: string) => void;
 }) {
-  const [src, setSrc] = useState(() =>
-    agent.hasAvatar ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`) : yuanFallbackAvatar(agent.yuan),
-  );
+  const fallback = yuanFallbackAvatar(agent.yuan);
+  const src = agent.hasAvatar
+    ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`)
+    : fallback;
 
-  useEffect(() => {
-    if (agent.hasAvatar) {
-      setSrc(hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`));
-    } else {
-      setSrc(yuanFallbackAvatar(agent.yuan));
+  const handleError = useCallback((e: SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    if (img.src !== fallback) {
+      img.onerror = null;
+      img.src = fallback;
     }
-  }, [agent.id, agent.hasAvatar, agent.yuan]);
-
-  const handleError = useCallback(() => {
-    setSrc(yuanFallbackAvatar(agent.yuan));
-  }, [agent.yuan]);
+  }, [fallback]);
 
   const handleClick = useCallback(() => {
     onClick(agent.id);

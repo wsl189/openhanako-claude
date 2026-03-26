@@ -62,7 +62,10 @@ contextBridge.exposeInMainWorld("hana", {
   openSkillViewer: (data) => ipcRenderer.invoke("open-skill-viewer", data),
   listSkillFiles: (baseDir) => ipcRenderer.invoke("skill-viewer-list-files", baseDir),
   readSkillFile: (filePath) => ipcRenderer.invoke("skill-viewer-read-file", filePath),
+  writeSkillFile: (baseDir, filePath, content) => ipcRenderer.invoke("skill-viewer-write-file", baseDir, filePath, content),
   onSkillViewerLoad: (cb) => ipcRenderer.on("skill-viewer-load", (_, data) => cb(data)),
+  onSkillViewerBeforeClose: (cb) => ipcRenderer.on("skill-viewer-before-close", () => cb()),
+  confirmSkillViewerClose: () => ipcRenderer.invoke("confirm-skill-viewer-close"),
   closeSkillViewer: () => ipcRenderer.invoke("close-skill-viewer"),
   // 原生拖拽（书桌文件拖到 Finder / 聊天区）
   startDrag: (filePaths) => ipcRenderer.send("start-drag", filePaths),

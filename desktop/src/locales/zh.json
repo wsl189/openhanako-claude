@@ -1334,6 +1334,10 @@
     "cantRead": "无法读取文件",
     "copied": "已复制到技能列表",
     "installFailed": "安装失败: ",
+    "saveFailed": "保存失败",
+    "saved": "已保存",
+    "saving": "保存中…",
+    "unsaved": "未保存更改",
     "structure": "目录结构",
     "expandAll": "全部展开",
     "collapseAll": "全部折叠"

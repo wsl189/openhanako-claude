@@ -170,9 +170,7 @@ async function uploadCroppedAvatar(role: string, dataUrl: string) {
     if (role === 'agent') {
       const agentId = store.getSettingsAgentId();
       await loadAgents();
-      if (agentId === store.currentAgentId) {
-        platform?.settingsChanged?.('agent-updated', { agentId });
-      }
+      platform?.settingsChanged?.('agent-updated', { agentId, avatarUpdated: true });
     } else {
       const url = hanaUrl(`/api/avatar/${role}?t=${ts}`);
       store.set({ userAvatarUrl: url });

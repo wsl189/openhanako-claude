@@ -1,16 +1,13 @@
 /**
- * SkillViewerOverlay.tsx — 技能预览全屏 overlay
+ * SkillViewerOverlay.tsx — 技能详情窗口
  *
- * 从独立 BrowserWindow 迁移为主窗口 overlay。
- * 文件树 + Markdown 预览 + 安装按钮。
+ * 文件树 + 可编辑文本 + 自动保存（切文件/关窗时会触发保存）
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
-
-import { getMdWithOpts } from '../utils/markdown';
 
 interface SkillInfo {
   name: string;
@@ -26,7 +23,7 @@ interface TreeItem {
   children?: TreeItem[];
 }
 
-const md = getMdWithOpts({ html: true, linkify: true, breaks: true });
+type SaveState = 'saved' | 'saving' | 'unsaved' | 'error';
 
 export function SkillViewerOverlay() {
   const { t } = useI18n();
@@ -39,30 +36,88 @@ export function SkillViewerOverlay() {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileName, setFileName] = useState('SKILL.md');
   const [content, setContent] = useState<string | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>('saved');
   const [toast, setToast] = useState<string | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const close = useCallback(() => {
-    useStore.setState({ skillViewerData: null });
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const contentRef = useRef<string | null>(null);
+  const activeFileRef = useRef<string | null>(null);
+  const activeBaseDirRef = useRef<string | null>(null);
+  const isDirtyRef = useRef(false);
+  const savingRef = useRef(false);
+
+  useEffect(() => { contentRef.current = content; }, [content]);
+  useEffect(() => { activeFileRef.current = activeFile; }, [activeFile]);
+  useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
+
+  function showToast(msg: string) {
+    setToast(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  }
+
+  const saveCurrentFile = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
+    const silent = !!opts?.silent;
+    const force = !!opts?.force;
+    if (savingRef.current) return true;
+    const filePath = activeFileRef.current;
+    const baseDir = activeBaseDirRef.current;
+    const nextContent = contentRef.current;
+    if (!filePath || !baseDir || nextContent == null) return true;
+    if (!force && !isDirtyRef.current) return true;
+
+    savingRef.current = true;
+    setSaveState('saving');
+    try {
+      const platform = (window as any).platform || (window as any).hana;
+      const ok = await platform?.writeSkillFile?.(baseDir, filePath, nextContent);
+      if (!ok) throw new Error('write_failed');
+      setIsDirty(false);
+      setSaveState('saved');
+      if (!silent) showToast(t('skillViewer.saved'));
+      return true;
+    } catch (e: any) {
+      setSaveState('error');
+      if (!silent) {
+        const reason = e?.message && e.message !== 'write_failed' ? `: ${e.message}` : '';
+        showToast(`${t('skillViewer.saveFailed')}${reason}`);
+      }
+      return false;
+    } finally {
+      savingRef.current = false;
+    }
+  }, [t]);
+
+  const close = useCallback(async (opts?: { system?: boolean }) => {
+    clearTimeout(autoSaveTimer.current);
+    await saveCurrentFile({ silent: true, force: true });
     const platform = (window as any).platform || (window as any).hana;
-    void platform?.closeSkillViewer?.();
-  }, []);
+
+    if (opts?.system) {
+      await platform?.confirmSkillViewerClose?.();
+      return;
+    }
+
+    useStore.setState({ skillViewerData: null });
+    await platform?.closeSkillViewer?.();
+  }, [saveCurrentFile]);
 
   // 加载文件树
   useEffect(() => {
     if (!data) return;
     (async () => {
+      await saveCurrentFile({ silent: true, force: true });
       const hana = (window as any).hana;
       const items = await hana?.listSkillFiles?.(data.baseDir);
-      const tree = items || [];
-      setFiles(tree);
-      // 默认折叠，用户按需展开。
+      setFiles(items || []);
       setExpandedDirs({});
-      const mdPath = data.filePath || (data.baseDir + '/SKILL.md');
-      loadFile(mdPath, 'SKILL.md');
+      const initialPath = data.filePath || (data.baseDir + '/SKILL.md');
+      await loadFile(initialPath, 'SKILL.md', data.baseDir);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.baseDir]);
+  }, [data?.baseDir, data?.filePath]);
 
   useEffect(() => {
     const platform = (window as any).platform || (window as any).hana;
@@ -76,11 +131,33 @@ export function SkillViewerOverlay() {
     })();
   }, []);
 
-  async function loadFile(filePath: string, name: string) {
+  useEffect(() => {
+    const platform = (window as any).platform || (window as any).hana;
+    platform?.onSkillViewerBeforeClose?.(() => {
+      void close({ system: true });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => () => {
+    clearTimeout(toastTimer.current);
+    clearTimeout(autoSaveTimer.current);
+  }, []);
+
+  async function loadFile(filePath: string, name: string, baseDir = data?.baseDir || '') {
+    if (activeFileRef.current && activeFileRef.current !== filePath) {
+      await saveCurrentFile({ silent: true, force: true });
+    }
+    clearTimeout(autoSaveTimer.current);
+    activeFileRef.current = filePath;
     setActiveFile(filePath);
     setFileName(name);
+    activeBaseDirRef.current = baseDir;
     const text = await (window as any).hana?.readSkillFile?.(filePath);
+    contentRef.current = text;
     setContent(text);
+    setIsDirty(false);
+    setSaveState('saved');
   }
 
   async function onCopy() {
@@ -99,12 +176,6 @@ export function SkillViewerOverlay() {
     }
   }
 
-  function showToast(msg: string) {
-    setToast(msg);
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 2000);
-  }
-
   const expandAll = useCallback(() => {
     const allDirs = collectDirPaths(files);
     setExpandedDirs(Object.fromEntries(allDirs.map((p) => [p, true])));
@@ -118,31 +189,25 @@ export function SkillViewerOverlay() {
     setExpandedDirs(prev => ({ ...prev, [dirPath]: !prev[dirPath] }));
   }, []);
 
+  const onEditorChange = useCallback((next: string) => {
+    contentRef.current = next;
+    setContent(next);
+    setIsDirty(true);
+    setSaveState('unsaved');
+    clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      void saveCurrentFile({ silent: true });
+    }, 400);
+  }, [saveCurrentFile]);
+
   if (!data) return null;
 
-  // 渲染 markdown 或代码
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  let rendered = '';
-  let description = '';
-  if (content != null) {
-    if (ext === 'md' || ext === 'markdown') {
-      let body = content;
-      const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
-      if (fmMatch) {
-        body = content.slice(fmMatch[0].length);
-        description = parseFmDescription(fmMatch[1]);
-      }
-      rendered = md.render(body);
-    }
-  }
-
   return (
-    <div className="sv-overlay" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div className="sv-overlay" onClick={(e) => { if (e.target === e.currentTarget) void close(); }}>
       <div className="sv-container">
-        {/* 顶栏 */}
         <div className="sv-topbar">
           {!isDarwin && (
-            <button className="sv-close" onClick={close}>
+            <button className="sv-close" onClick={() => void close()}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
               </svg>
@@ -153,6 +218,12 @@ export function SkillViewerOverlay() {
             <span> / {fileName}</span>
           </div>
           <div className="sv-topbar-actions">
+            <span className={`sv-save-state is-${saveState}`}>
+              {saveState === 'saving' && t('skillViewer.saving')}
+              {saveState === 'unsaved' && t('skillViewer.unsaved')}
+              {saveState === 'error' && t('skillViewer.saveFailed')}
+              {saveState === 'saved' && t('skillViewer.saved')}
+            </span>
             {!data.installed && (
               <button className="sv-btn sv-btn-outline" onClick={onCopy}>
                 {t('settings.skills.copyToSkills')}
@@ -161,9 +232,7 @@ export function SkillViewerOverlay() {
           </div>
         </div>
 
-        {/* 主体 */}
         <div className="sv-body">
-          {/* 文件树 */}
           <div className="sv-sidebar">
             <div className="sv-sidebar-header">
               <span className="sv-sidebar-title">{t('skillViewer.structure')}</span>
@@ -184,34 +253,25 @@ export function SkillViewerOverlay() {
             ))}
           </div>
 
-          {/* 内容 */}
           <div className="sv-content">
             {content == null ? (
               <div className="sv-empty">{t('skillViewer.cantRead')}</div>
-            ) : ext === 'md' || ext === 'markdown' ? (
-              <>
-                {description && (
-                  <div className="sv-description">
-                    <div className="sv-description-label">Description</div>
-                    <div className="sv-description-text">{description}</div>
-                  </div>
-                )}
-                <div className="md-content" dangerouslySetInnerHTML={{ __html: rendered }} />
-              </>
             ) : (
-              <pre><code>{content}</code></pre>
+              <textarea
+                className="sv-editor"
+                value={content}
+                spellCheck={false}
+                onChange={(e) => onEditorChange(e.target.value)}
+              />
             )}
           </div>
         </div>
 
-        {/* Toast */}
         {toast && <div className="sv-toast show">{toast}</div>}
       </div>
     </div>
   );
 }
-
-// ── 文件树节点 ──
 
 function TreeNode({ item, activeFile, onSelect, expandedDirs, onToggleDir }: {
   item: TreeItem;
@@ -283,8 +343,6 @@ function TreeNode({ item, activeFile, onSelect, expandedDirs, onToggleDir }: {
   );
 }
 
-// ── 工具函数 ──
-
 function collectDirPaths(items: TreeItem[]): string[] {
   const out: string[] = [];
   const walk = (arr: TreeItem[]) => {
@@ -298,47 +356,4 @@ function collectDirPaths(items: TreeItem[]): string[] {
   };
   walk(items);
   return out;
-}
-
-function parseFmDescription(fm: string): string {
-  const idx = fm.search(/^description:/m);
-  if (idx === -1) return '';
-  const fromDesc = fm.slice(idx);
-  const lines = fromDesc.split('\n');
-  let value = lines[0].replace(/^description:\s*/, '');
-
-  const q = value[0];
-  if (q === '"' || q === "'") {
-    let full = value.slice(1);
-    let i = 1;
-    while (!full.includes(q) && i < lines.length) {
-      full += '\n' + lines[i].replace(/^ {2,}/, '');
-      i++;
-    }
-    const ci = full.indexOf(q);
-    if (ci !== -1) full = full.slice(0, ci);
-    return decodeEscapedNewlines(full.trim());
-  }
-
-  if (value === '|' || value === '>' || value === '|+' || value === '>+') {
-    let block = '';
-    for (let i = 1; i < lines.length; i++) {
-      if (/^\S/.test(lines[i])) break;
-      block += lines[i].replace(/^ {2,}/, '') + '\n';
-    }
-    return decodeEscapedNewlines(block.trim());
-  }
-
-  return decodeEscapedNewlines(value.trim());
-}
-
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function decodeEscapedNewlines(text: string): string {
-  return text
-    .replace(/\\r\\n/g, '\n')
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\n');
 }

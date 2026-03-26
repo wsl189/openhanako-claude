@@ -124,6 +124,13 @@ export interface PlatformApi {
   showInFinder(path: string): void;
   browserEmergencyStop?(): void;
   openSkillViewer?(opts: SkillViewerOptions): void;
+  listSkillFiles?(baseDir: string): Promise<Array<unknown>>;
+  readSkillFile?(filePath: string): Promise<string | null>;
+  writeSkillFile?(baseDir: string, filePath: string, content: string): Promise<boolean>;
+  onSkillViewerLoad?(callback: (data: unknown) => void): void;
+  onSkillViewerBeforeClose?(callback: () => void): void;
+  confirmSkillViewerClose?(): Promise<void>;
+  closeSkillViewer?(): Promise<void>;
   settingsChanged(event: string, payload?: unknown): void;
   onSettingsChanged(callback: (event: string, payload: unknown) => void): void;
   onSwitchTab?(callback: (tab: string) => void): void;

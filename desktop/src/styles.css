@@ -3515,10 +3515,39 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .sv-topbar-actions {
     display: flex;
+    align-items: center;
     gap: 6px;
     flex-shrink: 0;
     margin-left: 8px;
     -webkit-app-region: no-drag;
+}
+
+.sv-save-state {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    background: var(--overlay-light);
+}
+
+.sv-save-state.is-saved {
+    color: #2e7d32;
+    border-color: rgba(46,125,50,0.35);
+    background: rgba(76,175,80,0.12);
+}
+
+.sv-save-state.is-saving {
+    color: #a56a00;
+    border-color: rgba(165,106,0,0.35);
+    background: rgba(255,183,77,0.18);
+}
+
+.sv-save-state.is-unsaved,
+.sv-save-state.is-error {
+    color: #c62828;
+    border-color: rgba(198,40,40,0.35);
+    background: rgba(244,67,54,0.14);
 }
 
 /* macOS 原生红绿灯位于左上角，给技能窗口标题留出安全区，避免遮挡 */
@@ -3654,56 +3683,31 @@ html[data-platform="darwin"] .sv-topbar-title {
 
 .sv-content {
     flex: 1;
-    overflow-y: auto;
-    padding: 24px 32px;
+    min-height: 0;
+    padding: 16px;
 }
 
-.sv-content .md-content {
-    font-family: 'Songti SC', 'Georgia', serif;
-    line-height: 1.75;
-    max-width: 720px;
-}
-
-.sv-content .md-content h1 { text-align: center; }
-
-.sv-description {
-    padding: 14px 16px;
-    margin-bottom: 20px;
-    background: var(--tool-bg, rgba(0,0,0,0.025));
-    border-radius: 8px;
-    max-width: 720px;
-}
-
-.sv-description-label {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    margin-bottom: 6px;
-}
-
-.sv-description-text {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--text-light, var(--text-secondary));
-    white-space: pre-line;
-}
-
-.sv-content pre {
-    background: var(--tool-bg, var(--overlay-light));
+.sv-editor {
+    width: 100%;
+    height: 100%;
+    min-height: 160px;
+    resize: none;
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 16px;
-    overflow-x: auto;
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.65;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", "Menlo", monospace;
+    overflow: auto;
+    box-sizing: border-box;
 }
 
-.sv-content code {
-    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
-    font-size: 13px;
+.sv-editor:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-light, rgba(100, 149, 237, 0.2));
 }
 
 .sv-empty {

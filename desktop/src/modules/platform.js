@@ -82,7 +82,10 @@
     openSkillViewer: () => {},
     listSkillFiles: async () => [],
     readSkillFile: async () => null,
+    writeSkillFile: async () => false,
     onSkillViewerLoad: () => {},
+    onSkillViewerBeforeClose: () => {},
+    confirmSkillViewerClose: () => {},
     closeSkillViewer: () => {},
 
     // 窗口控制（Web 不需要）

@@ -53,6 +53,7 @@ let settingsWindow = null;
 let skillViewerWindow = null;
 let _skillViewerOpenerWindowId = null;
 let _skillViewerPendingData = null;
+let _skillViewerForceClosing = false;
 
 let browserViewerWindow = null;
 let _browserWebView = null;        // 当前活跃的 WebContentsView
@@ -721,6 +722,7 @@ function _showSkillViewer(skillInfo, sourceWin = null) {
   }
 
   _skillViewerPendingData = skillInfo;
+  _skillViewerForceClosing = false;
 
   skillViewerWindow = new BrowserWindow({
     width: 1100,
@@ -755,7 +757,17 @@ function _showSkillViewer(skillInfo, sourceWin = null) {
   skillViewerWindow.on("closed", () => {
     skillViewerWindow = null;
     _skillViewerPendingData = null;
+    _skillViewerForceClosing = false;
     _focusSkillViewerOpener();
+  });
+
+  // 系统关闭窗口（标题栏按钮 / 快捷键）时，先让渲染进程自动保存再关闭。
+  skillViewerWindow.on("close", (event) => {
+    if (isQuitting || _skillViewerForceClosing) return;
+    const wc = skillViewerWindow?.webContents;
+    if (!wc || wc.isDestroyed() || wc.isLoadingMainFrame()) return;
+    event.preventDefault();
+    wc.send("skill-viewer-before-close");
   });
 }
 
@@ -779,6 +791,17 @@ function scanSkillDir(dir, rootDir) {
     }
     return { name: e.name, path: fullPath, isDir: false };
   });
+}
+
+function isWithinDir(baseDir, targetPath) {
+  try {
+    const baseReal = fs.realpathSync(baseDir);
+    const targetReal = fs.realpathSync(targetPath);
+    const rel = path.relative(baseReal, targetReal);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  } catch {
+    return false;
+  }
 }
 
 // ── 创建浏览器查看器窗口（嵌入式 BrowserView） ──
@@ -1670,13 +1693,40 @@ ipcMain.handle("skill-viewer-read-file", (_event, filePath) => {
   }
 });
 
+ipcMain.handle("skill-viewer-write-file", (_event, baseDir, filePath, content) => {
+  if (!baseDir || !path.isAbsolute(baseDir)) return false;
+  if (!filePath || !path.isAbsolute(filePath)) return false;
+  if (typeof content !== "string") return false;
+  if (!isWithinDir(baseDir, filePath)) return false;
+  // 安全限制：仅覆盖已有文本文件，且大小不超过 2MB
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return false;
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > 2 * 1024 * 1024) return false;
+    fs.writeFileSync(filePath, content, "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 // close-skill-viewer: 独立窗口由渲染进程主动关闭
 ipcMain.handle("close-skill-viewer", () => {
   if (skillViewerWindow && !skillViewerWindow.isDestroyed()) {
+    _skillViewerForceClosing = true;
     skillViewerWindow.close();
+    setTimeout(() => { _skillViewerForceClosing = false; }, 0);
     return;
   }
   _focusSkillViewerOpener();
+});
+
+ipcMain.handle("confirm-skill-viewer-close", () => {
+  if (!skillViewerWindow || skillViewerWindow.isDestroyed()) return;
+  _skillViewerForceClosing = true;
+  skillViewerWindow.close();
+  setTimeout(() => { _skillViewerForceClosing = false; }, 0);
 });
 
 // 在系统文件管理器中打开文件夹（限制为目录且为绝对路径）
