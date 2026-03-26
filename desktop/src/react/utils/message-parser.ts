@@ -24,10 +24,10 @@ export function cleanMoodText(raw: string): string {
 
 export function parseMoodFromContent(content: string): { mood: string | null; yuan: string | null; text: string } {
   if (!content) return { mood: null, yuan: null, text: '' };
-  const moodRe = /<(mood|pulse|reflect)>([\s\S]*?)<\/(?:mood|pulse|reflect)>/;
+  const moodRe = /<(mood|pulse|reflect)\b[^>]*>([\s\S]*?)<\/\s*\1\s*>/i;
   const match = content.match(moodRe);
   if (!match) return { mood: null, yuan: null, text: content };
-  const yuan = TAG_TO_YUAN[match[1]] || 'hanako';
+  const yuan = TAG_TO_YUAN[match[1].toLowerCase()] || 'hanako';
   const mood = cleanMoodText(match[2].trim());
   const text = content.replace(moodRe, '').replace(/^\n+/, '').trim();
   return { mood, yuan, text };

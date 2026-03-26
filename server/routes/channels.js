@@ -33,8 +33,27 @@ import {
   isContextResetMessage,
 } from "../../lib/channels/channel-store.js";
 import { collectMentionedAgentIds } from "../../lib/channels/channel-mentions.js";
+import { sanitizeAssistantVisibleText } from "../../lib/text/assistant-visible-text.js";
 
 export default async function channelsRoute(app, { engine, hub }) {
+  function isUserSender(sender) {
+    const senderKey = String(sender || "").trim().toLowerCase();
+    if (!senderKey) return false;
+    const aliases = new Set(
+      [engine.userName, "user", "用户"]
+        .map((v) => String(v || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    return aliases.has(senderKey);
+  }
+
+  function sanitizeChannelBody(sender, body) {
+    const senderKey = String(sender || "").trim().toLowerCase();
+    if (!senderKey || senderKey === "system" || isUserSender(sender)) {
+      return String(body || "");
+    }
+    return sanitizeAssistantVisibleText(body);
+  }
 
   /** 用户 bookmark 文件路径 */
   function userBookmarkPath() {
@@ -98,6 +117,10 @@ export default async function channelsRoute(app, { engine, hub }) {
           newMessageCount = visibleMessages.length;
         }
 
+        const lastMessage = lastMsg
+          ? sanitizeChannelBody(lastMsg.sender, lastMsg.body).slice(0, 60)
+          : "";
+
         channels.push({
           id: channelId,
           name: meta.name || channelId,
@@ -106,7 +129,7 @@ export default async function channelsRoute(app, { engine, hub }) {
           members,
           messageCount: visibleMessages.length,
           newMessageCount,
-          lastMessage: lastMsg?.body?.slice(0, 60) || "",
+          lastMessage,
           lastSender: lastMsg?.sender || "",
           lastTimestamp: lastMsg?.timestamp || "",
         });
@@ -249,11 +272,12 @@ export default async function channelsRoute(app, { engine, hub }) {
       const content = fs.readFileSync(filePath, "utf-8");
       const { meta, messages } = parseChannel(content);
       const members = Array.isArray(meta.members) ? meta.members : [];
-      const apiMessages = messages.map((m) =>
-        isContextResetMessage(m)
-          ? { ...m, body: "", isContextReset: true }
-          : m,
-      );
+      const apiMessages = messages.map((m) => {
+        if (isContextResetMessage(m)) {
+          return { ...m, body: "", isContextReset: true };
+        }
+        return { ...m, body: sanitizeChannelBody(m.sender, m.body) };
+      });
 
       return {
         id: meta.id || name,

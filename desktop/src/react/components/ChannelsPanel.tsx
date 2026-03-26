@@ -59,10 +59,17 @@ function resolveChannelMember(
   agents: Agent[],
   currentAgentId: string | null,
 ): MemberInfo {
-  if (memberId === 'user' || memberId === userName) {
+  const normalizedMemberId = String(memberId || '').trim().toLowerCase();
+  const normalizedUserName = String(userName || '').trim().toLowerCase();
+  const isUserAlias =
+    normalizedMemberId === 'user'
+    || normalizedMemberId === '用户'
+    || (!!normalizedUserName && normalizedMemberId === normalizedUserName);
+
+  if (isUserAlias) {
     return {
       id: memberId,
-      displayName: userName || 'user',
+      displayName: userName || memberId || 'user',
       avatarUrl: userAvatarUrl,
       fallbackAvatar: null,
       isUser: true,
@@ -681,51 +688,65 @@ export function ChannelMessages() {
   const userName = useStore((s) => s.userName);
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const prevMessagesLenRef = useRef(0);
+  const forceStickRef = useRef(false);
 
-  // 消息变化时自动滚动：
-  // - 新的聊天消息（用户或 agent）：把最后一条消息定位到可视区约 3/4 处
-  // - 仅分隔线变化等其他情况：滚到底
+  const checkAtBottom = useCallback(() => {
+    const el = document.getElementById('channelMessages');
+    if (!el) return;
+    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = document.getElementById('channelMessages');
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // 监听用户滚动，维护“是否贴底”状态
   useEffect(() => {
     const el = document.getElementById('channelMessages');
     if (!el) return;
-    const spacer = el.querySelector('.channel-context-tail-spacer') as HTMLElement | null;
+    const onScroll = () => checkAtBottom();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    checkAtBottom();
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [checkAtBottom]);
 
-    const lastMsg = messages[messages.length - 1];
-    const isLastChatMessage = !!lastMsg && !lastMsg.isContextReset;
+  // 切换频道时，下一次渲染强制贴底
+  useEffect(() => {
+    if (!currentChannel) return;
+    forceStickRef.current = true;
+    isAtBottomRef.current = true;
+    prevMessagesLenRef.current = 0;
+  }, [currentChannel]);
 
-    if (isLastChatMessage && spacer) {
-      // 先清空补白，避免旧补白干扰本次定位
-      spacer.style.height = '0px';
-
+  // 新消息到达时：仅在用户原本贴底时继续自动跟随
+  useEffect(() => {
+    const messageAppended = messages.length > prevMessagesLenRef.current;
+    if (forceStickRef.current || (messageAppended && isAtBottomRef.current)) {
       requestAnimationFrame(() => {
-        const msgNodes = el.querySelectorAll('.channel-msg');
-        const lastMsgEl = msgNodes.length > 0 ? (msgNodes[msgNodes.length - 1] as HTMLElement) : null;
-        if (!lastMsgEl) return;
-
-        const desiredY = Math.floor(el.clientHeight * 0.75);
-        const containerRect = el.getBoundingClientRect();
-        const msgRect = lastMsgEl.getBoundingClientRect();
-        // 基于“当前可视位置”计算目标 scrollTop，确保用户与 agent 的锚点一致
-        const currentY = msgRect.top - containerRect.top;
-        const rawTargetTop = Math.max(0, el.scrollTop + currentY - desiredY);
-
-        const maxScrollable = el.scrollHeight - el.clientHeight;
-        const neededSpace = Math.max(0, rawTargetTop - maxScrollable + 12);
-        spacer.style.height = `${neededSpace}px`;
-
-        requestAnimationFrame(() => {
-          const maxScrollableAfterSpacer = el.scrollHeight - el.clientHeight;
-          const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
-          el.scrollTo({ top: targetTop, behavior: 'smooth' });
-        });
+        scrollToBottom();
+        requestAnimationFrame(scrollToBottom);
       });
-      return;
+      forceStickRef.current = false;
     }
+    prevMessagesLenRef.current = messages.length;
+  }, [currentChannel, messages.length, scrollToBottom]);
 
-    if (spacer) spacer.style.height = '0px';
-    el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  // 内容高度持续变化（长消息渲染、图片加载）时保持贴底
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const ro = new ResizeObserver(() => {
+      if (!isAtBottomRef.current) return;
+      scrollToBottom();
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
 
   if (!currentChannel || messages.length === 0) {
     return <div className="channel-welcome">{t('channel.noMessages')}</div>;
@@ -736,7 +757,7 @@ export function ChannelMessages() {
   let lastSender: string | null = null;
 
   return (
-    <>
+    <div ref={contentRef} className="channel-messages-content">
       {messages.map((msg, idx) => {
         if (msg.isContextReset) {
           lastSender = null;
@@ -749,7 +770,13 @@ export function ChannelMessages() {
 
         const isContinuation = msg.sender === lastSender;
         const senderInfo = resolveChannelMember(msg.sender, userName, userAvatarUrl, agents, currentAgentId);
-        const isSelf = senderInfo.isUser || (isDM && msg.sender === (currentAgentId || ''));
+        const senderNorm = String(msg.sender || '').trim().toLowerCase();
+        const userNameNorm = String(userName || '').trim().toLowerCase();
+        const isUserSenderAlias =
+          senderNorm === 'user'
+          || senderNorm === '用户'
+          || (!!userNameNorm && senderNorm === userNameNorm);
+        const isSelf = senderInfo.isUser || isUserSenderAlias || (isDM && msg.sender === (currentAgentId || ''));
         const el = (
           <div
             key={`${msg.timestamp}-${idx}`}
@@ -779,8 +806,7 @@ export function ChannelMessages() {
         lastSender = msg.sender;
         return el;
       })}
-      <div className="channel-context-tail-spacer" aria-hidden="true" />
-    </>
+    </div>
   );
 }
 
@@ -886,6 +912,25 @@ export function ChannelInput() {
   const [commandSelectedIdx, setCommandSelectedIdx] = useState(0);
   const [commandStartPos, setCommandStartPos] = useState(-1);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const resizeTextarea = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+
+    const cs = window.getComputedStyle(el);
+    const lineHeight = parseFloat(cs.lineHeight) || 20;
+    const paddingTop = parseFloat(cs.paddingTop) || 0;
+    const paddingBottom = parseFloat(cs.paddingBottom) || 0;
+    const borderTop = parseFloat(cs.borderTopWidth) || 0;
+    const borderBottom = parseFloat(cs.borderBottomWidth) || 0;
+    const chrome = paddingTop + paddingBottom + borderTop + borderBottom;
+    const minHeight = Math.ceil(lineHeight + chrome);
+    const maxHeight = Math.ceil(lineHeight * 5 + chrome);
+
+    el.style.height = 'auto';
+    const nextHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, []);
 
   // Show/hide the input area based on DM state
   useEffect(() => {
@@ -912,6 +957,11 @@ export function ChannelInput() {
     setCommandActive(false);
     clearAttachedFiles();
   }, [currentChannel, clearAttachedFiles]);
+
+  // 输入框自适应高度：最多展示 5 行，超出后内部滚动
+  useEffect(() => {
+    resizeTextarea();
+  }, [inputValue, currentChannel, resizeTextarea]);
 
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();

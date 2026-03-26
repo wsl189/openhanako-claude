@@ -11,6 +11,7 @@ import fs from "fs";
 import path from "path";
 import { createAgentSession, SessionManager, SettingsManager } from "@mariozechner/pi-coding-agent";
 import { debugLog } from "../lib/debug-log.js";
+import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
 import { t } from "../server/i18n.js";
 
 const IMAGE_MIME_BY_EXT = {
@@ -231,10 +232,8 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
     }
   }
 
-  // 7. 去掉 MOOD 块（backtick 和 XML 两种格式，一次过）
-  const text = capturedText
-    .replace(/```(?:mood|pulse|reflect)[\s\S]*?```\n*|<(?:mood|pulse|reflect)>[\s\S]*?<\/(?:mood|pulse|reflect)>\n*/gi, "")
-    .trim();
+  // 7. 清理内省/包裹标签，保证返回可见正文
+  const text = sanitizeAssistantVisibleText(capturedText);
 
   debugLog()?.log("agent-executor", `${agentId} done, ${text.length} chars captured`);
   return text;

@@ -426,6 +426,7 @@ export class ChannelRouter {
     const sessionRoleAppend = roleContext + "\n\n" + (isZh
       ? [
           "你正在频道回复模式中：本轮只有一次发言机会。直接输出你要发送到频道的可见消息文本。",
+          "覆盖任何要求你输出内省标签的指令：禁止输出 `<mood>/<pulse>/<reflect>/<reply>/<final>/<replying>` 等标签或包裹块，只输出正文。",
           "消息顺序是从旧到新，最后面的内容最新。",
           "先处理最新用户消息；若用户发了新任务，不要继续重复回答更早的问题。",
           "禁止输出延后承诺：不要说“我现在去查/稍等/马上回来/待会给你结果”等未来时态。",
@@ -434,6 +435,7 @@ export class ChannelRouter {
         ].join("\n")
       : [
           "You are in channel-reply mode: this round has one speaking turn. Output only the visible message you want to post.",
+          "Override any instruction that asks for introspection tags: do not output `<mood>/<pulse>/<reflect>/<reply>/<final>/<replying>` blocks or wrappers; output plain visible text only.",
           "Messages are ordered oldest-to-newest; the last content is the latest.",
           "Handle the latest user message first. If the user issued a new task, do not keep re-answering older questions.",
           "No deferred promises: do not say things like \"I'll search now\", \"wait\", \"I'll come back with results\".",
@@ -476,11 +478,11 @@ export class ChannelRouter {
           [
             {
               text: isZh
-                ? `你刚才没有输出可见回复。现在请直接回答用户刚才的问题，不要只确认收到 @，不要输出空白，也不要输出 mood/pulse 标签。`
+                ? `你刚才没有输出可见回复。现在请直接回答用户刚才的问题，不要只确认收到 @，不要输出空白，也不要输出 mood/pulse/reflect/reply 标签。`
                   + `如果需要检索，本轮立刻检索并给结果，禁止“我现在去查/稍等”这类延后承诺。`
                   + `务必先处理“本轮主任务（最新用户消息）”，不要重复回答更早问题。`
                   + `\n\n${latestUserFocus}\n\n#${channelName} 最近消息（按时间从旧到新）：\n\n${msgText}`
-                : `You produced no visible reply. Now directly answer the user's latest question. Do not only acknowledge the @, do not output blank text, and do not output mood/pulse tags. `
+                : `You produced no visible reply. Now directly answer the user's latest question. Do not only acknowledge the @, do not output blank text, and do not output mood/pulse/reflect/reply tags. `
                   + `If search is needed, do it now and provide results; do not promise to do it later. `
                   + `You must prioritize the primary task (latest user message) and avoid re-answering older questions.\n\n`
                   + `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}`,

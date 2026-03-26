@@ -17,6 +17,7 @@
  */
 
 const TAGS = ["mood", "pulse", "reflect"];
+const OPEN_TAG_STEMS = TAGS.map((tag) => `<${tag}`);
 
 /** 检查 buffer 末尾是否是 target 的前缀（1..target.length-1 个字符），返回匹配长度 */
 function trailingPrefixLen(buffer, target) {
@@ -77,14 +78,18 @@ export class MoodParser {
 
   /**
    * 在 buffer 中查找最早出现的开始标签
+   * 兼容：<mood> / <mood > / <mood attr="...">（大小写不敏感）
    * @returns {{ tag: string, idx: number, openTag: string } | null}
    */
   _findOpenTag() {
+    const re = /<(mood|pulse|reflect)\b[^>]*>/gi;
     let best = null;
-    for (const tag of TAGS) {
-      const openTag = `<${tag}>`;
-      const idx = this.buffer.indexOf(openTag);
-      if (idx !== -1 && (best === null || idx < best.idx)) {
+    let match;
+    while ((match = re.exec(this.buffer)) !== null) {
+      const tag = String(match[1] || "").toLowerCase();
+      const idx = match.index;
+      const openTag = match[0];
+      if (!best || idx < best.idx) {
         best = { tag, idx, openTag };
       }
     }
@@ -92,15 +97,64 @@ export class MoodParser {
   }
 
   /**
-   * 计算所有开始标签在 buffer 末尾的最大前缀匹配长度
+   * 计算“未闭合开始标签”在 buffer 末尾需要 hold 的长度
    */
   _maxTrailingPrefix() {
-    let max = 0;
+    // 1) 兼容旧逻辑：精确 <mood> 前缀
+    let hold = 0;
     for (const tag of TAGS) {
       const len = trailingPrefixLen(this.buffer, `<${tag}>`);
-      if (len > max) max = len;
+      if (len > hold) hold = len;
     }
-    return max;
+
+    // 2) 新逻辑：支持 <mood attr="..."> 这类尚未闭合的开始标签
+    const lastLt = this.buffer.lastIndexOf("<");
+    if (lastLt === -1) return hold;
+    const suffix = this.buffer.slice(lastLt);
+    if (!suffix || suffix.includes(">")) return hold;
+    const lower = suffix.toLowerCase();
+    if (lower.startsWith("</")) return hold;
+    for (const stem of OPEN_TAG_STEMS) {
+      if (stem.startsWith(lower) || lower.startsWith(stem)) {
+        return Math.max(hold, suffix.length);
+      }
+    }
+    return hold;
+  }
+
+  /**
+   * 在 inMood 状态下查找关闭标签，兼容 </reflect   >（大小写不敏感）
+   * @returns {{ idx: number, closeTagLen: number } | null}
+   */
+  _findCloseTag() {
+    if (!this._currentTag) return null;
+    const closeRe = new RegExp(`<\\/\\s*${this._currentTag}\\s*>`, "i");
+    const match = closeRe.exec(this.buffer);
+    if (!match) return null;
+    return { idx: match.index, closeTagLen: match[0].length };
+  }
+
+  /**
+   * 计算“未闭合关闭标签”在 buffer 末尾需要 hold 的长度
+   */
+  _closeTagHoldLen() {
+    if (!this._currentTag) return 0;
+    const exact = trailingPrefixLen(this.buffer, `</${this._currentTag}>`);
+    const lastLt = this.buffer.lastIndexOf("<");
+    if (lastLt === -1) return exact;
+    const suffix = this.buffer.slice(lastLt);
+    if (!suffix || suffix.includes(">")) return exact;
+    const compact = suffix.toLowerCase().replace(/\s+/g, "");
+    const target = `</${this._currentTag}>`.toLowerCase();
+    const targetNoGt = `</${this._currentTag}`.toLowerCase();
+    if (
+      target.startsWith(compact)
+      || targetNoGt.startsWith(compact)
+      || compact.startsWith(targetNoGt)
+    ) {
+      return Math.max(exact, suffix.length);
+    }
+    return exact;
   }
 
   /** 内部：尽可能多地从 buffer 中提取完整事件 */
@@ -137,20 +191,19 @@ export class MoodParser {
         this.buffer = "";
       } else {
         // 寻找对应的关闭标签
-        const closeTag = `</${this._currentTag}>`;
-        const idx = this.buffer.indexOf(closeTag);
-        if (idx !== -1) {
-          const content = this.buffer.slice(0, idx);
+        const foundClose = this._findCloseTag();
+        if (foundClose) {
+          const content = this.buffer.slice(0, foundClose.idx);
           if (content) emit({ type: "mood_text", data: content });
           emit({ type: "mood_end" });
           this.inMood = false;
           this._justEndedMood = true;
-          this.buffer = this.buffer.slice(idx + closeTag.length);
+          this.buffer = this.buffer.slice(foundClose.idx + foundClose.closeTagLen);
           this._currentTag = null;
           continue;
         }
         // buffer 末尾可能是关闭标签的前缀
-        const moodHoldLen = trailingPrefixLen(this.buffer, closeTag);
+        const moodHoldLen = this._closeTagHoldLen();
         if (moodHoldLen > 0) {
           const safe = this.buffer.slice(0, -moodHoldLen);
           if (safe) emit({ type: "mood_text", data: safe });

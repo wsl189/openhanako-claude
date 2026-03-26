@@ -11580,6 +11580,10 @@ a.about-link:hover {
     scroll-behavior: smooth;
 }
 
+.channel-messages-content {
+    min-height: 100%;
+}
+
 .channel-msg {
     display: flex;
     gap: 10px;
@@ -11607,11 +11611,6 @@ a.about-link:hover {
 
 .channel-context-divider > span {
     white-space: nowrap;
-}
-
-.channel-context-tail-spacer {
-    height: 0;
-    pointer-events: none;
 }
 
 .channel-msg-continuation {
@@ -11735,7 +11734,8 @@ a.about-link:hover {
     display: flex;
     align-items: flex-end;
     gap: var(--space-sm);
-    max-width: 646px;
+    width: 100%;
+    margin-left: 0;
     position: relative;
 }
 
@@ -11829,6 +11829,7 @@ a.about-link:hover {
     outline: none;
     line-height: 1.5;
     transition: border-color 0.15s;
+    overflow-y: hidden;
 }
 
 .channel-input-box:focus {
@@ -11837,7 +11838,8 @@ a.about-link:hover {
 
 .channel-send-btn {
     width: 36px;
-    align-self: stretch;
+    height: 36px;
+    align-self: flex-end;
     border-radius: var(--radius-md);
     border: none;
     background: var(--accent);

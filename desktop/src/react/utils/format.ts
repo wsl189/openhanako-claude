@@ -118,7 +118,7 @@ export function cronToHuman(schedule: number | string): string {
  */
 export function parseMoodFromContent(content: string): { mood: string | null; text: string } {
   if (!content) return { mood: null, text: '' };
-  const moodRe = /<(mood|pulse|reflect)>([\s\S]*?)<\/(?:mood|pulse|reflect)>/;
+  const moodRe = /<(mood|pulse|reflect)\b[^>]*>([\s\S]*?)<\/\s*\1\s*>/i;
   const match = content.match(moodRe);
   if (!match) return { mood: null, text: content };
   const raw = match[2].trim()
