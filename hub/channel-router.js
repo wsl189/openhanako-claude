@@ -32,6 +32,9 @@ import { runAgentSession } from "./agent-executor.js";
 import { debugLog } from "../lib/debug-log.js";
 import { getLocale } from "../server/i18n.js";
 
+const isAbortError = (err) =>
+  err?.name === "AbortError" || /abort/i.test(String(err?.message || ""));
+
 export class ChannelRouter {
   /**
    * @param {object} opts
@@ -384,6 +387,10 @@ export class ChannelRouter {
 
         return { replied: true, replyContent: replyText, replyTimestamp };
       } catch (err) {
+        if (isAbortError(err) || signal?.aborted) {
+          debugLog()?.log("channel", `reply aborted (${agentId}/#${channelName})`);
+          return { replied: false };
+        }
         console.error(`[channel] 回复失败 (${agentId}/#${channelName}): ${err.message}`);
         debugLog()?.error("channel", `回复失败 (${agentId}/#${channelName}): ${err.message}`);
         return { replied: false };

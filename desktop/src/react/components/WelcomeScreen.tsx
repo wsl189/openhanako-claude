@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { useStore } from '../stores';
-import { hanaUrl } from '../hooks/use-hana-fetch';
+import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { loadDeskFiles } from '../stores/desk-actions';
 import { clearChat } from '../stores/agent-actions';
@@ -150,8 +150,40 @@ function AgentChips({ agents, selectedId }: {
   agents: Agent[];
   selectedId: string | null;
 }) {
-  const handleClick = useCallback((agentId: string) => {
-    useStore.setState({ selectedAgentId: agentId });
+  const pickReqRef = useRef(0);
+
+  const handleClick = useCallback(async (agentId: string) => {
+    const requestId = ++pickReqRef.current;
+    const state = useStore.getState();
+
+    // 先切换选中状态，避免沿用上一个助手的目录展示。
+    useStore.setState({ selectedAgentId: agentId, selectedFolder: null });
+
+    // 兜底：若选的是当前助手，先用本地缓存的 homeFolder。
+    let folder: string | null =
+      agentId === state.currentAgentId
+        ? (state.homeFolder || null)
+        : null;
+
+    // 精准读取目标助手配置，拿到它自己的默认工作区。
+    try {
+      const res = await hanaFetch(`/api/agents/${encodeURIComponent(agentId)}/config`);
+      const data = await res.json();
+      if (!data?.error && typeof data?.desk?.home_folder === 'string') {
+        const raw = data.desk.home_folder.trim();
+        folder = raw || null;
+      }
+    } catch (err) {
+      console.warn('[welcome] load agent workspace failed:', err);
+    }
+
+    // 防止快速切换助手时旧请求覆盖新选择。
+    const latest = useStore.getState();
+    if (pickReqRef.current !== requestId) return;
+    if (latest.selectedAgentId !== agentId) return;
+
+    useStore.setState({ selectedFolder: folder });
+    loadDeskFiles('', folder || undefined);
   }, []);
 
   return (

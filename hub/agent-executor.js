@@ -192,10 +192,16 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
   debugLog()?.log("agent-executor", `${agentId} session started (${rounds.length} rounds)`);
   const tempSessionPath = session.sessionManager?.getSessionFile?.() || null;
   const pendingImageKey = tempSessionPath || `temp-inline-images:${agentId}:${Date.now()}`;
+  const throwIfAborted = () => {
+    if (!signal?.aborted) return;
+    const reason = signal.reason;
+    if (reason?.name === "AbortError") throw reason;
+    throw new DOMException("Aborted", "AbortError");
+  };
 
   try {
     for (const round of rounds) {
-      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      throwIfAborted();
       isCapturing = !!round.capture;
       if (round.capture) capturedText = "";
       const inlineImages = extractInlineImages ? readImagesFromText(round.text, 10) : [];
@@ -210,12 +216,17 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
 
       const promptOpts = roundImages.length ? { images: roundImages } : undefined;
       await session.prompt(round.text, promptOpts);
+      // 关键：有些 provider 在 abort 后可能仍返回一次已生成片段。
+      // 这里强制按“已中止=丢弃本轮结果”处理，避免泄露中间/半截输出。
+      throwIfAborted();
     }
   } finally {
     if (signal && onAbort) signal.removeEventListener("abort", onAbort);
     unsub?.();
     engine.clearSessionPendingImages?.(pendingImageKey);
   }
+
+  throwIfAborted();
 
   // 6. 清理临时 session 文件（keepSession=true 时保留，供 DM 等场景存档）
   if (!keepSession) {

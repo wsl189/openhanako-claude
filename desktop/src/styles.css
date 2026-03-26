@@ -1314,6 +1314,11 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text);
     line-height: 1.6;
     margin-bottom: var(--space-xs);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    word-break: break-word;
 }
 
 .act-card-meta {

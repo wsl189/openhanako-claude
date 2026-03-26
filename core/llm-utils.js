@@ -83,24 +83,125 @@ function parseSessionContent(sessionPath, { userLimit = 1000, assistantLimit = 1
   return { userText, assistantText, toolCalls };
 }
 
+function stripMoodAndMeta(text) {
+  return String(text || "")
+    .replace(/\r/g, "")
+    .replace(/<mood>[\s\S]*?<\/mood>/gi, " ")
+    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\n+/g, "\n")
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^(vibe|sparks|reflections|will)\s*:/i.test(line))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isAllClearText(text) {
+  const t = String(text || "").toLowerCase();
+  return /一切正常|无异常|没有异常|未发现异常|无需(处理|操作)|继续待命|系统运行正常|all clear|no (issues?|anomal(?:y|ies)|abnormalit(?:y|ies))|no action needed|nothing (to do|requires action)|everything (looks )?(normal|fine)/i.test(t);
+}
+
+function looksLikeMetaAnalysis(text, isZh) {
+  const s = String(text || "");
+  const compact = s.replace(/\s+/g, " ").trim();
+  if (!compact) return true;
+  // 摘要应是单句短文本；多段/列表通常是“分析过程”泄露
+  if (s.split("\n").filter(Boolean).length >= 3) return true;
+  if (compact.length > (isZh ? 90 : 220)) return true;
+
+  const patterns = [
+    /巡检上下文|patrol context/i,
+    /agent\s*回复|agent\s*reply/i,
+    /根据规则|rules?:/i,
+    /用户要求我|the user is asking/i,
+    /让我分析|let me analy[sz]e/i,
+    /从上下文看|based on (the )?context/i,
+    /^\s*[-*]\s+/m,
+    /^\s*\d+\s*[.)、]/m,
+  ];
+  return patterns.some(re => re.test(s));
+}
+
+function limitSummaryLength(text, isZh) {
+  const clean = String(text || "").trim();
+  if (!clean) return "";
+  if (isZh) {
+    const chars = Array.from(clean);
+    return chars.length > 50 ? chars.slice(0, 50).join("").trim() : clean;
+  }
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length > 30) return words.slice(0, 30).join(" ");
+  return clean.length > 180 ? clean.slice(0, 180).trim() : clean;
+}
+
+function normalizeSummaryText(text) {
+  return String(text || "")
+    .replace(/\r/g, "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
+    .replace(/<\/?mood>/gi, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /**
  * 从 session 内容生成本地兜底摘要（不依赖外部 API）
  */
 export function buildLocalSummary(assistantText, toolCalls) {
   const isZh = getLocale().startsWith("zh");
   const uniqueTools = [...new Set(toolCalls)];
+  const cleanAssistant = stripMoodAndMeta(assistantText);
   if (uniqueTools.length > 0) {
     if (isZh) {
       return `执行了 ${uniqueTools.slice(0, 3).join("、")}${uniqueTools.length > 3 ? " 等" : ""}`;
     }
     return `Ran ${uniqueTools.slice(0, 3).join(", ")}${uniqueTools.length > 3 ? ", etc." : ""}`;
   }
-  if (assistantText) {
-    const clean = assistantText.replace(/[#*_`>\-[\]()]/g, "").trim();
+  if (cleanAssistant) {
+    if (isAllClearText(cleanAssistant)) {
+      return isZh ? "巡检完毕，一切正常" : "Patrol complete, all clear";
+    }
+    const clean = cleanAssistant.replace(/[#*_`>\-[\]()]/g, "").trim();
     if (clean.length <= 50) return clean;
     return clean.slice(0, 47) + "...";
   }
   return null;
+}
+
+export function normalizeActivitySummary(rawSummary, { assistantText = "", toolCalls = [], isZh = true } = {}) {
+  const canonicalAllClear = isZh ? "巡检完毕，一切正常" : "Patrol complete, all clear";
+  const cleanAssistant = stripMoodAndMeta(assistantText);
+  const hasTools = Array.isArray(toolCalls) && toolCalls.length > 0;
+  const fallback = buildLocalSummary(cleanAssistant, toolCalls) || (hasTools
+    ? (isZh ? "已执行后台任务" : "Background task executed")
+    : canonicalAllClear);
+
+  const normalized = normalizeSummaryText(rawSummary);
+  if (!normalized || looksLikeMetaAnalysis(normalized, isZh)) {
+    return fallback;
+  }
+
+  const singleLine = normalized
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!singleLine) return fallback;
+  if (!hasTools && (isAllClearText(singleLine) || isAllClearText(cleanAssistant))) {
+    return canonicalAllClear;
+  }
+  if (looksLikeMetaAnalysis(singleLine, isZh)) return fallback;
+
+  const limited = limitSummaryLength(singleLine, isZh);
+  if (!limited) return fallback;
+  return limited;
 }
 
 /**
@@ -219,7 +320,9 @@ export async function summarizeActivity(utilConfig, sessionPath, emitDevLog) {
 2. 直接输出摘要，不要前缀、不要解释
 3. 说清楚做了什么具体动作（拆解待办、搜索信息、标记完成、读取文件等）
 4. 如果调用了工具，提一下工具名称和做了什么
-5. 如果 Agent 回复了「一切正常」或没有执行动作，就说「巡检完毕，一切正常」`
+5. 如果 Agent 回复了「一切正常」或没有执行动作，就说「巡检完毕，一切正常」
+6. 不要复述「巡检上下文 / Agent 回复 / 规则」原文
+7. 禁止输出「让我分析」「根据规则」这类推理过程`
       : `You are an execution summary generator. Based on the Agent's patrol context, execution results, and tools used, summarize what it did.
 
 Rules:
@@ -227,7 +330,9 @@ Rules:
 2. Output the summary directly, no prefix or explanation
 3. Be specific about what actions were taken (broke down tasks, searched info, marked complete, read files, etc.)
 4. If tools were called, mention the tool names and what they did
-5. If the Agent reported "all clear" or took no action, say "Patrol complete, all clear"`;
+5. If the Agent reported "all clear" or took no action, say "Patrol complete, all clear"
+6. Do not restate "Patrol context / Agent reply / Rules"
+7. Do not output analysis narration like "let me analyze"`;
 
     const contextLabel = isZh ? "巡检上下文" : "Patrol context";
     const replyLabel = isZh ? "Agent 回复" : "Agent reply";
@@ -244,11 +349,11 @@ Rules:
           content: `${contextLabel}：\n${userText.slice(0, 600)}\n\n${replyLabel}：\n${assistantText.slice(0, 600)}${toolInfo}`,
         },
       ],
-      temperature: 0.3,
+      temperature: 0,
       max_tokens: 150,
     });
 
-    return text;
+    return normalizeActivitySummary(text, { assistantText, toolCalls, isZh });
   } catch (err) {
     log(`[summarize] error: ${err.message}`);
     console.error("[llm-utils] summarizeActivity failed:", err.message);
@@ -265,7 +370,7 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
   if (!fs.existsSync(sessionPath)) return null;
   const isZh = getLocale().startsWith("zh");
   try {
-    const { userText, assistantText } = parseSessionContent(sessionPath, {
+    const { userText, assistantText, toolCalls } = parseSessionContent(sessionPath, {
       userLimit: 800, assistantLimit: 800,
     });
     if (!userText && !assistantText) return null;
@@ -274,13 +379,13 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
     if (!api_key || !base_url || !api) return null;
 
     const systemContent = isZh
-      ? `根据 Agent 的巡检上下文和执行结果，用一两句话概括它做了什么。30 字以内，中文，直接输出。`
-      : `Based on the Agent's patrol context and execution results, summarize what it did in one or two sentences. Under 15 words, English, output directly.`;
+      ? `根据 Agent 的巡检上下文和执行结果，用一两句话概括它做了什么。30 字以内，中文，直接输出。不要输出分析过程，不要复述上下文。`
+      : `Based on the Agent's patrol context and execution results, summarize what it did in one or two sentences. Under 15 words, English, output directly. Do not output analysis process or restate context.`;
 
     const contextLabel = isZh ? "巡检上下文" : "Patrol context";
     const replyLabel = isZh ? "Agent 回复" : "Agent reply";
 
-    return await callProviderText({
+    const text = await callProviderText({
       api,
       model,
       api_key,
@@ -292,9 +397,10 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
           content: `${contextLabel}：\n${userText.slice(0, 400)}\n\n${replyLabel}：\n${assistantText.slice(0, 400)}`,
         },
       ],
-      temperature: 0.3,
+      temperature: 0,
       max_tokens: 80,
     });
+    return normalizeActivitySummary(text, { assistantText, toolCalls, isZh });
   } catch (err) {
     console.error("[llm-utils] summarizeActivityQuick failed:", err.message);
     return null;
