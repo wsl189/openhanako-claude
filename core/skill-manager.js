@@ -57,14 +57,19 @@ export class SkillManager {
     const catalogNames = new Set();
     const agentSkills = this._getAgentSkills(agent);
     const enabledNames = new Set(agentSkills.map((s) => s.name));
+    const agentSkillByName = new Map(agentSkills.map((s) => [s.name, s]));
 
     for (const s of this._catalogSkills) {
       catalogNames.add(s.name);
+      // 同名技能若在 agent 私有目录存在，则详情优先展示 agent 版本，
+      // 避免预览时读到全局仓库中的旧内容。
+      const agentVersion = agentSkillByName.get(s.name);
+      const detailSkill = agentVersion || s;
       result.push({
         name: s.name,
-        description: s.description,
-        filePath: s.filePath,
-        baseDir: s.baseDir,
+        description: detailSkill.description ?? s.description,
+        filePath: detailSkill.filePath ?? s.filePath,
+        baseDir: detailSkill.baseDir ?? s.baseDir,
         source: s.source,
         hidden: !!s._hidden,
         enabled: enabledNames.has(s.name),
