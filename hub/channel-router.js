@@ -21,6 +21,7 @@ import {
   formatMessagesForLLM,
   getChannelMeta,
   getChannelAnnouncementFromMeta,
+  normalizeChannelMembersToAgentIds,
 } from "../lib/channels/channel-store.js";
 import { collectMentionedAgentIds } from "../lib/channels/channel-mentions.js";
 import { loadConfig } from "../lib/memory/config-loader.js";
@@ -52,6 +53,7 @@ export class ChannelRouter {
   start() {
     const engine = this._engine;
     if (!engine.channelsDir) return;
+    this._migrateChannelMembersToAgentIds();
 
     this._ticker = createChannelTicker({
       channelsDir: engine.channelsDir,
@@ -66,6 +68,29 @@ export class ChannelRouter {
       },
     });
     this._ticker.start();
+  }
+
+  /**
+   * 启动时迁移历史频道成员字段：
+   * 兼容旧数据里 members 写成“显示名”而非 agentId 的情况。
+   */
+  _migrateChannelMembersToAgentIds() {
+    const engine = this._engine;
+    try {
+      const allAgents = engine.listAgents?.() || [];
+      if (!allAgents.length) return;
+      const files = fs.readdirSync(engine.channelsDir).filter((f) => f.endsWith(".md"));
+      for (const f of files) {
+        const filePath = path.join(engine.channelsDir, f);
+        const { changed, members } = normalizeChannelMembersToAgentIds(filePath, allAgents);
+        if (changed) {
+          const channelName = f.replace(/\.md$/i, "");
+          debugLog()?.log("channel", `migrated #${channelName} members -> ids: ${members.join(",")}`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[channel] members migration skipped: ${err.message}`);
+    }
   }
 
   async stop() {
