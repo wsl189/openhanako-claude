@@ -100,6 +100,8 @@ export default async function configRoute(app, { engine }) {
       if (globalLocale) config.locale = globalLocale;
       const globalTz = engine.getTimezone();
       if (globalTz) config.timezone = globalTz;
+      const globalUserName = engine.getUserName?.() || "";
+      config.user = { ...(config.user || {}), name: globalUserName || config.user?.name || "" };
 
       return config;
     } catch (err) {
@@ -134,6 +136,17 @@ export default async function configRoute(app, { engine }) {
       if (partial.timezone !== undefined) {
         engine.setTimezone(partial.timezone);
         delete partial.timezone;
+      }
+
+      // user.name → 全局 preferences（跨 agent 共享）
+      if (partial.user !== undefined && partial.user !== null && typeof partial.user === "object") {
+        if (Object.prototype.hasOwnProperty.call(partial.user, "name")) {
+          engine.setUserName(partial.user.name);
+          delete partial.user.name;
+        }
+        if (Object.keys(partial.user).length === 0) {
+          delete partial.user;
+        }
       }
 
       // sandbox（per-agent）

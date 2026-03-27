@@ -121,8 +121,10 @@ function WelcomeAvatar({ agentId, hasAvatar, agentAvatarUrl, yuan, name }: {
   name: string;
 }) {
   const fallback = yuanFallbackAvatar(yuan);
-  const src = agentId && hasAvatar
-    ? hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`)
+  const src = agentId
+    ? (hasAvatar
+        ? hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`)
+        : fallback)
     : (agentAvatarUrl || fallback);
 
   const handleError = useCallback((e: SyntheticEvent<HTMLImageElement>) => {

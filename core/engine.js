@@ -204,8 +204,8 @@ export class HanaEngine {
   // 向后兼容：agent 属性代理
   get agentName() { return this.agent.agentName; }
   set agentName(v) { this.agent.agentName = v; }
-  get userName() { return this.agent.userName; }
-  set userName(v) { this.agent.userName = v; }
+  get userName() { return this.getUserName() || this.agent?.userName || "User"; }
+  set userName(v) { this.setUserName(v); }
   get configPath() { return this.agent.configPath; }
   get sessionDir() { return this.agent.sessionDir; }
   get factsDbPath() { return this.agent.factsDbPath; }
@@ -289,6 +289,8 @@ export class HanaEngine {
   async setModel(id) { return this._configCoord.setModel(id); }
   getThinkingLevel() { return this._configCoord.getThinkingLevel(); }
   setThinkingLevel(l) { return this._configCoord.setThinkingLevel(l); }
+  getUserName() { return this._configCoord.getUserName(); }
+  setUserName(name) { return this._configCoord.setUserName(name); }
   getSandbox(agentId = null) {
     return this.getAgentPermissionConfig(agentId).sandbox.mode !== "full-access";
   }
@@ -417,6 +419,13 @@ export class HanaEngine {
     // 2. 初始化所有 agent
     log(`[init] 2/5 初始化所有 agent...`);
     await this._agentMgr.initAllAgents(log, this._agentMgr.activeAgentId);
+    const persistedUserName = this._prefs.getUserName?.() || "";
+    if (!persistedUserName) {
+      const fallbackUserName = String(this.agent?.config?.user?.name || "").trim();
+      if (fallbackUserName) {
+        this.setUserName(fallbackUserName);
+      }
+    }
     log(`[init] 2/5 ${this._agentMgr.agents.size} 个 agent 已就绪`);
 
     // 3. ResourceLoader + Skills

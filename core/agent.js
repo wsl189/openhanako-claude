@@ -126,8 +126,7 @@ export class Agent {
     log(`  [agent] 1. loadConfig 完成`);
 
     // 2. 身份 + 记忆总开关
-    const isZh = String(this._config.locale || "").startsWith("zh");
-    this.userName = this._config.user?.name || (isZh ? "用户" : "User");
+    this.userName = this._resolveUserName();
     this.agentName = this._config.agent?.name || "Hanako";
     this._memoryMasterEnabled = this._config.memory?.enabled !== false;
 
@@ -435,6 +434,15 @@ export class Agent {
   get deskManager() { return this._deskManager; }
   get cronStore() { return this._cronStore; }
 
+  _resolveUserName() {
+    const globalName = String(this._engine?.getUserName?.() || "").trim();
+    if (globalName) return globalName;
+    const localName = String(this._config?.user?.name || "").trim();
+    if (localName) return localName;
+    const isZh = String(this._config?.locale || "").startsWith("zh");
+    return isZh ? "用户" : "User";
+  }
+
   // ════════════════════════════
   //  记忆开关
   // ════════════════════════════
@@ -490,9 +498,8 @@ export class Agent {
     this._config = loadConfig(this.configPath);
 
     // 更新身份（无条件回填，确保外部改动后的 refresh 也能生效）
-    const isZh = String(this._config.locale || "").startsWith("zh");
     this.agentName = this._config.agent?.name || "Hanako";
-    this.userName = this._config.user?.name || (isZh ? "用户" : "User");
+    this.userName = this._resolveUserName();
 
     // yuan 切换只需更新 config，buildSystemPrompt 会实时读模板
     if (partial.agent?.yuan) {
@@ -516,6 +523,10 @@ export class Agent {
   get personality() {
     const isZh = String(this._config.locale || "").startsWith("zh");
     const agentId = path.basename(this.agentDir);
+    const defaultUserName = isZh ? "用户" : "User";
+    const normalizedUserName = String(this.userName || "").trim();
+    const hasExplicitUserName = !!normalizedUserName
+      && (isZh ? normalizedUserName !== defaultUserName : normalizedUserName.toLowerCase() !== defaultUserName.toLowerCase());
     const fill = (text) => text
       .replace(/\{\{userName\}\}/g, this.userName)
       .replace(/\{\{agentName\}\}/g, this.agentName)
@@ -536,13 +547,21 @@ export class Agent {
       ? [
           "# 身份锚点",
           `- 你的名字是「${this.agentName}」(agentId: ${agentId})。`,
+          `- 当前与你对话的人类用户名字是「${this.userName}」。`,
           `- 当用户问“你是谁 / 你叫什么”时，直接回答“我叫${this.agentName}”。`,
+          hasExplicitUserName
+            ? `- 当用户问“我是谁 / 我叫什么”时，直接回答“你是${this.userName}”。`
+            : `- 当用户问“我是谁 / 我叫什么”时，先说明暂未获得名字，再请用户告诉你希望怎么称呼。`,
           "- 除非用户明确要求你改名，否则不要自称为其他名字。",
         ].join("\n")
       : [
           "# Identity Anchor",
           `- Your name is "${this.agentName}" (agentId: ${agentId}).`,
+          `- The human user currently talking to you is "${this.userName}".`,
           `- If asked who you are / what your name is, answer: "My name is ${this.agentName}."`,
+          hasExplicitUserName
+            ? `- If the user asks "Who am I / What's my name?", answer: "You are ${this.userName}."`
+            : `- If the user asks "Who am I / What's my name?", say their name is not set yet and ask how they want to be addressed.`,
           "- Do not claim any other name unless the user explicitly asks you to rename yourself.",
         ].join("\n");
     return identityAnchor + "\n\n" + fill(identityMd) + "\n\n" + fill(yuanMd || "") + "\n\n" + fill(ishikiMd);
@@ -621,8 +640,8 @@ export class Agent {
       ...section(
         isZh ? "# 用户档案" : "# User Profile",
         isZh
-          ? "以下是用户的自我描述，由用户手动维护。\n\n" + userMd
-          : "The following is the user's self-description, manually maintained by the user.\n\n" + userMd
+          ? `当前用户名称（来自设置）：${this.userName}\n以下是用户的自我描述，由用户手动维护。\n\n${userMd}`
+          : `Current user name (from settings): ${this.userName}\nThe following is the user's self-description, manually maintained by the user.\n\n${userMd}`
       ),
     ];
     // 记忆整体开关：master && session 都开启才注入记忆相关 prompt

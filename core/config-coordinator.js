@@ -257,6 +257,50 @@ export class ConfigCoordinator {
     return this._d.getPrefs().getThinkingLevel();
   }
 
+  // ── Global User Name ──
+
+  getUserName() {
+    const prefsName = this._d.getPrefs().getUserName?.() || "";
+    if (prefsName) return prefsName;
+    const agentName = this._d.getAgent?.()?.config?.user?.name || "";
+    return String(agentName || "").trim();
+  }
+
+  setUserName(name) {
+    const normalized = String(name || "").trim();
+    this._d.getPrefs().setUserName?.(normalized);
+
+    const activeAgent = this._d.getAgent?.();
+    const isZh = String(activeAgent?.config?.locale || this._d.getPrefs().getLocale?.() || "").startsWith("zh");
+    const effectiveName = normalized || (isZh ? "用户" : "User");
+
+    const agents = this._d.getAgents?.();
+    if (agents?.values) {
+      for (const ag of agents.values()) {
+        if (!ag) continue;
+        ag.userName = effectiveName;
+        ag.refreshSystemPrompt?.();
+      }
+    }
+
+    // AgentSession 会缓存 _baseSystemPrompt；需显式重建避免旧用户名残留。
+    const refreshed = new Set();
+    const sessions = this._d.getSessions?.();
+    if (sessions?.values) {
+      for (const entry of sessions.values()) {
+        const session = entry?.session;
+        if (!session?.setActiveToolsByName || !session?.getActiveToolNames) continue;
+        if (refreshed.has(session)) continue;
+        try {
+          session.setActiveToolsByName(session.getActiveToolNames());
+          refreshed.add(session);
+        } catch (err) {
+          log.warn(`refresh session prompt after user name update failed: ${err.message}`);
+        }
+      }
+    }
+  }
+
   // ── Memory ──
 
   setMemoryEnabled(val) {

@@ -75,6 +75,19 @@ export class PreferencesManager {
     return this.getPreferences().timezone || "";
   }
 
+  /** 读取用户名（全局，跨 agent） */
+  getUserName() {
+    const raw = this.getPreferences().user_name;
+    return typeof raw === "string" ? raw.trim() : "";
+  }
+
+  /** 保存用户名（全局） */
+  setUserName(name) {
+    const prefs = this.getPreferences();
+    prefs.user_name = String(name || "").trim();
+    this.savePreferences(prefs);
+  }
+
   /** 保存时区偏好 */
   setTimezone(tz) {
     const prefs = this.getPreferences();

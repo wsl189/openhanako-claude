@@ -54,7 +54,9 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     const entry = types[displayYuan] || types.hanako;
     return `assets/${entry?.avatar || 'Hanako.png'}`;
   }, [displayYuan]);
-  const avatarSrc = sessionAgent?.avatarUrl || agentAvatarUrl || fallbackAvatar;
+  const avatarSrc = sessionAgent
+    ? (sessionAgent.avatarUrl || fallbackAvatar)
+    : (agentAvatarUrl || fallbackAvatar);
 
   useEffect(() => {
     setAvatarFailed(false);

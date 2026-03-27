@@ -77,10 +77,11 @@ function resolveChannelMember(
   }
   const agent = agents.find((a) => a.id === memberId || a.name === memberId);
   if (agent) {
+    const hasAvatar = !!agent.hasAvatar;
     return {
       id: memberId,
       displayName: agent.name || agent.id,
-      avatarUrl: hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`),
+      avatarUrl: hasAvatar ? hanaUrl(`/api/agents/${agent.id}/avatar?t=${_avatarTs}`) : null,
       fallbackAvatar: yuanFallbackAvatar(agent.yuan),
       yuan: agent.yuan,
       isUser: false,
@@ -119,6 +120,9 @@ function formatChannelTime(timestamp: string): string {
 
 function MemberAvatar({ info, className }: { info: MemberInfo; className?: string }) {
   const [imgError, setImgError] = useState(false);
+  useEffect(() => {
+    setImgError(false);
+  }, [info.avatarUrl]);
 
   if (info.avatarUrl && !imgError) {
     return (

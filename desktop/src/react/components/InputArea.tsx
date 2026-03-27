@@ -552,7 +552,6 @@ function InputAreaInner() {
               disabled={!hasDoc}
               onToggle={toggleDocContext}
             />
-            <ContextRing />
           </div>
           <div className="input-controls">
             {currentModelInfo?.reasoning !== false && (
@@ -562,6 +561,7 @@ function InputAreaInner() {
                 modelXhigh={currentModelInfo?.xhigh ?? false}
               />
             )}
+            <ContextRing />
             <ModelSelector models={models} />
             <SendButton
               isStreaming={isStreaming}
@@ -694,8 +694,8 @@ function ContextRing() {
     }
   }, [compacting]);
 
+  const hasContextData = contextWindow != null;
   const pct = percent ?? 0;
-  if (contextWindow == null) return null;
 
   // SVG 圆环参数（更小更粗）
   const r = 6;
@@ -708,7 +708,7 @@ function ContextRing() {
 
   // token 数量格式化
   const tokensK = tokens != null ? Math.round(tokens / 1000) : 0;
-  const windowK = Math.round(contextWindow / 1000);
+  const windowK = contextWindow != null ? Math.round(contextWindow / 1000) : 0;
   const pctText = Math.round(pct);
 
   return (
@@ -720,7 +720,7 @@ function ContextRing() {
         className={`context-ring${compacting ? ' compacting' : ''}`}
         data-yuan={yuan}
         onDoubleClick={handleCompact}
-        disabled={compacting}
+        disabled={compacting || !hasContextData}
       >
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
           <circle cx={center} cy={center} r={r} fill="none" stroke="var(--ring-bg)" strokeWidth={sw} />
@@ -737,7 +737,7 @@ function ContextRing() {
           />
         </svg>
       </button>
-      {hovered && (
+      {hovered && hasContextData && (
         <div className="context-ring-tooltip">
           <div className="context-ring-tooltip-row">{t('input.contextWindow', { windowK })}</div>
           <div className="context-ring-tooltip-row">{t('input.tokensUsed', { tokensK, pct: pctText })}</div>

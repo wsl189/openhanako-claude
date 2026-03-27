@@ -197,7 +197,7 @@ async function init(): Promise<void> {
         break;
       case 'agent-updated': {
         const payload = data || {};
-        const { agentId, agentName, yuan, avatarUpdated, homeFolder } = payload;
+        const { agentId, agentName, yuan, avatarUpdated, hasAvatar, homeFolder } = payload;
         const state = useStore.getState();
 
         if (avatarUpdated) {
@@ -215,6 +215,9 @@ async function init(): Promise<void> {
               ...agent,
               ...(typeof agentName === 'string' ? { name: agentName } : {}),
               ...(typeof yuan === 'string' ? { yuan } : {}),
+              ...((avatarUpdated || typeof hasAvatar === 'boolean')
+                ? { hasAvatar: typeof hasAvatar === 'boolean' ? hasAvatar : true }
+                : {}),
             };
           });
 

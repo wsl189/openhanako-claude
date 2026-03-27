@@ -271,6 +271,7 @@ export default async function agentsRoute(app, { engine }) {
       try { await fs.unlink(path.join(dir, `agent.${oldExt}`)); } catch {}
     }
     await fs.writeFile(path.join(dir, `agent.${ext}`), buf);
+    engine.invalidateAgentListCache();
     return { ok: true, ext };
   });
 
@@ -284,6 +285,7 @@ export default async function agentsRoute(app, { engine }) {
     for (const ext of ["png", "jpg", "jpeg", "webp"]) {
       try { await fs.unlink(path.join(dir, `agent.${ext}`)); } catch {}
     }
+    engine.invalidateAgentListCache();
     return { ok: true };
   });
 
@@ -327,6 +329,8 @@ export default async function agentsRoute(app, { engine }) {
       const globalTz = engine.getTimezone();
       if (globalTz) config.timezone = globalTz;
       config.thinking_level = engine.getThinkingLevel();
+      const globalUserName = engine.getUserName?.() || "";
+      config.user = { ...(config.user || {}), name: globalUserName || config.user?.name || "" };
 
       // 供应商列表
       try {
@@ -369,7 +373,7 @@ export default async function agentsRoute(app, { engine }) {
       const oldCfg = YAML.load(fsSync.readFileSync(configPath, "utf-8")) || {};
       const oldYuan = oldCfg?.agent?.yuan || "hanako";
       const oldName = oldCfg?.agent?.name || id;
-      const oldUserName = oldCfg?.user?.name || "";
+      const oldUserName = engine.getUserName?.() || oldCfg?.user?.name || "";
       const oldCtx = { agentId: id, agentName: oldName, userName: oldUserName };
       const identityPath = path.join(agentDir(engine, id), "identity.md");
       const ishikiPath = path.join(agentDir(engine, id), "ishiki.md");
@@ -401,6 +405,17 @@ export default async function agentsRoute(app, { engine }) {
       if (partial.timezone !== undefined) {
         engine.setTimezone(partial.timezone);
         delete partial.timezone;
+      }
+
+      // user.name → 全局 preferences（跨 agent 共享）
+      if (partial.user !== undefined && partial.user !== null && typeof partial.user === "object") {
+        if (Object.prototype.hasOwnProperty.call(partial.user, "name")) {
+          engine.setUserName(partial.user.name);
+          delete partial.user.name;
+        }
+        if (Object.keys(partial.user).length === 0) {
+          delete partial.user;
+        }
       }
 
       // providers 块 → 全局 providers.yaml
@@ -480,10 +495,11 @@ export default async function agentsRoute(app, { engine }) {
       const newYuan = partial?.agent?.yuan;
       if (newYuan && newYuan !== oldYuan) {
         const newCfg = YAML.load(fsSync.readFileSync(configPath, "utf-8")) || {};
+        const globalUserName = engine.getUserName?.() || "";
         const newCtx = {
           agentId: id,
           agentName: newCfg?.agent?.name || oldName || id,
-          userName: newCfg?.user?.name || oldUserName || "",
+          userName: globalUserName || newCfg?.user?.name || oldUserName || "",
         };
         const contexts = [newCtx, oldCtx];
         let personaTouched = false;
