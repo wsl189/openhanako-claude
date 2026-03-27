@@ -122,7 +122,7 @@ function MemberAvatar({ info, className }: { info: MemberInfo; className?: strin
   const [imgError, setImgError] = useState(false);
   useEffect(() => {
     setImgError(false);
-  }, [info.avatarUrl]);
+  }, [info.avatarUrl, info.fallbackAvatar]);
 
   if (info.avatarUrl && !imgError) {
     return (
@@ -133,7 +133,7 @@ function MemberAvatar({ info, className }: { info: MemberInfo; className?: strin
       />
     );
   }
-  if (imgError && info.fallbackAvatar) {
+  if (info.fallbackAvatar) {
     return <img className={className} src={info.fallbackAvatar} />;
   }
   return <>{(info.displayName || '?').charAt(0).toUpperCase()}</>;
@@ -851,7 +851,7 @@ export function ChannelMembers() {
       <>
         {[peerInfo, selfInfo].map((info) => (
           <div key={info.id} className="channel-member-item">
-            {info.avatarUrl ? (
+            {(info.avatarUrl || info.fallbackAvatar) ? (
               <MemberAvatar info={info} className="channel-member-avatar-img" />
             ) : (
               <div className="channel-member-avatar">
@@ -876,7 +876,7 @@ export function ChannelMembers() {
         const info = resolveChannelMember(m, userName, userAvatarUrl, agents, currentAgentId);
         return (
           <div key={info.id + m} className="channel-member-item">
-            {info.avatarUrl ? (
+            {(info.avatarUrl || info.fallbackAvatar) ? (
               <MemberAvatar info={info} className="channel-member-avatar-img" />
             ) : (
               <div className="channel-member-avatar">
@@ -1523,7 +1523,12 @@ export function ChannelCreate() {
                 className={`channel-create-member-chip${isSelected ? ' selected' : ''}`}
                 onClick={() => toggleMember(agent.id)}
               >
-                <AgentChipAvatar agentId={agent.id} agentName={agent.name} />
+                <AgentChipAvatar
+                  agentId={agent.id}
+                  agentName={agent.name}
+                  agentYuan={agent.yuan}
+                  hasAvatar={agent.hasAvatar}
+                />
                 <span>{agent.name || agent.id}</span>
               </button>
             );
@@ -1558,17 +1563,36 @@ export function ChannelCreate() {
   );
 }
 
-function AgentChipAvatar({ agentId, agentName }: { agentId: string; agentName: string }) {
-  const [error, setError] = useState(false);
-  const src = hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`);
+function AgentChipAvatar({ agentId, agentName, agentYuan, hasAvatar }: {
+  agentId: string;
+  agentName: string;
+  agentYuan?: string;
+  hasAvatar?: boolean;
+}) {
+  const [apiError, setApiError] = useState(false);
+  const [fallbackError, setFallbackError] = useState(false);
+
+  useEffect(() => {
+    setApiError(false);
+    setFallbackError(false);
+  }, [agentId, hasAvatar, agentYuan]);
+
+  const apiSrc = hasAvatar !== false ? hanaUrl(`/api/agents/${agentId}/avatar?t=${_avatarTs}`) : null;
+  const fallbackSrc = yuanFallbackAvatar(agentYuan);
 
   return (
     <span className="chip-avatar">
-      {!error ? (
+      {apiSrc && !apiError ? (
         <img
-          src={src}
+          src={apiSrc}
           className="chip-avatar-img"
-          onError={() => setError(true)}
+          onError={() => setApiError(true)}
+        />
+      ) : (fallbackSrc && !fallbackError) ? (
+        <img
+          src={fallbackSrc}
+          className="chip-avatar-img"
+          onError={() => setFallbackError(true)}
         />
       ) : (
         <>{(agentName || agentId).charAt(0).toUpperCase()}</>
