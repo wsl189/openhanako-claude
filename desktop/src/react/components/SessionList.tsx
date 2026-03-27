@@ -137,7 +137,7 @@ function SessionItem({ session: s, isActive, isStreaming, agents, browserUrl }: 
 
   return (
     <button
-      className={'session-item' + (isActive ? ' active' : '')}
+      className={'session-item' + (isActive ? ' active' : '') + (browserUrl ? ' has-browser-badge' : '')}
       data-session-path={s.path}
       onClick={handleClick}
     >

@@ -717,7 +717,7 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .session-archive-btn {
     position: absolute;
-    bottom: 4px;
+    top: 4px;
     right: 4px;
     display: flex;
     align-items: center;
@@ -732,6 +732,10 @@ html[data-platform="linux"] .tb-toggle-right {
     opacity: 0;
     transition: all 0.15s;
     z-index: 1;
+}
+
+.session-item.has-browser-badge .session-archive-btn {
+    right: 24px;
 }
 .session-archive-btn svg {
     pointer-events: none;
@@ -823,8 +827,13 @@ html[data-platform="linux"] .tb-toggle-right {
     display: flex;
     align-items: center;
     gap: 0.35rem;
+    padding-right: 24px;
     min-width: 0;
     overflow: hidden;
+}
+
+.session-item.has-browser-badge .session-item-header {
+    padding-right: 44px;
 }
 
 /* Session 日期分组标签 */
