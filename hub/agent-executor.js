@@ -148,7 +148,9 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
   } else {
     const built = ctx.buildTools(cwd, agent.tools, { agentDir, workspace: cwd });
     tools = built.tools;
-    customTools = built.customTools;
+    // createAgentSession() 可能会重建默认 builtin 工具实现。
+    // 将“沙箱包装后的 builtin”同名注入 customTools，确保运行时执行的是受限版本。
+    customTools = [...built.customTools, ...built.tools];
   }
   const model = ctx.resolveModel(agent.config);
   const contextWindow = model?.contextWindow || 200_000;
