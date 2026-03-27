@@ -111,6 +111,21 @@ export class PreferencesManager {
     return this.getPreferences().oauth_custom_models || {};
   }
 
+  /** 读取上次激活的 agentId */
+  getLastAgentId() {
+    const raw = this.getPreferences().last_agent_id;
+    return typeof raw === "string" ? raw.trim() : "";
+  }
+
+  /** 记录上次激活的 agentId */
+  setLastAgentId(agentId) {
+    const id = String(agentId || "").trim();
+    if (!id) return;
+    const prefs = this.getPreferences();
+    prefs.last_agent_id = id;
+    this.savePreferences(prefs);
+  }
+
   /** 设置某个 OAuth provider 的自定义模型列表 */
   setOAuthCustomModels(provider, modelIds) {
     const prefs = this.getPreferences();

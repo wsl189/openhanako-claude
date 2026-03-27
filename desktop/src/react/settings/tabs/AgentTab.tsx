@@ -14,6 +14,8 @@ const REQUIRED_BUILTINS = ['read', 'grep', 'find', 'ls'];
 const OPTIONAL_BUILTINS = ['write', 'edit', 'bash'];
 const ABS_PATH_RE = /^([A-Za-z]:[\\/]|\/)/;
 const AGENT_CARD_NAME_MAX_UNITS = 4;
+const HEARTBEAT_MINUTES_MIN = 1;
+const HEARTBEAT_MINUTES_MAX = 120;
 const BUILTIN_TOOL_HINT_KEYS: Record<string, string> = {
   read: 'settings.agent.builtinReadLabel',
   grep: 'settings.agent.builtinGrepLabel',
@@ -166,6 +168,8 @@ export function AgentTab() {
   const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [archivedBusyPath, setArchivedBusyPath] = useState<string | null>(null);
+  const [hbIntervalInput, setHbIntervalInput] = useState('17');
+  const hbIntervalSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const updateSandboxPathRules = (nextRules: Array<{ path: string; access: 'read_only' | 'read_write' }>) => {
     sandboxPathRulesRef.current = nextRules;
@@ -220,8 +224,35 @@ export function AgentTab() {
         : [...toolCatalog.custom];
       setCustomEnabled(cfgCustom.filter((n: string) => toolCatalog.custom.includes(n)));
       setExpCategories(parseExperience(settingsConfig._experience || ''));
+      setHbIntervalInput(String(settingsConfig.desk?.heartbeat_interval ?? 17));
     }
   }, [settingsConfig]);
+
+  useEffect(() => {
+    return () => {
+      if (hbIntervalSaveTimerRef.current) clearTimeout(hbIntervalSaveTimerRef.current);
+    };
+  }, []);
+
+  const normalizeHeartbeatInterval = (value: string | number) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 17;
+    return Math.max(HEARTBEAT_MINUTES_MIN, Math.min(HEARTBEAT_MINUTES_MAX, Math.floor(parsed)));
+  };
+
+  const saveHeartbeatInterval = async (raw: string | number) => {
+    const interval = normalizeHeartbeatInterval(raw);
+    setHbIntervalInput(String(interval));
+    await autoSaveConfig({ desk: { heartbeat_interval: interval } }, { silent: true });
+  };
+
+  const queueHeartbeatIntervalAutoSave = (nextValue: string) => {
+    if (hbIntervalSaveTimerRef.current) clearTimeout(hbIntervalSaveTimerRef.current);
+    if (!nextValue) return;
+    hbIntervalSaveTimerRef.current = setTimeout(() => {
+      void saveHeartbeatInterval(nextValue);
+    }, 450);
+  };
 
   const getToolHint = (name: string, group: 'builtin' | 'custom') => {
     const descKey = group === 'builtin' ? BUILTIN_TOOL_DESC_KEYS[name] : CUSTOM_TOOL_DESC_KEYS[name];
@@ -670,26 +701,54 @@ export function AgentTab() {
         <div className="agent-basic-divider">
           <span>{t('settings.agent.basicConfig')}</span>
         </div>
-        <div className="settings-field">
-          <label className="settings-field-label">{t('settings.agent.chatModel')}</label>
-          <SelectWidget
-            options={modelOptions}
-            value={currentModel}
-            onChange={async (modelId) => {
-              store.set({ pendingDefaultModel: modelId });
-              const partial: Record<string, any> = { models: { chat: modelId } };
-              const providers = settingsConfig?.providers || {};
-              for (const [name, p] of Object.entries(providers) as [string, any][]) {
-                if ((p.models || []).includes(modelId)) {
-                  partial.api = { provider: name };
-                  break;
+        <div className="settings-row agent-basic-row">
+          <div className="settings-field settings-field-half">
+            <label className="settings-field-label">{t('settings.agent.chatModel')}</label>
+            <SelectWidget
+              options={modelOptions}
+              value={currentModel}
+              onChange={async (modelId) => {
+                store.set({ pendingDefaultModel: modelId });
+                const partial: Record<string, any> = { models: { chat: modelId } };
+                const providers = settingsConfig?.providers || {};
+                for (const [name, p] of Object.entries(providers) as [string, any][]) {
+                  if ((p.models || []).includes(modelId)) {
+                    partial.api = { provider: name };
+                    break;
+                  }
                 }
-              }
-              await autoSaveConfig(partial, { refreshModels: true });
-            }}
-            placeholder={t('settings.api.selectModel')}
-          />
-          <span className="settings-field-hint">{t('settings.agent.chatModelHint')}</span>
+                await autoSaveConfig(partial, { refreshModels: true });
+              }}
+              placeholder={t('settings.api.selectModel')}
+            />
+            <span className="settings-field-hint">{t('settings.agent.chatModelHint')}</span>
+          </div>
+          <div className="settings-field agent-heartbeat-field">
+            <label className="settings-field-label">{t('settings.work.heartbeatInterval')}</label>
+            <div className="settings-input-group">
+              <input
+                type="number"
+                className="settings-input small"
+                min={HEARTBEAT_MINUTES_MIN}
+                max={HEARTBEAT_MINUTES_MAX}
+                value={hbIntervalInput}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next === '' || /^\d+$/.test(next)) {
+                    setHbIntervalInput(next);
+                    queueHeartbeatIntervalAutoSave(next);
+                  }
+                }}
+                onBlur={() => {
+                  if (hbIntervalSaveTimerRef.current) clearTimeout(hbIntervalSaveTimerRef.current);
+                  const fallback = settingsConfig?.desk?.heartbeat_interval ?? 17;
+                  void saveHeartbeatInterval(hbIntervalInput || String(fallback));
+                }}
+              />
+              <span className="settings-input-unit">{t('settings.work.heartbeatUnit')}</span>
+            </div>
+            <span className="settings-field-hint">{t('settings.work.heartbeatDesc')}</span>
+          </div>
         </div>
         <div className="settings-field">
           <label className="settings-field-label">{t('settings.agent.workspace')}</label>

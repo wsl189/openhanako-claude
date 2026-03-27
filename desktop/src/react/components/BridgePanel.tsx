@@ -3,6 +3,7 @@ import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { formatSessionDate, parseMoodFromContent } from '../utils/format';
 import { renderMarkdown } from '../utils/markdown';
+import { MarkdownContent } from './chat/MarkdownContent';
 
 interface BridgeSession {
   sessionKey: string;
@@ -409,7 +410,10 @@ function ChatBubble({ message: m }: { message: BridgeMessage }) {
     if (!cleaned) return null;
     return (
       <div className="bridge-bubble-row bridge-bubble-in">
-        <div className="bridge-bubble" dangerouslySetInnerHTML={{ __html: renderMarkdown(cleaned) }} />
+        <MarkdownContent
+          className="bridge-bubble bridge-bubble-markdown md-content"
+          html={renderMarkdown(cleaned)}
+        />
       </div>
     );
   }

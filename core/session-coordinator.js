@@ -15,6 +15,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { BrowserManager } from "../lib/browser/browser-manager.js";
+import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
 import { t, getLocale } from "../server/i18n.js";
 
 const log = createModuleLogger("session");
@@ -27,6 +28,21 @@ export const PATROL_TOOLS_DEFAULT = [
   "todo", "cron", "notify",
   "present_files", "message_agent",
 ];
+
+function extractTextFromContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block?.type === "text" && block?.text)
+    .map((block) => block.text)
+    .join("");
+}
+
+function extractLastAssistantText(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  const lastAssistant = [...list].reverse().find((msg) => msg?.role === "assistant");
+  return extractTextFromContent(lastAssistant?.content);
+}
 
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
@@ -631,6 +647,17 @@ export class SessionCoordinator {
         opts.signal?.removeEventListener("abort", abortHandler);
         unsub?.();
       }
+
+      // 回填保护：某些 provider 可能不发 text_delta，
+      // 但最终 assistant 消息已写入 session。
+      if (!replyText.trim()) {
+        const fallbackText = extractLastAssistantText(session?.messages).trim();
+        if (fallbackText) {
+          replyText = fallbackText;
+          log.log("[executeIsolated] recovered final assistant text from session messages");
+        }
+      }
+      replyText = sanitizeAssistantVisibleText(replyText);
 
       const sessionPath = session.sessionManager?.getSessionFile?.() || null;
 

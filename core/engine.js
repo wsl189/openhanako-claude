@@ -72,8 +72,13 @@ export class HanaEngine {
     this._prefs = new PreferencesManager({ userDir: this.userDir, agentsDir: this.agentsDir });
     this._models = new ModelManager({ hanakoHome });
 
-    // 确定启动时焦点 agent
-    const startId = agentId || this._prefs.findFirstAgent();
+    // 确定启动时焦点 agent（优先：显式参数 > 上次使用 > 默认首个）
+    const persistedAgentId = this._prefs.getLastAgentId?.() || "";
+    const persistedConfigPath = persistedAgentId
+      ? path.join(this.agentsDir, persistedAgentId, "config.yaml")
+      : "";
+    const hasPersistedAgent = !!(persistedConfigPath && fs.existsSync(persistedConfigPath));
+    const startId = agentId || (hasPersistedAgent ? persistedAgentId : this._prefs.findFirstAgent());
     if (!startId) throw new Error(t("error.noAgentsFound"));
 
     // ── Channel Manager ──

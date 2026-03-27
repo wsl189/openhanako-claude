@@ -4011,8 +4011,119 @@ html[data-platform="darwin"] .sv-topbar-title {
     border-bottom-right-radius: 2px;
 }
 
-.bridge-bubble .md-content {
-    font-size: 0.82rem;
+.bridge-bubble-markdown {
+    font-size: 0.83rem;
+    line-height: 1.68;
+}
+
+.bridge-bubble-markdown > *:first-child {
+    margin-top: 0;
+}
+
+.bridge-bubble-markdown > *:last-child {
+    margin-bottom: 0;
+}
+
+.bridge-bubble-markdown p {
+    margin: 0 0 0.6em;
+}
+
+.bridge-bubble-markdown h1,
+.bridge-bubble-markdown h2,
+.bridge-bubble-markdown h3,
+.bridge-bubble-markdown h4,
+.bridge-bubble-markdown h5,
+.bridge-bubble-markdown h6 {
+    margin: 0.8em 0 0.45em;
+    line-height: 1.35;
+    font-weight: 600;
+    text-align: left;
+}
+
+.bridge-bubble-markdown h1 { font-size: 1.08em; }
+.bridge-bubble-markdown h2 { font-size: 1.04em; }
+.bridge-bubble-markdown h3 { font-size: 1em; }
+
+.bridge-bubble-markdown ul,
+.bridge-bubble-markdown ol {
+    margin: 0.45em 0 0.65em;
+    padding-left: 1.25em;
+    list-style-position: outside;
+}
+
+.bridge-bubble-markdown li {
+    margin: 0.2em 0;
+}
+
+.bridge-bubble-markdown li > p {
+    margin: 0;
+}
+
+.bridge-bubble-markdown :where(code):not(pre code) {
+    padding: 0.14em 0.36em;
+    border-radius: 5px;
+}
+
+.bridge-bubble-markdown pre {
+    margin: 0.65em 0;
+    padding: 0.65rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    background: color-mix(in srgb, var(--overlay-subtle) 82%, var(--bg-card));
+}
+
+.bridge-bubble-markdown pre code {
+    font-size: 0.8rem;
+    line-height: 1.55;
+}
+
+.bridge-bubble-markdown pre .copy-btn {
+    top: 0.4rem;
+    right: 0.4rem;
+    background: color-mix(in srgb, var(--bg-card) 94%, transparent);
+}
+
+.bridge-bubble-markdown blockquote {
+    margin: 0.6em 0;
+    padding: 0.32em 0.75em;
+    border-left: 3px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+    border-radius: 0 8px 8px 0;
+    background: color-mix(in srgb, var(--overlay-light) 74%, transparent);
+    color: var(--text-light);
+    font-style: normal;
+}
+
+.bridge-bubble-markdown table {
+    display: block;
+    overflow-x: auto;
+    width: max-content;
+    min-width: 100%;
+    margin: 0.65em 0;
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--bg-card) 90%, transparent);
+}
+
+.bridge-bubble-markdown th,
+.bridge-bubble-markdown td {
+    border: none;
+    border-bottom: 1px solid var(--border);
+    padding: 0.36em 0.58em;
+}
+
+.bridge-bubble-markdown tr:last-child td {
+    border-bottom: none;
+}
+
+.bridge-bubble-markdown th {
+    background: color-mix(in srgb, var(--overlay-subtle) 86%, transparent);
+}
+
+.bridge-bubble-markdown a {
+    text-underline-offset: 2px;
+    text-decoration-thickness: from-font;
 }
 
 /* ── 未配置蒙版 ── */
@@ -7797,6 +7908,27 @@ body.resizing .jian-sidebar-inner {
 
 .agent-basic-divider > span {
     white-space: nowrap;
+}
+
+.settings-row.agent-basic-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 200px;
+    align-items: start;
+    gap: var(--space-md);
+}
+
+.settings-row.agent-basic-row > .settings-field {
+    margin-bottom: 0;
+}
+
+.agent-heartbeat-field {
+    min-width: 0;
+}
+
+@media (max-width: 680px) {
+    .settings-row.agent-basic-row {
+        grid-template-columns: 1fr;
+    }
 }
 
 .agent-path-add-row {

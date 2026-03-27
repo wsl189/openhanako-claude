@@ -49,7 +49,12 @@ export class AgentManager {
 
   get agents() { return this._agents; }
   get activeAgentId() { return this._activeAgentId; }
-  set activeAgentId(id) { this._activeAgentId = id; }
+  set activeAgentId(id) {
+    this._activeAgentId = id;
+    try {
+      this._d.getPrefs?.()?.setLastAgentId?.(id);
+    } catch {}
+  }
   get switching() { return this._switching; }
 
   /** 当前焦点 agent */
@@ -78,7 +83,7 @@ export class AgentManager {
   // ── Init ──
 
   async initAllAgents(log, startId) {
-    this._activeAgentId = startId;
+    this.activeAgentId = startId;
 
     const sharedModels = this._d.getSharedModels();
     const resolveModel = (bareId, agentConfig) =>
@@ -315,7 +320,7 @@ export class AgentManager {
       await hub?.pauseForAgentSwitch();
       // Phase 1: 不再杀 session，只切 agent 指针
       clearConfigCache();
-      this._activeAgentId = agentId;
+      this.activeAgentId = agentId;
 
       const preferredId = this.agent.config.models?.chat;
       const models = this._d.getModels();
@@ -330,7 +335,7 @@ export class AgentManager {
       const effectiveModel = preferredId || models.defaultModel?.id || "inherited";
       log.log(`agent switched to ${this.agent.agentName} (${agentId}), model=${effectiveModel}`);
     } catch (err) {
-      this._activeAgentId = prevAgentId;
+      this.activeAgentId = prevAgentId;
       try { this._d.getHub()?.resumeAfterAgentSwitch(); } catch {}
       throw err;
     } finally {

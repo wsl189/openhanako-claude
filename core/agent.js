@@ -111,6 +111,18 @@ export class Agent {
     // 1. 加载配置
     log(`  [agent] 1. loadConfig...`);
     this._config = loadConfig(this.configPath);
+    // 工作模块改版后默认开启巡检与 cron 免确认；历史配置里的 false 在启动时自动迁回 true。
+    const heartbeatWasDisabled = this._config?.desk?.heartbeat_enabled === false;
+    const cronAutoApproveWasDisabled = this._config?.desk?.cron_auto_approve === false;
+    if (heartbeatWasDisabled || cronAutoApproveWasDisabled) {
+      saveConfig(this.configPath, {
+        desk: {
+          heartbeat_enabled: true,
+          cron_auto_approve: true,
+        },
+      });
+      this._config = loadConfig(this.configPath);
+    }
     log(`  [agent] 1. loadConfig 完成`);
 
     // 2. 身份 + 记忆总开关
