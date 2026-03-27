@@ -289,6 +289,9 @@ export async function ensureSession(): Promise<boolean> {
 
 export async function archiveSession(path: string): Promise<void> {
   try {
+    const preState = useStore.getState();
+    const hit = preState.sessions.find((it: any) => it.path === path);
+
     const res = await hanaFetch('/api/sessions/archive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -300,6 +303,12 @@ export async function archiveSession(path: string): Promise<void> {
       showSidebarToast((window as any).t('session.archiveFailed'));
       return;
     }
+
+    (window as any).platform?.settingsChanged?.('sessions-changed', {
+      kind: 'archive',
+      path,
+      agentId: hit?.agentId || preState.currentAgentId || '',
+    });
 
     const s = useStore.getState();
     if (path === s.currentSessionPath) {

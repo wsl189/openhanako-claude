@@ -765,6 +765,18 @@
       "edit": "Edit",
       "deleteCategory": "Delete category"
     },
+    "archivedSessions": {
+      "sectionTitle": "Archived Sessions",
+      "loading": "Loading...",
+      "empty": "No archived sessions",
+      "workspaceEmpty": "Workspace not recorded",
+      "restoreTitle": "Restore session",
+      "deleteTitle": "Delete permanently",
+      "restoreSuccess": "Session restored",
+      "restoreFailed": "Failed to restore session",
+      "deleteSuccess": "Session deleted permanently",
+      "deleteFailed": "Failed to delete session"
+    },
     "work": {
       "title": "Patrol",
       "heartbeatEnabled": "Patrol mode",

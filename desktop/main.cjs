@@ -1514,6 +1514,9 @@ ipcMain.on("settings-changed", (_event, type, data) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("settings-changed", type, data);
   }
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send("settings-changed", type, data);
+  }
   if (type === "theme-changed" && data?.theme) {
     const name = data.theme;
     _browserViewerTheme = name === "auto"

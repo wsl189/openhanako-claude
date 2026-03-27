@@ -10368,6 +10368,108 @@ a.about-link:hover {
     border-top: 1px solid var(--overlay-light);
 }
 
+/* 归档会话 */
+.archived-session-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.archived-session-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: 0.55rem 0.65rem;
+    border: 1px solid var(--overlay-light);
+    border-radius: var(--radius-md);
+    background: var(--bg-card, var(--bg));
+}
+
+.archived-session-content {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+}
+
+.archived-session-title {
+    font-size: 0.83rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.archived-session-workspace {
+    font-size: 0.73rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.archived-session-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.archived-session-restore {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: all 0.15s;
+}
+
+.archived-session-restore:hover {
+    color: var(--accent);
+    background: var(--overlay-light);
+}
+
+.archived-session-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: 1rem;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.15s;
+}
+
+.archived-session-item:hover .archived-session-delete {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.archived-session-delete:hover {
+    color: var(--danger);
+    background: var(--overlay-light);
+}
+
+.archived-session-delete:disabled,
+.archived-session-restore:disabled {
+    opacity: 0.55;
+    cursor: default;
+    pointer-events: none;
+}
+
 /* 清除确认浮层 */
 .memory-confirm-overlay {
     display: none;

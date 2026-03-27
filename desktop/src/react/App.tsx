@@ -35,7 +35,7 @@ import { SidebarLayout, updateLayout, toggleSidebar } from './components/Sidebar
 import { FloatPreviewCard, useFloatCard } from './components/FloatPreviewCard';
 import { useSidebarResize } from './hooks/use-sidebar-resize';
 import { applyAgentIdentity, loadAgents, loadAvatars } from './stores/agent-actions';
-import { createNewSession, loadSessions } from './stores/session-actions';
+import { createNewSession, loadSessions, switchSession } from './stores/session-actions';
 import { connectWebSocket } from './services/websocket';
 import { setStatus, loadModels } from './utils/ui-helpers';
 import { toSlash, baseName, isHttpUrlPath } from './utils/format';
@@ -246,6 +246,19 @@ async function init(): Promise<void> {
       case 'font-changed':
         setSerifFont(data.serif);
         break;
+      case 'sessions-changed': {
+        const payload = data || {};
+        const targetPath = typeof payload.switchPath === 'string' ? payload.switchPath : '';
+        if (targetPath) {
+          void (async () => {
+            await loadSessions();
+            await switchSession(targetPath);
+          })();
+        } else {
+          void loadSessions();
+        }
+        break;
+      }
     }
   });
 

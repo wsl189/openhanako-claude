@@ -50,6 +50,15 @@ export function SettingsApp() {
     });
   }, [set]);
 
+  useEffect(() => {
+    if (!platform?.onSettingsChanged) return;
+    platform.onSettingsChanged((type: string, data: any) => {
+      if (type === 'sessions-changed') {
+        window.dispatchEvent(new CustomEvent('hana-sessions-changed', { detail: data || {} }));
+      }
+    });
+  }, []);
+
   const ActiveTab = TAB_COMPONENTS[activeTab] || AgentTab;
 
   return (

@@ -5,6 +5,7 @@ import { t, autoSaveConfig, savePins } from '../helpers';
 import { SelectWidget } from '../widgets/SelectWidget';
 import { Toggle } from '../widgets/Toggle';
 import { browseAgent, loadSettingsConfig, loadAgents } from '../actions';
+import { formatSessionDate } from '../../utils/format';
 
 import kongBannerUrl from '../../../assets/kong-banner.jpg';
 
@@ -79,6 +80,15 @@ const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
 };
 
 interface ExpCategory { name: string; entries: string[]; }
+interface ArchivedSession {
+  path: string;
+  title: string | null;
+  firstMessage: string;
+  modified: string | null;
+  messageCount: number;
+  cwd: string | null;
+  agentId: string;
+}
 
 function parseExperience(raw: string): ExpCategory[] {
   if (!raw?.trim()) return [];
@@ -153,6 +163,9 @@ export function AgentTab() {
   const [customExpanded, setCustomExpanded] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [expCategories, setExpCategories] = useState<ExpCategory[]>([]);
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [archivedBusyPath, setArchivedBusyPath] = useState<string | null>(null);
 
   const updateSandboxPathRules = (nextRules: Array<{ path: string; access: 'read_only' | 'read_write' }>) => {
     sandboxPathRulesRef.current = nextRules;
@@ -445,6 +458,105 @@ export function AgentTab() {
       await loadSettingsConfig();
     } catch (err: any) {
       showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+    }
+  };
+
+  const loadArchivedSessionsForAgent = async (agentId?: string | null) => {
+    const targetAgentId = (agentId || store.getSettingsAgentId() || '').trim();
+    if (!targetAgentId) {
+      setArchivedSessions([]);
+      return;
+    }
+    setArchivedLoading(true);
+    try {
+      const res = await hanaFetch(`/api/sessions/archived?agentId=${encodeURIComponent(targetAgentId)}`);
+      const data = await res.json();
+      setArchivedSessions(Array.isArray(data.sessions) ? data.sessions : []);
+    } catch {
+      setArchivedSessions([]);
+    } finally {
+      setArchivedLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadArchivedSessionsForAgent(settingsAgentId);
+  }, [settingsAgentId, currentAgentId]);
+
+  useEffect(() => {
+    const onSessionsChanged = (evt: Event) => {
+      const payload = (evt as CustomEvent<any>)?.detail || {};
+      const changedAgentId = String(payload.agentId || '').trim();
+      if (changedAgentId && settingsAgentId && changedAgentId !== settingsAgentId) return;
+      void loadArchivedSessionsForAgent(settingsAgentId);
+    };
+    window.addEventListener('hana-sessions-changed', onSessionsChanged as EventListener);
+    return () => {
+      window.removeEventListener('hana-sessions-changed', onSessionsChanged as EventListener);
+    };
+  }, [settingsAgentId]);
+
+  const restoreArchivedSession = async (sessionPath: string) => {
+    setArchivedBusyPath(sessionPath);
+    try {
+      const restoreRes = await hanaFetch('/api/sessions/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: sessionPath }),
+      });
+      const restoreData = await restoreRes.json();
+      if (restoreData.error || !restoreData.path) {
+        throw new Error(restoreData.error || 'restore failed');
+      }
+
+      const switchRes = await hanaFetch('/api/sessions/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: restoreData.path }),
+      });
+      const switchData = await switchRes.json();
+      if (switchData.error) {
+        throw new Error(switchData.error);
+      }
+
+      platform?.settingsChanged?.('sessions-changed', {
+        kind: 'restore',
+        agentId: settingsAgentId || '',
+        path: sessionPath,
+        switchPath: restoreData.path,
+      });
+      showToast(t('settings.archivedSessions.restoreSuccess'), 'success');
+      await loadArchivedSessionsForAgent(settingsAgentId);
+    } catch (err: any) {
+      showToast(`${t('settings.archivedSessions.restoreFailed')}: ${err.message}`, 'error');
+    } finally {
+      setArchivedBusyPath(null);
+    }
+  };
+
+  const deleteArchivedSession = async (sessionPath: string) => {
+    setArchivedBusyPath(sessionPath);
+    try {
+      const res = await hanaFetch('/api/sessions/delete-archived', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: sessionPath }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      platform?.settingsChanged?.('sessions-changed', {
+        kind: 'delete-archived',
+        agentId: settingsAgentId || '',
+        path: sessionPath,
+      });
+      showToast(t('settings.archivedSessions.deleteSuccess'), 'success');
+      await loadArchivedSessionsForAgent(settingsAgentId);
+    } catch (err: any) {
+      showToast(`${t('settings.archivedSessions.deleteFailed')}: ${err.message}`, 'error');
+    } finally {
+      setArchivedBusyPath(null);
     }
   };
 
@@ -903,6 +1015,54 @@ export function AgentTab() {
                 }}
               />
             ))}
+          </div>
+        )}
+      </section>
+
+      <section className="settings-section">
+        <h2 className="settings-section-title">{t('settings.archivedSessions.sectionTitle')}</h2>
+        {archivedLoading ? (
+          <div className="pin-empty">{t('settings.archivedSessions.loading')}</div>
+        ) : archivedSessions.length === 0 ? (
+          <div className="pin-empty">{t('settings.archivedSessions.empty')}</div>
+        ) : (
+          <div className="archived-session-list">
+            {archivedSessions.map((session) => {
+              const workspaceText = session.cwd || t('settings.archivedSessions.workspaceEmpty');
+              const meta = session.modified
+                ? `${workspaceText} · ${formatSessionDate(session.modified)}`
+                : workspaceText;
+              const busy = archivedBusyPath === session.path;
+              return (
+                <div key={session.path} className="archived-session-item">
+                  <div className="archived-session-content">
+                    <div className="archived-session-title">
+                      {session.title || session.firstMessage || t('session.untitled')}
+                    </div>
+                    <div className="archived-session-workspace" title={workspaceText}>{meta}</div>
+                  </div>
+                  <div className="archived-session-actions">
+                    <button
+                      className="archived-session-restore"
+                      title={t('settings.archivedSessions.restoreTitle')}
+                      aria-label={t('settings.archivedSessions.restoreTitle')}
+                      disabled={busy}
+                      onClick={() => restoreArchivedSession(session.path)}
+                    >
+                      ↩
+                    </button>
+                    <button
+                      className="archived-session-delete"
+                      title={t('settings.archivedSessions.deleteTitle')}
+                      disabled={busy}
+                      onClick={() => deleteArchivedSession(session.path)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>

@@ -765,6 +765,18 @@
       "edit": "编辑",
       "deleteCategory": "删除分类"
     },
+    "archivedSessions": {
+      "sectionTitle": "已归档会话",
+      "loading": "加载中...",
+      "empty": "暂无已归档会话",
+      "workspaceEmpty": "未记录工作区",
+      "restoreTitle": "恢复会话",
+      "deleteTitle": "彻底删除",
+      "restoreSuccess": "会话已恢复",
+      "restoreFailed": "恢复会话失败",
+      "deleteSuccess": "会话已彻底删除",
+      "deleteFailed": "删除会话失败"
+    },
     "work": {
       "title": "巡检",
       "heartbeatEnabled": "巡检模式",

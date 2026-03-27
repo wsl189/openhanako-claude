@@ -3,6 +3,7 @@
  */
 import fs from "fs/promises";
 import path from "path";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { t } from "../i18n.js";
 import { BrowserManager } from "../../lib/browser/browser-manager.js";
 import { isToolCallBlock, getToolArgs } from "../../core/llm-utils.js";
@@ -13,6 +14,7 @@ import { isToolCallBlock, getToolArgs } from "../../core/llm-utils.js";
  * 返回 { text, thinking, toolUses }
  */
 const TOOL_ARG_SUMMARY_KEYS = ["file_path", "path", "command", "pattern", "url", "query", "key", "value", "action", "type", "schedule", "prompt", "label"];
+const SESSION_TITLES_FILE = "session-titles.json";
 
 /** 从文本中提取并剥离 <think>...</think> 标签 */
 function stripThinkTags(raw) {
@@ -102,6 +104,121 @@ function isValidSessionPath(sessionPath, baseDir) {
   return resolved.startsWith(base + path.sep) || resolved === base;
 }
 
+function isArchivedSessionPath(sessionPath, agentsDir) {
+  if (!isValidSessionPath(sessionPath, agentsDir)) return false;
+  const rel = path.relative(path.resolve(agentsDir), path.resolve(sessionPath));
+  if (!rel || rel.startsWith("..")) return false;
+  const parts = rel.split(path.sep);
+  return parts.length >= 4 && parts[1] === "sessions" && parts[2] === "archived";
+}
+
+async function readSessionTitles(sessionDir) {
+  try {
+    const raw = await fs.readFile(path.join(sessionDir, SESSION_TITLES_FILE), "utf-8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeSessionTitles(sessionDir, titles) {
+  await fs.writeFile(
+    path.join(sessionDir, SESSION_TITLES_FILE),
+    JSON.stringify(titles, null, 2),
+    "utf-8",
+  );
+}
+
+function findLegacyTitleEntry(titles, sessionPath) {
+  const name = path.basename(sessionPath);
+  for (const [key, value] of Object.entries(titles || {})) {
+    if (path.basename(key) === name && typeof value === "string" && value.trim()) {
+      return { key, title: value };
+    }
+  }
+  return null;
+}
+
+function resolveSessionTitle(titles, sessionPath, fallback = "") {
+  if (typeof titles?.[sessionPath] === "string" && titles[sessionPath].trim()) {
+    return titles[sessionPath];
+  }
+  const legacy = findLegacyTitleEntry(titles, sessionPath);
+  if (legacy?.title) return legacy.title;
+  return fallback || null;
+}
+
+async function remapSessionTitle(sessionDir, fromPath, toPath) {
+  const titles = await readSessionTitles(sessionDir);
+  let changed = false;
+  let title = null;
+
+  if (typeof titles[fromPath] === "string" && titles[fromPath].trim()) {
+    title = titles[fromPath];
+    if (fromPath !== toPath) {
+      delete titles[fromPath];
+      changed = true;
+    }
+  } else {
+    const legacy = findLegacyTitleEntry(titles, fromPath);
+    if (legacy) {
+      title = legacy.title;
+      if (legacy.key !== toPath) {
+        delete titles[legacy.key];
+        changed = true;
+      }
+    }
+  }
+
+  if (title && titles[toPath] !== title) {
+    titles[toPath] = title;
+    changed = true;
+  }
+
+  if (changed) {
+    await writeSessionTitles(sessionDir, titles);
+  }
+}
+
+async function removeSessionTitle(sessionDir, sessionPath) {
+  const titles = await readSessionTitles(sessionDir);
+  const fileName = path.basename(sessionPath);
+  let changed = false;
+
+  for (const key of Object.keys(titles)) {
+    if (key === sessionPath || path.basename(key) === fileName) {
+      delete titles[key];
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await writeSessionTitles(sessionDir, titles);
+  }
+}
+
+async function resolveRestorePath(preferredPath) {
+  try {
+    await fs.access(preferredPath);
+  } catch {
+    return preferredPath;
+  }
+
+  const ext = path.extname(preferredPath);
+  const base = preferredPath.slice(0, preferredPath.length - ext.length);
+  for (let i = 1; i <= 999; i++) {
+    const candidate = `${base}_restored-${i}${ext}`;
+    try {
+      await fs.access(candidate);
+    } catch {
+      return candidate;
+    }
+  }
+
+  return `${base}_restored-${Date.now()}${ext}`;
+}
+
 export default async function sessionsRoute(app, { engine }) {
 
   // 列出所有 agent 的历史 session
@@ -121,6 +238,50 @@ export default async function sessionsRoute(app, { engine }) {
     } catch (err) {
       reply.code(500);
       return { error: err.message };
+    }
+  });
+
+  // 列出指定 agent 的归档 session
+  app.get("/api/sessions/archived", async (req, reply) => {
+    try {
+      const agentId = String(req.query?.agentId || engine.currentAgentId || "").trim();
+      if (!agentId) return { agentId: "", sessions: [] };
+
+      const sessionDir = path.join(engine.agentsDir, agentId, "sessions");
+      if (!isValidSessionPath(sessionDir, engine.agentsDir)) {
+        reply.code(403);
+        return { error: "Invalid session path", sessions: [] };
+      }
+
+      const archiveDir = path.join(sessionDir, "archived");
+      let sessions = [];
+      try {
+        sessions = await SessionManager.list(process.cwd(), archiveDir);
+      } catch {
+        sessions = [];
+      }
+
+      const titles = await readSessionTitles(sessionDir);
+      const mapped = sessions.map((s) => ({
+        path: s.path,
+        title: resolveSessionTitle(titles, s.path, s.firstMessage || ""),
+        firstMessage: (s.firstMessage || "").slice(0, 120),
+        modified: s.modified?.toISOString?.() || s.modified || null,
+        messageCount: s.messageCount || 0,
+        cwd: s.cwd || null,
+        agentId,
+      }));
+
+      mapped.sort((a, b) => {
+        const at = a.modified ? new Date(a.modified).getTime() : 0;
+        const bt = b.modified ? new Date(b.modified).getTime() : 0;
+        return bt - at;
+      });
+
+      return { agentId, sessions: mapped };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message, sessions: [] };
     }
   });
 
@@ -385,6 +546,75 @@ export default async function sessionsRoute(app, { engine }) {
       const fileName = path.basename(sessionPath);
       const destPath = path.join(archiveDir, fileName);
       await fs.rename(sessionPath, destPath);
+      await remapSessionTitle(sessDir, sessionPath, destPath);
+
+      return { ok: true };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // 恢复归档 session
+  app.post("/api/sessions/restore", async (req, reply) => {
+    try {
+      const { path: archivedPath } = req.body || {};
+      if (!archivedPath) {
+        reply.code(400);
+        return { error: t("error.missingParam", { param: "path" }) };
+      }
+      if (!isArchivedSessionPath(archivedPath, engine.agentsDir)) {
+        reply.code(400);
+        return { error: "Invalid archived session path" };
+      }
+
+      try {
+        await fs.access(archivedPath);
+      } catch {
+        reply.code(404);
+        return { error: t("error.sessionNotFound") };
+      }
+
+      const archiveDir = path.dirname(archivedPath);
+      const sessionDir = path.dirname(archiveDir);
+      const preferredTargetPath = path.join(sessionDir, path.basename(archivedPath));
+      const targetPath = await resolveRestorePath(preferredTargetPath);
+
+      await fs.rename(archivedPath, targetPath);
+      await remapSessionTitle(sessionDir, archivedPath, targetPath);
+
+      return { ok: true, path: targetPath };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // 彻底删除归档 session（删除 .hanako 对应文件）
+  app.post("/api/sessions/delete-archived", async (req, reply) => {
+    try {
+      const { path: archivedPath } = req.body || {};
+      if (!archivedPath) {
+        reply.code(400);
+        return { error: t("error.missingParam", { param: "path" }) };
+      }
+      if (!isArchivedSessionPath(archivedPath, engine.agentsDir)) {
+        reply.code(400);
+        return { error: "Invalid archived session path" };
+      }
+
+      try {
+        await fs.access(archivedPath);
+      } catch {
+        reply.code(404);
+        return { error: t("error.sessionNotFound") };
+      }
+
+      await fs.unlink(archivedPath);
+
+      const archiveDir = path.dirname(archivedPath);
+      const sessionDir = path.dirname(archiveDir);
+      await removeSessionTitle(sessionDir, archivedPath);
 
       return { ok: true };
     } catch (err) {
