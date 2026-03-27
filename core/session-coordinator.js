@@ -16,13 +16,8 @@ import {
 import { createModuleLogger } from "../lib/debug-log.js";
 import { BrowserManager } from "../lib/browser/browser-manager.js";
 import { t, getLocale } from "../server/i18n.js";
-import { normalizeTitle } from "./llm-utils.js";
 
 const log = createModuleLogger("session");
-
-function looksLikeZh(text) {
-  return /[\u4e00-\u9fff]/.test(String(text || ""));
-}
 
 /** 巡检/定时任务默认工具白名单 */
 export const PATROL_TOOLS_DEFAULT = [
@@ -394,10 +389,13 @@ export class SessionCoordinator {
         const titles = await this._loadSessionTitlesFor(sessionDir);
         for (const s of sessions) {
           const rawTitle = titles[s.path];
-          if (rawTitle) {
-            const isZh = looksLikeZh(rawTitle) || looksLikeZh(s.firstMessage || "");
-            const safeTitle = normalizeTitle(rawTitle, isZh);
-            s.title = safeTitle || normalizeTitle(s.firstMessage || "", isZh) || null;
+          const cleanStoredTitle = typeof rawTitle === "string" ? rawTitle.trim() : "";
+          if (cleanStoredTitle) {
+            s.title = cleanStoredTitle;
+          } else if (typeof s.title === "string" && s.title.trim()) {
+            s.title = s.title.trim();
+          } else {
+            s.title = null;
           }
           s.agentId = agent.id;
           s.agentName = agent.name;

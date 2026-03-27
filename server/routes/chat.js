@@ -839,8 +839,12 @@ async function generateSessionTitle(engine, notify, opts = {}) {
     // API 失败时，使用最小兜底标题（不做本地语义提取）
     if (!title) {
       const isZh = isLikelyZh(userText);
-      const rawFallback = Array.from(userText.replace(/\n/g, " ").trim()).slice(0, 5).join("");
-      const fallback = rawFallback || (isZh ? "新对话" : "New chat");
+      const compact = userText.replace(/\n/g, " ").trim();
+      const chars = Array.from(compact);
+      const rawFallback = chars.slice(0, 8).join("");
+      const fallback = rawFallback
+        ? (chars.length > 8 ? `${rawFallback}...` : rawFallback)
+        : (isZh ? "新对话" : "New chat");
       title = fallback;
       console.log("[chat] session 标题 API 失败，使用 fallback:", title);
     }

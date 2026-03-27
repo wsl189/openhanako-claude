@@ -224,6 +224,21 @@ export class AgentManager {
     if (primaryChat) {
       config = config.replace(/chat: ""/, `chat: "${primaryChat}"`);
     }
+    // 新建助手默认开启所有自定义工具（写入显式白名单，避免 UI 显示为全关）
+    const defaultCustomEnabled = [...new Set(
+      (currentAgent?.getAllCustomTools?.() || [])
+        .map((tool) => String(tool?.name || "").trim())
+        .filter(Boolean),
+    )].sort();
+    if (defaultCustomEnabled.length > 0) {
+      const serialized = defaultCustomEnabled
+        .map((name) => `"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+        .join(", ");
+      config = config.replace(
+        /(^\s*custom_enabled:\s*)\[[^\]]*\].*$/m,
+        `$1[${serialized}]`,
+      );
+    }
     fs.writeFileSync(path.join(agentDir, "config.yaml"), config, "utf-8");
 
     // identity.md（按 yuan 选择模板，缺失时回退 identity.example.md）
