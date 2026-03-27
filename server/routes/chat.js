@@ -32,6 +32,24 @@ function extractText(content) {
     .join("");
 }
 
+function extractTitleSourceText(content) {
+  return extractText(content)
+    .replace(/\r/g, "")
+    .replace(/```(?:think|analysis|reasoning|commentary|summary)?[\s\S]*?```/gi, " ")
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, " ")
+    .replace(/<(?:mood|pulse|reflect)\b[^>]*>[\s\S]*?<\/(?:mood|pulse|reflect)>/gi, " ")
+    .replace(/<xing\b[^>]*>[\s\S]*?<\/xing>/gi, " ")
+    .replace(/<(?:analysis|commentary|summary)\b[^>]*>[\s\S]*?<\/(?:analysis|commentary|summary)>/gi, " ")
+    .replace(/<\/?(?:think|mood|pulse|reflect|xing|analysis|commentary|summary)\b[^>]*>/gi, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function isLikelyZh(text) {
+  return /[\u4e00-\u9fff]/.test(String(text || ""));
+}
+
 export default async function chatRoute(app, { engine, hub }) {
   let activeWsClients = 0;
   let disconnectAbortTimer = null;
@@ -79,8 +97,8 @@ export default async function chatRoute(app, { engine, hub }) {
         isThinking: false,
         hasOutput: false,
         hasToolCall: false,
+        userAborted: false,
         titleRequested: false,
-        titlePreview: "",
         ...createSessionStreamState(),
       });
     }
@@ -184,13 +202,17 @@ export default async function chatRoute(app, { engine, hub }) {
     const userMsgCount = messages.filter(m => m.role === "user").length;
     if (userMsgCount !== 1) return;
 
+    const userMsg = messages.find(m => m.role === "user");
+    const userText = extractText(userMsg?.content).trim();
+    if (!userText) return;
+
     const assistantMsg = messages.find(m => m.role === "assistant");
-    const assistantText = (ss.titlePreview || extractText(assistantMsg?.content)).trim();
-    if (!assistantText) return;
+    const assistantText = extractTitleSourceText(assistantMsg?.content);
 
     ss.titleRequested = true;
     generateSessionTitle(engine, broadcast, {
       sessionPath,
+      userTextHint: userText,
       assistantTextHint: assistantText,
     }).then((ok) => {
       if (!ok) ss.titleRequested = false;
@@ -237,9 +259,7 @@ export default async function chatRoute(app, { engine, hub }) {
                     ss.xingParser.feed(evt.data, (xEvt) => {
                       switch (xEvt.type) {
                         case "text":
-                          ss.titlePreview += xEvt.data || "";
                           emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: xEvt.data });
-                          maybeGenerateFirstTurnTitle(sessionPath, ss);
                           break;
                         case "xing_start":
                           emitStreamEvent(sessionPath, ss, { type: "xing_start", title: xEvt.title });
@@ -512,16 +532,15 @@ export default async function chatRoute(app, { engine, hub }) {
         const finalText = extractText(lastAssistant?.content).trim();
         if (finalText) {
           ss.hasOutput = true;
-          ss.titlePreview += finalText;
           if (isActive) {
             emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: finalText });
-            maybeGenerateFirstTurnTitle(sessionPath, ss);
           }
         }
       }
 
-      // 空回复检测：本轮没有文本输出也没有工具调用，提示用户检查配置
-      if (!ss.hasOutput && !ss.hasToolCall && isActive) {
+      // 空回复检测：本轮没有文本输出也没有工具调用，提示用户检查配置。
+      // 若是用户主动点击停止（abort），不应提示“模型未返回任何内容”。
+      if (!ss.hasOutput && !ss.hasToolCall && isActive && !ss.userAborted) {
         broadcast({ type: "error", message: t("error.modelNoResponse") });
       }
 
@@ -532,14 +551,15 @@ export default async function chatRoute(app, { engine, hub }) {
       }
       ss.hasOutput = false;
       ss.hasToolCall = false;
+      ss.userAborted = false;
       ss.thinkTagParser.reset();
       ss.moodParser.reset();
       ss.xingParser.reset();
 
       if (isActive) {
         debugLog()?.log("ws", "assistant reply done");
-        maybeGenerateFirstTurnTitle(sessionPath, ss);
       }
+      maybeGenerateFirstTurnTitle(sessionPath, ss);
     } else if (event.type === "auto_compaction_start") {
       if (sessionPath) {
         const before = getUsageBySessionPath(sessionPath);
@@ -582,6 +602,8 @@ export default async function chatRoute(app, { engine, hub }) {
 
       if (msg.type === "abort") {
         const abortPath = msg.sessionPath || engine.currentSessionPath;
+        const ss = abortPath ? getState(abortPath) : null;
+        if (ss) ss.userAborted = true;
         if (engine.isSessionStreaming(abortPath)) {
           try { await hub.abort(abortPath); } catch {}
         }
@@ -744,8 +766,8 @@ export default async function chatRoute(app, { engine, hub }) {
           ss.thinkTagParser.reset();
           ss.moodParser.reset();
           ss.xingParser.reset();
+          ss.userAborted = false;
           ss.titleRequested = false;
-          ss.titlePreview = "";
           beginSessionStream(ss);
           broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath });
           // 透传图片给主对话模型：支持原生多模态模型直接看图回复，
@@ -805,19 +827,20 @@ async function generateSessionTitle(engine, notify, opts = {}) {
     if (!userMsg && !opts.userTextHint) return false;
 
     const userText = (opts.userTextHint || extractText(userMsg?.content)).trim();
-    const assistantText = (opts.assistantTextHint || extractText(assistantMsg?.content)).trim();
-    if (!userText || !assistantText) return false;
+    const assistantText = (opts.assistantTextHint ?? extractTitleSourceText(assistantMsg?.content)).trim();
+    if (!userText) return false;
 
     const TITLE_TIMEOUT = 15_000; // 15 秒超时
     let title = await Promise.race([
-      engine.summarizeTitle(userText, assistantText),
+      engine.summarizeTitle(userText, assistantText || ""),
       new Promise(resolve => setTimeout(() => resolve(null), TITLE_TIMEOUT)),
     ]);
 
-    // API 失败时，用用户第一条消息截取作为 fallback 标题
+    // API 失败时，使用最小兜底标题（不做本地语义提取）
     if (!title) {
-      const fallback = userText.replace(/\n/g, " ").trim().slice(0, 30);
-      if (!fallback) return;
+      const isZh = isLikelyZh(userText);
+      const rawFallback = Array.from(userText.replace(/\n/g, " ").trim()).slice(0, 5).join("");
+      const fallback = rawFallback || (isZh ? "新对话" : "New chat");
       title = fallback;
       console.log("[chat] session 标题 API 失败，使用 fallback:", title);
     }

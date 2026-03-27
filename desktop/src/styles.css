@@ -1999,7 +1999,11 @@ html[data-platform="linux"] .tb-toggle-right {
     position: relative;
 }
 
-.msg-copy-btn {
+.assistant-final-reply {
+    position: relative;
+}
+
+.assistant-final-reply .msg-copy-btn {
     position: absolute;
     top: 4px;
     right: 4px;
@@ -2009,11 +2013,17 @@ html[data-platform="linux"] .tb-toggle-right {
     padding: 4px;
     cursor: pointer;
     opacity: 0;
+    pointer-events: none;
     transition: opacity 0.15s;
     color: var(--hana-text-muted);
     line-height: 1;
+    z-index: 2;
 }
-.message-group.assistant:hover .msg-copy-btn { opacity: 0.6; }
+.assistant-final-reply:hover .msg-copy-btn,
+.assistant-final-reply:focus-within .msg-copy-btn {
+    opacity: 0.6;
+    pointer-events: auto;
+}
 .msg-copy-btn:hover { opacity: 1 !important; color: var(--hana-text); }
 .msg-copy-btn.copied { opacity: 1 !important; color: var(--hana-accent, #4a9); }
 

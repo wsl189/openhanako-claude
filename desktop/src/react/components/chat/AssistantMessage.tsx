@@ -61,20 +61,29 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   }, [sessionAgent?.avatarUrl, agentAvatarUrl, fallbackAvatar]);
 
   const blocks = message.blocks || [];
+  const finalTextIndex = useMemo(() => {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].type === 'text') return i;
+    }
+    return -1;
+  }, [blocks]);
+  const finalTextHtml = finalTextIndex >= 0 && blocks[finalTextIndex].type === 'text'
+    ? blocks[finalTextIndex].html
+    : '';
 
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const handleCopy = useCallback(() => {
-    const textBlocks = blocks.filter((b): b is ContentBlock & { type: 'text' } => b.type === 'text');
-    if (textBlocks.length === 0) return;
+    if (!finalTextHtml) return;
     const tmp = document.createElement('div');
-    tmp.innerHTML = textBlocks.map(b => b.html).join('\n');
+    tmp.innerHTML = finalTextHtml;
     const text = tmp.innerText.trim();
+    if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     }).catch(() => {});
-  }, [blocks]);
+  }, [finalTextHtml]);
 
   return (
     <div className="message-group assistant">
@@ -104,21 +113,35 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
         </div>
       )}
       <div className="message assistant">
-        {blocks.map((block, i) => (
-          <ContentBlockView key={i} block={block} agentName={displayName} yuan={displayYuan} />
-        ))}
-      </div>
-      <button className={`msg-copy-btn${copied ? ' copied' : ''}`} onClick={handleCopy} title={t('common.copyText')}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          {copied
-            ? <polyline points="20 6 9 17 4 12" />
-            : <>
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </>
+        {blocks.map((block, i) => {
+          const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
+          if (isFinalTextBlock) {
+            return (
+              <div key={i} className="assistant-final-reply">
+                <MarkdownContent html={block.html} />
+                <button
+                  className={`msg-copy-btn${copied ? ' copied' : ''}`}
+                  onClick={handleCopy}
+                  title={t('common.copyText')}
+                  aria-label={t('common.copyText')}
+                  type="button"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    {copied
+                      ? <polyline points="20 6 9 17 4 12" />
+                      : <>
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </>
+                    }
+                  </svg>
+                </button>
+              </div>
+            );
           }
-        </svg>
-      </button>
+          return <ContentBlockView key={i} block={block} agentName={displayName} yuan={displayYuan} />;
+        })}
+      </div>
     </div>
   );
 });

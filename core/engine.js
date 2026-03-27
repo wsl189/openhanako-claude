@@ -678,7 +678,26 @@ export class HanaEngine {
   }
 
   async summarizeTitle(ut, at) {
-    return _summarizeTitle(this.resolveUtilityConfig(), ut, at);
+    let utilConfig;
+    try {
+      utilConfig = this.resolveUtilityConfig();
+    } catch {
+      try {
+        const shared = this.getSharedModels?.() || {};
+        const utilityRef = shared.utility || this.config?.models?.utility;
+        if (!utilityRef) return null;
+        const resolved = this.resolveModelWithCredentials(utilityRef, this.agent?.config);
+        utilConfig = {
+          utility: resolved.model,
+          api_key: resolved.api_key,
+          base_url: resolved.base_url,
+          api: resolved.api,
+        };
+      } catch {
+        return null;
+      }
+    }
+    return _summarizeTitle(utilConfig, ut, at);
   }
 
   async translateSkillNames(names, lang) {

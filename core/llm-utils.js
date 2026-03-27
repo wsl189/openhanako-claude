@@ -38,20 +38,157 @@ async function callLlm({ model, api, api_key, base_url, messages, temperature = 
   });
 }
 
-function normalizeTitle(title, isZh) {
-  let clean = String(title || "")
+const TITLE_PREFIX_RE = /^(?:建议)?(?:最终)?(?:标题|title|topic|subject|主题|任务|需求|规则要求|要求|问题|目标)\s*[:：-]\s*/i;
+const TITLE_LABEL_LINE_RE = /^(?:#+\s*)?(?:>\s*)?(?:[-*]\s*)?(?:\d+\s*[.)、-]\s*)?(?:建议)?(?:最终)?(?:标题|title|topic|subject|主题|任务|需求|规则要求|要求|问题|目标)\s*[:：-]/i;
+const WEAK_TITLE_RE = /^(?:规则要求|规则|要求|主题|任务|需求|问题|目标|标题|title|topic|subject|task|request|requirements?|question|chat|conversation|对话|聊天)$/i;
+const FINAL_PREFIX_RE = /^(?:最终(?:输出|答案|标题)|final(?:\s*(?:output|answer|title))?|result|结论)\s*[:：-]\s*/i;
+const FINAL_LABEL_LINE_RE = /^(?:#+\s*)?(?:>\s*)?(?:[-*]\s*)?(?:\d+\s*[.)、-]\s*)?(?:最终(?:输出|答案|标题)|final(?:\s*(?:output|answer|title))?|result|结论)\s*[:：-]/i;
+
+function stripTitleReasoning(text) {
+  return String(text || "")
     .replace(/\r/g, "")
+    .replace(/```(?:think|analysis|reasoning|commentary|summary)?[\s\S]*?```/gi, "\n")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "\n")
+    .replace(/<analysis>[\s\S]*?<\/analysis>/gi, "\n")
+    .replace(/<commentary>[\s\S]*?<\/commentary>/gi, "\n")
+    .replace(/<summary>[\s\S]*?<\/summary>/gi, "\n")
+    .replace(/<(?:mood|pulse|reflect)>[\s\S]*?<\/(?:mood|pulse|reflect)>/gi, "\n")
+    .replace(/<xing\s+title=["\u201C\u201D][^"\u201C\u201D]*["\u201C\u201D]>[\s\S]*?<\/xing>/gi, "\n")
+    .replace(/<\/?(?:think|analysis|commentary|summary|mood|pulse|reflect|xing)\b[^>]*>/gi, " ");
+}
+
+function cleanTitleLine(line) {
+  return String(line || "")
+    .trim()
+    .replace(/^#+\s*/, "")
+    .replace(/^>\s*/, "")
+    .replace(/^[-*]\s+/, "")
+    .replace(/^\d+\s*[.)、-]\s+/, "")
+    .replace(FINAL_PREFIX_RE, "")
+    .replace(TITLE_PREFIX_RE, "")
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/[。！？.!?：:…]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isWeakTitle(line) {
+  const s = String(line || "").trim();
+  if (!s) return true;
+  return WEAK_TITLE_RE.test(s);
+}
+
+function looksLikeMetaTitleLine(line) {
+  const s = String(line || "").trim();
+  if (!s) return true;
+  const metaStartPatterns = [
+    /^(?:思考|分析|推理)(?:过程|如下)?[:：]?/i,
+    /^(?:让我|我先|我会|根据).*(?:对话|上下文|用户|助手)/i,
+    /^(?:好的|当然|下面|接下来)[,， ]*/i,
+    /^(?:let me|i(?:'m| am) (?:going to|going|analy[sz]e)|based on (?:the )?(?:dialog|conversation|context))/i,
+    /^(?:analysis|reasoning)\b/i,
+    /^(?:user|assistant)\s*[:：]/i,
+    /^(?:对话|会话)(?:的)?(?:内容|主题)(?:是|为|如下)?/i,
+    /^(?:这(?:段|次)?对话|本次对话).*(?:关于|内容|主题)/i,
+    /^(?:the|this)\s+(?:conversation|chat)\s+(?:is|about|content|topic)/i,
+    /^(?:user|the user|assistant|the assistant)\s+(?:asks?|asked|replies?|said)/i,
+    /^(?:according|based on)\b/i,
+    /^(?:用户|助手)\s*[:：]/i,
+  ];
+  return metaStartPatterns.some((re) => re.test(s));
+}
+
+function isCompactTitleCandidate(text, isZh) {
+  const clean = String(text || "").trim();
+  if (!clean) return false;
+  if (/[`{}\[\]]/.test(clean)) return false;
+  if (isZh) return Array.from(clean).length <= 20;
+  const words = clean.split(/\s+/).filter(Boolean);
+  return words.length <= 8 && clean.length <= 60;
+}
+
+function extractTaggedFinalTitle(text) {
+  const s = String(text || "");
+  const patterns = [
+    /<final_title>([\s\S]*?)<\/final_title>/i,
+    /<final>([\s\S]*?)<\/final>/i,
+    /<title>([\s\S]*?)<\/title>/i,
+    /<answer>([\s\S]*?)<\/answer>/i,
+    /<output>([\s\S]*?)<\/output>/i,
+  ];
+  for (const re of patterns) {
+    const m = re.exec(s);
+    if (m?.[1]) {
+      const c = cleanTitleLine(m[1]);
+      if (c) return c;
+    }
+  }
+  return "";
+}
+
+function looksLikeRuleEchoTitle(line) {
+  const s = String(line || "").trim();
+  if (!s) return true;
+  if (/^\d+$/.test(s)) return true;
+  const patterns = [
+    /^(?:不要|必须|需要|请|应当|应该)/i,
+    /^(?:根据规则|按照规则|规则[:：]?)/i,
+    /^(?:只输出|直接输出|输出标题)/i,
+    /^(?:语言和用户|标题长度|不加引号|不加标点)/i,
+    /^(?:i need to|must|should|according to the rules|output only|title length)/i,
+    /(?:规则|标题长度|用户第一句话|输出标题|不加引号|不加标点)/,
+    /(?:title length|user(?:'s)? first message|output the title|no quotes|no punctuation)/i,
+  ];
+  return patterns.some((re) => re.test(s));
+}
+
+function isBadGeneratedTitle(line) {
+  const s = String(line || "").trim();
+  if (!s) return true;
+  if (isWeakTitle(s)) return true;
+  if (looksLikeMetaTitleLine(s)) return true;
+  if (looksLikeRuleEchoTitle(s)) return true;
+  return false;
+}
+
+export function normalizeTitle(title, isZh) {
+  const tagged = extractTaggedFinalTitle(title);
+  if (tagged && !isBadGeneratedTitle(tagged)) {
+    if (isZh) return Array.from(tagged).slice(0, 10).join("");
+    return tagged.split(/\s+/).filter(Boolean).slice(0, 5).join(" ");
+  }
+
+  const stripped = stripTitleReasoning(title);
+  const rawLines = stripped
     .split("\n")
     .map((line) => line.trim())
-    .find(Boolean) || "";
-  clean = clean
-    .replace(/^#+\s*/, "")
-    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
-    .replace(/[。！？.!?]+$/g, "")
-    .trim();
-  if (!clean) return "";
-  if (isZh) return Array.from(clean).slice(0, 10).join("");
-  return clean.split(/\s+/).filter(Boolean).slice(0, 5).join(" ");
+    .filter(Boolean);
+  if (!rawLines.length) return "";
+
+  const labeled = [];
+  const finalLabeled = [];
+  const general = [];
+  for (const rawLine of rawLines) {
+    const isLabeled = TITLE_LABEL_LINE_RE.test(rawLine);
+    const isFinalLabeled = FINAL_LABEL_LINE_RE.test(rawLine);
+    const clean = cleanTitleLine(rawLine);
+    if (!clean) continue;
+    if (isBadGeneratedTitle(clean)) continue;
+    if (isLabeled) labeled.push(clean);
+    else if (isFinalLabeled) finalLabeled.push(clean);
+    else general.push(clean);
+  }
+
+  const compact = general.filter((line) => isCompactTitleCandidate(line, isZh));
+  const candidate = labeled.at(-1)
+    || finalLabeled.at(-1)
+    || compact.at(-1)
+    || general.at(-1)
+    || "";
+
+  if (!candidate || isBadGeneratedTitle(candidate)) return "";
+  if (isZh) return Array.from(candidate).slice(0, 10).join("");
+  return candidate.split(/\s+/).filter(Boolean).slice(0, 5).join(" ");
 }
 
 /**
@@ -208,9 +345,9 @@ export function normalizeActivitySummary(rawSummary, { assistantText = "", toolC
  * 生成对话标题
  */
 export async function summarizeTitle(utilConfig, userText, assistantText) {
+  const isZh = getLocale().startsWith("zh");
   try {
-    const isZh = getLocale().startsWith("zh");
-    const { utility: model, api_key, base_url, api } = utilConfig;
+    const { utility: model, api_key, base_url, api } = utilConfig || {};
     if (!api_key || !base_url || !api) return null;
 
     const systemContent = isZh
@@ -220,14 +357,18 @@ export async function summarizeTitle(utilConfig, userText, assistantText) {
 1. 标题长度严格控制在 10 个字以内（中文）或 5 个单词以内（英文）
 2. 语言必须和用户说的第一句话一致：用户说中文就用中文，用户说英文就用英文
 3. 不要加引号、句号或其他标点
-4. 直接输出标题，不要解释`
+4. 不要输出“规则要求、主题、任务、需求、问题”等空泛标签词
+5. 只输出最终标题，不要过程；如果需要多行，最后一行必须是最终标题
+6. 直接输出标题，不要解释`
       : `You are a conversation title generator. Based on the first exchange between user and assistant, summarize the topic in a very short phrase.
 
 Rules:
 1. Keep the title under 5 words (English) or 10 characters (Chinese)
 2. The title language must match the user's first message
 3. No quotes, periods, or other punctuation
-4. Output the title directly, no explanation`;
+4. Avoid generic label words like "requirements", "topic", "task", "question"
+5. Output only the final title; if multiple lines appear, the last line must be the final title
+6. Output the title directly, no explanation`;
 
     const userLabel = isZh ? "用户" : "User";
     const assistantLabel = isZh ? "助手" : "Assistant";
@@ -241,10 +382,12 @@ Rules:
           content: `${userLabel}：${(userText || "").slice(0, 500)}\n${assistantLabel}：${(assistantText || "").slice(0, 500)}`,
         },
       ],
+      temperature: 0,
       max_tokens: 50,
     });
     const normalized = normalizeTitle(raw, isZh);
-    return normalized || null;
+    if (normalized && !isBadGeneratedTitle(normalized)) return normalized;
+    return null;
   } catch (err) {
     console.error("[llm-utils] summarizeTitle failed:", err.message);
     return null;
