@@ -622,7 +622,12 @@ function ChannelItem({ channel, isDM, isActive, agents, userName, userAvatarUrl,
         </div>
         <div className="channel-item-preview">
           {channel.lastMessage && (() => {
-            const senderInfo = resolveChannelMember(channel.lastSender, userName, userAvatarUrl, agents, currentAgentId);
+            const senderNorm = String(channel.lastSender || '').trim().toLowerCase();
+            const memberKeys = new Set((channel.members || []).map((m) => String(m || '').trim().toLowerCase()).filter(Boolean));
+            const isGroupUserFallback = !isDM && senderNorm !== 'system' && !memberKeys.has(senderNorm);
+            const senderInfo = isGroupUserFallback
+              ? resolveChannelMember(userName || 'user', userName, userAvatarUrl, agents, currentAgentId)
+              : resolveChannelMember(channel.lastSender, userName, userAvatarUrl, agents, currentAgentId);
             return `${senderInfo.displayName}: ${channel.lastMessage}`;
           })()}
         </div>
@@ -684,6 +689,7 @@ export function ChannelMessages() {
   const messages = useStore((s) => s.channelMessages);
   const currentChannel = useStore((s) => s.currentChannel);
   const channels = useStore((s) => s.channels);
+  const channelMembers = useStore((s) => s.channelMembers);
   const agents = useStore((s) => s.agents);
   const userName = useStore((s) => s.userName);
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
@@ -754,6 +760,7 @@ export function ChannelMessages() {
 
   const ch = channels.find((c) => c.id === currentChannel);
   const isDM = ch?.isDM ?? false;
+  const channelMemberKeys = new Set((channelMembers || []).map((m) => String(m || '').trim().toLowerCase()).filter(Boolean));
   let lastSender: string | null = null;
 
   return (
@@ -769,14 +776,18 @@ export function ChannelMessages() {
         }
 
         const isContinuation = msg.sender === lastSender;
-        const senderInfo = resolveChannelMember(msg.sender, userName, userAvatarUrl, agents, currentAgentId);
         const senderNorm = String(msg.sender || '').trim().toLowerCase();
         const userNameNorm = String(userName || '').trim().toLowerCase();
+        const isMemberSender = !isDM && channelMemberKeys.has(senderNorm);
+        const isGroupUserFallback = !isDM && senderNorm !== 'system' && !isMemberSender;
+        const senderInfo = isGroupUserFallback
+          ? resolveChannelMember(userName || 'user', userName, userAvatarUrl, agents, currentAgentId)
+          : resolveChannelMember(msg.sender, userName, userAvatarUrl, agents, currentAgentId);
         const isUserSenderAlias =
           senderNorm === 'user'
           || senderNorm === '用户'
           || (!!userNameNorm && senderNorm === userNameNorm);
-        const isSelf = senderInfo.isUser || isUserSenderAlias || (isDM && msg.sender === (currentAgentId || ''));
+        const isSelf = senderInfo.isUser || isUserSenderAlias || isGroupUserFallback || (isDM && msg.sender === (currentAgentId || ''));
         const el = (
           <div
             key={`${msg.timestamp}-${idx}`}

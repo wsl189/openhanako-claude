@@ -55,7 +55,10 @@ export function MeTab() {
       }
 
       showToast(t('settings.saved'), 'success');
-      if (partial?.user?.name) store.set({ userName: partial.user.name });
+      if (partial?.user?.name) {
+        store.set({ userName: partial.user.name });
+        platform?.settingsChanged?.('user-updated', { userName: partial.user.name });
+      }
 
       await loadSettingsConfig();
     } catch (err: any) {

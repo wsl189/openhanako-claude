@@ -243,6 +243,16 @@ async function init(): Promise<void> {
       case 'theme-changed':
         setTheme(data.theme);
         break;
+      case 'user-updated': {
+        const nextUserName = typeof data?.userName === 'string' ? data.userName : '';
+        if (nextUserName) {
+          applyAgentIdentity({
+            userName: nextUserName,
+            ui: { avatars: false, agents: false },
+          });
+        }
+        break;
+      }
       case 'font-changed':
         setSerifFont(data.serif);
         break;
