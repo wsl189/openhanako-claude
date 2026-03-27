@@ -96,6 +96,10 @@ export class SessionCoordinator {
     creatingAgent.setMemoryEnabled(memoryEnabled);
 
     const { tools: sessionTools, customTools: sessionCustomTools } = this._d.buildTools(effectiveCwd, null, { workspace: this._d.getHomeCwd() });
+    // pi-coding-agent 当前版本在 createAgentSession() 内会重建内置工具，
+    // 仅使用 tools 的“名字”而忽略传入实例。把沙盒后的 builtin 同名注入 customTools，
+    // 确保运行时真正执行的是我们包装后的工具实现。
+    const sessionRuntimeTools = [...sessionCustomTools, ...sessionTools];
     const { session } = await createAgentSession({
       cwd: effectiveCwd,
       sessionManager: sessionMgr,
@@ -106,7 +110,7 @@ export class SessionCoordinator {
       thinkingLevel: models.resolveThinkingLevel(this._d.getPrefs().getThinkingLevel()),
       resourceLoader: this._d.getResourceLoader(),
       tools: sessionTools,
-      customTools: sessionCustomTools,
+      customTools: sessionRuntimeTools,
     });
     const elapsed = Date.now() - t0;
     log.log(`session created (${elapsed}ms), model=${models.currentModel?.name || "?"}`);
@@ -565,6 +569,8 @@ export class SessionCoordinator {
       const actTools = opts.builtinFilter
         ? allBuiltinTools.filter(t => opts.builtinFilter.includes(t.name))
         : allBuiltinTools;
+      // 同 createSession：强制用沙盒包装后的 builtin 覆盖 SDK 默认内置工具。
+      const actRuntimeTools = [...actCustomTools, ...actTools];
 
       const agent = this._d.getAgent();
       const skills = this._d.getSkills();
@@ -586,7 +592,7 @@ export class SessionCoordinator {
         thinkingLevel: models.resolveThinkingLevel(this._d.getPrefs().getThinkingLevel()),
         resourceLoader: execResourceLoader,
         tools: actTools,
-        customTools: actCustomTools,
+        customTools: actRuntimeTools,
       });
 
       let replyText = "";

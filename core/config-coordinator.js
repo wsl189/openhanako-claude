@@ -296,7 +296,15 @@ export class ConfigCoordinator {
   async updateConfig(partial) {
     const keys = Object.keys(partial);
     if (keys.length) log.log(`updateConfig: keys=[${keys.join(",")}]`);
-    const shouldRefreshSessionTools = partial.sandbox !== undefined || partial.tools !== undefined;
+    const deskHomeFolderChanged =
+      partial?.desk !== undefined
+      && partial.desk !== null
+      && typeof partial.desk === "object"
+      && Object.prototype.hasOwnProperty.call(partial.desk, "home_folder");
+    const shouldRefreshSessionTools =
+      partial.sandbox !== undefined
+      || partial.tools !== undefined
+      || deskHomeFolderChanged;
 
     const agent = this._d.getAgent();
     const models = this._d.getModels();

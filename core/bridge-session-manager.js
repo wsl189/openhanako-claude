@@ -241,7 +241,8 @@ export class BridgeSessionManager {
         thinkingLevel: mm.resolveThinkingLevel(prefs?.thinking_level || "auto"),
         resourceLoader: rl,
         tools: bridgeTools,
-        customTools: bridgeCustomTools,
+        // 覆盖 SDK 默认内置工具，确保 bridge 会话也走沙盒包装后的 builtin。
+        customTools: [...bridgeCustomTools, ...bridgeTools],
         settingsManager: this._createSettings(model),
       };
 
