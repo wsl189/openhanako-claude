@@ -28,6 +28,7 @@ import { createNotifyTool } from "../lib/tools/notify-tool.js";
 import { createUpdateSettingsTool } from "../lib/tools/update-settings-tool.js";
 import { createDelegateTool } from "../lib/tools/delegate-tool.js";
 import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
+import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
 import { formatSkillsForPrompt } from "@mariozechner/pi-coding-agent";
 import { runCompatChecks } from "../lib/compat/index.js";
@@ -88,6 +89,7 @@ export class Agent {
     this._browserTool = null;
     this._notifyTool = null;
     this._describeImagesTool = null;
+    this._generateImagesTool = null;
   }
 
   // ════════════════════════════
@@ -278,6 +280,22 @@ export class Agent {
       },
     });
 
+    this._generateImagesTool = createGenerateImagesTool({
+      getSessionImages: (sessionPath) => this._engine?.getSessionPendingImages?.(sessionPath) || [],
+      getCurrentSessionPath: () => this._engine?.currentSessionPath || null,
+      getLatestSessionImages: () => this._engine?.getLatestSessionPendingImages?.() || [],
+      getSessionMessages: (sessionPath) => this._engine?.getMessages?.(sessionPath) || [],
+      resolveImageGenerationModel: () => {
+        if (!this._engine) throw new Error(t("error.imageGenProviderNotMinimax"));
+        const current = this._engine.currentModel;
+        const provider = String(current?.provider || "").toLowerCase();
+        if (!provider.startsWith("minimax")) {
+          throw new Error(t("error.imageGenProviderNotMinimax"));
+        }
+        return this._engine.resolveModelWithCredentials(current.id, this._config);
+      },
+    });
+
     // 9. 频道工具 + 私信工具（需要 channelsDir 和 agentsDir）
     if (this.channelsDir && this.agentsDir) {
       const agentId = path.basename(this.agentDir);
@@ -385,6 +403,10 @@ export class Agent {
   get resolvedMemoryModel() { return this._resolvedMemoryModel; }
   get summaryManager() { return this._summaryManager; }
   get memoryTicker() { return this._memoryTicker; }
+  _isMinimaxImageGenerationEnabled() {
+    const provider = String(this._engine?.currentModel?.provider || "").toLowerCase();
+    return provider.startsWith("minimax");
+  }
   getAllCustomTools() {
     return [
       this._memorySearchTool,
@@ -400,6 +422,7 @@ export class Agent {
       this._dmTool,
       this._browserTool,
       this._describeImagesTool,
+      this._isMinimaxImageGenerationEnabled() ? this._generateImagesTool : null,
       this._notifyTool,
       this._updateSettingsTool,
       this._delegateTool,
@@ -423,6 +446,7 @@ export class Agent {
       this._dmTool,
       this._browserTool,
       this._describeImagesTool,
+      this._isMinimaxImageGenerationEnabled() ? this._generateImagesTool : null,
       this._notifyTool,
       this._updateSettingsTool,
       this._delegateTool,
@@ -714,6 +738,18 @@ export class Agent {
       parts.push(isZh
         ? "当前无可用联网检索工具（search/browser）；需要联网信息时请明确说明能力受限。"
         : "No web lookup tools are available (search/browser). If internet data is required, clearly state this limitation.");
+    }
+
+    if (hasTool("describe_images")) {
+      parts.push(isZh
+        ? "当用户给出图片文件的绝对路径（或 file:// URI）并要求识别/描述时，优先调用 describe_images，并通过 image_paths 或 image_path 传入路径。该工具会自动读取图片文件并转换为 base64 后进行理解。"
+        : "When the user provides absolute image file paths (or file:// URIs) and asks for recognition/description, call describe_images first and pass paths via image_paths or image_path. The tool will read image files and convert them to base64 for vision understanding.");
+    }
+
+    if (hasTool("generate_images")) {
+      parts.push(isZh
+        ? "当用户要求生成图片（文生图或图生图）时，优先调用 generate_images 工具，不要凭空声称“已生成”。图生图可使用当前会话里用户上传的图片作为参考。调用 generate_images 后不要再重复调用 present_files 展示同一图片，除非用户明确要求展示文件卡片/链接。"
+        : "When the user asks to generate images (text-to-image or image-to-image), use the generate_images tool. Do not claim an image was generated without calling it. For image-to-image, use user-uploaded images in the current session as references. After calling generate_images, do not call present_files again for the same images unless the user explicitly asks for file cards/links.");
     }
 
     // 工作区提示（注入默认工作区 + 当前 cwd）

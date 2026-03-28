@@ -123,6 +123,8 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
       return extractHostname((args.url || '') as string);
     case 'search_memory':
       return truncateHead((args.query || '') as string, 40);
+    case 'generate_images':
+      return truncateHead((args.prompt || '') as string, 40);
     default:
       return '';
   }

@@ -361,6 +361,17 @@ export default async function chatRoute(app, { engine, hub }) {
         else stopBrowserThumbPoll();
       }
 
+      if (event.toolName === "generate_images" && event.result?.content) {
+        const imageBlocks = event.result.content.filter(c => c?.type === "image" && c?.source?.data);
+        for (const imgBlock of imageBlocks) {
+          emitStreamEvent(sessionPath, ss, {
+            type: "browser_screenshot",
+            base64: imgBlock.source.data,
+            mimeType: imgBlock.source.media_type || "image/png",
+          });
+        }
+      }
+
       if (event.toolName === "cron") {
         const d = event.result?.details || {};
         if (d.action === "pending_add" && d.jobData) {

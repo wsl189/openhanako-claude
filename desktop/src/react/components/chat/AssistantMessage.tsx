@@ -13,7 +13,7 @@ import type { ChatMessage, ContentBlock } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
-import { openFilePreview, openSkillPreview } from '../../utils/file-preview';
+import { openFilePreview, openSkillPreview, readFileForPreview } from '../../utils/file-preview';
 import { openPreview } from '../../stores/artifact-actions';
 import { normalizeAgentDisplayName } from '../../utils/agent-helpers';
 import { cronToHuman } from '../../utils/format';
@@ -331,36 +331,97 @@ const EXT_LABELS: Record<string, string> = {
   png: 'Image', jpg: 'Image', jpeg: 'Image', gif: 'Image', webp: 'Image',
 };
 
+const LIGHTBOX_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']);
+const LIGHTBOX_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+};
+
+function resolveLightboxMime(ext: string): string {
+  return LIGHTBOX_MIME_BY_EXT[ext] || 'image/png';
+}
+
 const FileOutputCard = memo(function FileOutputCard({ filePath, label, ext }: { filePath: string; label: string; ext: string }) {
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState('');
+  const [loadingLightbox, setLoadingLightbox] = useState(false);
+  const normalizedExt = String(ext || '').toLowerCase();
+  const isImageFile = LIGHTBOX_IMAGE_EXTS.has(normalizedExt);
+
   const handleOpen = (e: React.MouseEvent) => {
     e.stopPropagation();
     const p = (window as any).platform;
     if (p?.openFile) p.openFile(filePath);
   };
 
+  const handleCardClick = useCallback(async () => {
+    if (!isImageFile) {
+      await openFilePreview(filePath, label, ext);
+      return;
+    }
+
+    if (lightboxSrc) {
+      setLightboxOpen(true);
+      return;
+    }
+
+    setLoadingLightbox(true);
+    try {
+      const base64 = await readFileForPreview(filePath, normalizedExt);
+      if (!base64) {
+        await openFilePreview(filePath, label, ext);
+        return;
+      }
+      const mime = resolveLightboxMime(normalizedExt);
+      setLightboxSrc(`data:${mime};base64,${base64}`);
+      setLightboxOpen(true);
+    } finally {
+      setLoadingLightbox(false);
+    }
+  }, [isImageFile, filePath, label, ext, lightboxSrc, normalizedExt]);
+
   const displayName = label || filePath.split('/').pop() || filePath;
   const typeLabel = EXT_LABELS[ext] || ext.toUpperCase();
 
   return (
-    <div className="file-output-card file-output-previewable" onClick={() => openFilePreview(filePath, label, ext)} style={{ cursor: 'pointer' }}>
-      <div className="file-output-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
+    <>
+      <div
+        className="file-output-card file-output-previewable"
+        onClick={() => { void handleCardClick(); }}
+        style={{ cursor: isImageFile ? 'zoom-in' : 'pointer' }}
+      >
+        <div className="file-output-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+        </div>
+        <div className="file-output-info">
+          <div className="file-output-name">
+            {displayName}
+            {loadingLightbox ? ' …' : ''}
+          </div>
+          <div className="file-output-type">{typeLabel}{ext ? ` \u00b7 ${ext.toUpperCase()}` : ''}</div>
+        </div>
+        <button className="file-output-open" onClick={handleOpen} title={(window as any).t('desk.openWithDefault')}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </button>
       </div>
-      <div className="file-output-info">
-        <div className="file-output-name">{displayName}</div>
-        <div className="file-output-type">{typeLabel}{ext ? ` \u00b7 ${ext.toUpperCase()}` : ''}</div>
-      </div>
-      <button className="file-output-open" onClick={handleOpen} title={(window as any).t('desk.openWithDefault')}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-          <polyline points="15 3 21 3 21 9" />
-          <line x1="10" y1="14" x2="21" y2="3" />
-        </svg>
-      </button>
-    </div>
+      <ImageLightbox
+        open={lightboxOpen}
+        src={lightboxSrc}
+        alt={displayName}
+        onClose={() => setLightboxOpen(false)}
+      />
+    </>
   );
 });
 
@@ -403,25 +464,73 @@ const SkillCard = memo(function SkillCard({ skillName, skillFilePath }: { skillN
 });
 
 const BrowserScreenshot = memo(function BrowserScreenshot({ base64, mimeType }: { base64: string; mimeType: string }) {
-  const handleClick = () => {
-    const artId = `browser-ss-${Date.now()}`;
-    const artifact = {
-      id: artId,
-      type: 'image',
-      title: (window as any).t('chat.browserScreenshot'),
-      content: base64,
-      ext: mimeType === 'image/jpeg' ? 'jpg' : 'png',
-    };
-    const s = useStore.getState();
-    const arts = [...s.artifacts];
-    if (!arts.find(a => a.id === artId)) arts.push(artifact);
-    s.setArtifacts(arts);
-    openPreview(artifact);
-  };
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const openLightbox = useCallback(() => setLightboxOpen(true), [setLightboxOpen]);
+  const closeLightbox = useCallback(() => setLightboxOpen(false), [setLightboxOpen]);
+  const src = `data:${mimeType};base64,${base64}`;
 
   return (
-    <div className="browser-screenshot" onClick={handleClick} style={{ cursor: 'pointer' }}>
-      <img src={`data:${mimeType};base64,${base64}`} alt={(window as any).t('chat.browserScreenshot')} />
+    <>
+      <div className="browser-screenshot" onClick={openLightbox} style={{ cursor: 'zoom-in' }}>
+        <img src={src} alt={(window as any).t('chat.browserScreenshot')} />
+      </div>
+      <ImageLightbox
+        open={lightboxOpen}
+        src={src}
+        alt={(window as any).t('chat.browserScreenshot')}
+        onClose={closeLightbox}
+      />
+    </>
+  );
+});
+
+const ImageLightbox = memo(function ImageLightbox({
+  open,
+  src,
+  alt,
+  onClose,
+}: {
+  open: boolean;
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
+  if (!open || !src) return null;
+
+  return (
+    <div
+      className="chat-image-lightbox"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt}
+    >
+      <button
+        className="chat-image-lightbox-close"
+        type="button"
+        onClick={onClose}
+        aria-label={(window as any).t('common.close')}
+        title={(window as any).t('common.close')}
+      >
+        ×
+      </button>
+      <img
+        className="chat-image-lightbox-img"
+        src={src}
+        alt={alt}
+        onClick={(e) => e.stopPropagation()}
+      />
     </div>
   );
 });

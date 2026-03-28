@@ -13505,6 +13505,65 @@ body.resizing .preview-panel-inner {
     opacity: 0.9;
 }
 
+.chat-image-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 12000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(16, 22, 32, 0.38);
+    backdrop-filter: blur(2px);
+    animation: chat-lightbox-fade-in 0.32s ease-out;
+}
+
+.chat-image-lightbox-img {
+    max-width: min(94vw, 1280px);
+    max-height: 90vh;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+    object-fit: contain;
+    transform-origin: center center;
+    animation: chat-lightbox-zoom-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.chat-image-lightbox-close {
+    position: fixed;
+    top: 14px;
+    right: 16px;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.chat-image-lightbox-close:hover {
+    background: rgba(0, 0, 0, 0.72);
+}
+
+@keyframes chat-lightbox-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes chat-lightbox-zoom-in {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
 /* ═══════════════════════════════════════
    Warning 弹窗（频道等）
    ═══════════════════════════════════════ */

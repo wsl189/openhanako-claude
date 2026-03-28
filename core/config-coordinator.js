@@ -240,6 +240,13 @@ export class ConfigCoordinator {
     const session = this._d.getSession();
     if (session) {
       await session.setModel(model);
+      if (typeof this._d.refreshCurrentSessionTools === "function") {
+        try {
+          await this._d.refreshCurrentSessionTools();
+        } catch (err) {
+          log.warn(`refresh current session tools after model switch failed: ${err.message}`);
+        }
+      }
     }
   }
 
@@ -345,10 +352,16 @@ export class ConfigCoordinator {
       && partial.desk !== null
       && typeof partial.desk === "object"
       && Object.prototype.hasOwnProperty.call(partial.desk, "home_folder");
+    const chatModelChanged =
+      partial?.models !== undefined
+      && partial.models !== null
+      && typeof partial.models === "object"
+      && Object.prototype.hasOwnProperty.call(partial.models, "chat");
     const shouldRefreshSessionTools =
       partial.sandbox !== undefined
       || partial.tools !== undefined
-      || deskHomeFolderChanged;
+      || deskHomeFolderChanged
+      || chatModelChanged;
 
     const agent = this._d.getAgent();
     const models = this._d.getModels();
