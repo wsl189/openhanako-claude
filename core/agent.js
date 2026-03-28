@@ -286,13 +286,37 @@ export class Agent {
       getLatestSessionImages: () => this._engine?.getLatestSessionPendingImages?.() || [],
       getSessionMessages: (sessionPath) => this._engine?.getMessages?.(sessionPath) || [],
       resolveImageGenerationModel: () => {
-        if (!this._engine) throw new Error(t("error.imageGenProviderNotMinimax"));
-        const current = this._engine.currentModel;
-        const provider = String(current?.provider || "").toLowerCase();
-        if (!provider.startsWith("minimax")) {
-          throw new Error(t("error.imageGenProviderNotMinimax"));
+        if (!this._engine) throw new Error(t("error.providerMissingCreds", { provider: "minimax/modelscope" }));
+        const isLocal = (url) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(String(url || ""));
+        const readProvider = (providerName) => {
+          const creds = this._engine.resolveProviderCredentials?.(providerName, this._config) || {};
+          const baseUrl = String(creds.base_url || "").trim();
+          const apiKey = String(creds.api_key || "").trim();
+          if (!baseUrl) return null;
+          if (!apiKey && !isLocal(baseUrl)) return null;
+          return {
+            provider: providerName,
+            api: creds.api || "openai-completions",
+            api_key: apiKey,
+            base_url: baseUrl,
+            model: providerName === "modelscope" ? "Qwen/Qwen-Image-2512" : "image-01",
+          };
+        };
+
+        // 优先走 MiniMax（支持 API Key / OAuth），并内置 ModelScope 兜底模型
+        const minimax = readProvider("minimax") || readProvider("minimax-oauth");
+        const modelscope = readProvider("modelscope");
+        if (minimax) {
+          return {
+            ...minimax,
+            fallback: modelscope
+              ? { ...modelscope, model: "Qwen/Qwen-Image-2512" }
+              : null,
+          };
         }
-        return this._engine.resolveModelWithCredentials(current.id, this._config);
+        if (modelscope) return { ...modelscope, model: "Qwen/Qwen-Image-2512" };
+
+        throw new Error(t("error.providerMissingCreds", { provider: "minimax/modelscope" }));
       },
     });
 
@@ -403,10 +427,6 @@ export class Agent {
   get resolvedMemoryModel() { return this._resolvedMemoryModel; }
   get summaryManager() { return this._summaryManager; }
   get memoryTicker() { return this._memoryTicker; }
-  _isMinimaxImageGenerationEnabled() {
-    const provider = String(this._engine?.currentModel?.provider || "").toLowerCase();
-    return provider.startsWith("minimax");
-  }
   getAllCustomTools() {
     return [
       this._memorySearchTool,
@@ -422,7 +442,7 @@ export class Agent {
       this._dmTool,
       this._browserTool,
       this._describeImagesTool,
-      this._isMinimaxImageGenerationEnabled() ? this._generateImagesTool : null,
+      this._generateImagesTool,
       this._notifyTool,
       this._updateSettingsTool,
       this._delegateTool,
@@ -446,7 +466,7 @@ export class Agent {
       this._dmTool,
       this._browserTool,
       this._describeImagesTool,
-      this._isMinimaxImageGenerationEnabled() ? this._generateImagesTool : null,
+      this._generateImagesTool,
       this._notifyTool,
       this._updateSettingsTool,
       this._delegateTool,

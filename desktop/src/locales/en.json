@@ -1535,6 +1535,7 @@
       "promptDesc": "Image generation prompt",
       "modeDesc": "Generation mode: auto, text2image, image2image",
       "imageIdsDesc": "Reference image IDs for image-to-image (1-based). Omit to use all available session images",
+      "providerDesc": "Optional provider selection: minimax or modelscope; defaults to minimax",
       "referenceTypeDesc": "Reference type for MiniMax subject_reference.type, default is character",
       "countDesc": "Number of images to generate, default 1, max 4",
       "widthDesc": "Output width, default 1024",

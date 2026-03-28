@@ -1531,10 +1531,11 @@
     },
     "generateImages": {
       "label": "图片生成",
-      "description": "使用 MiniMax 图像生成接口创建图片。\n支持文生图和图生图：\n- 文生图：提供 prompt 即可\n- 图生图：在当前会话先上传图片，再设置 mode=image2image（或 mode=auto 自动检测）",
+      "description": "使用 MiniMax或ModelScope图像生成接口创建图片。\n支持文生图和图生图：\n- 文生图：提供 prompt 即可\n- 图生图：在当前会话先上传图片，再设置 mode=image2image（或 mode=auto 自动检测）",
       "promptDesc": "生图提示词",
       "modeDesc": "生图模式：auto（自动）、text2image（文生图）、image2image（图生图）",
       "imageIdsDesc": "图生图参考图片编号（从 1 开始）。不传则使用当前会话可用图片",
+      "providerDesc": "供应商选择（可选）：minimax 或 modelscope；默认 minimax",
       "referenceTypeDesc": "图生图参考类型（MiniMax subject_reference.type），默认 character",
       "countDesc": "生成张数，默认 1，最多 4",
       "widthDesc": "输出宽度，默认 1024",

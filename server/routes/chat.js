@@ -19,6 +19,7 @@ import {
 
 /** tool_start 事件只广播这些 arg 字段，避免传输完整文件内容（同步维护：chat-render-shim.ts extractToolDetail） */
 const TOOL_ARG_SUMMARY_KEYS = ["file_path", "path", "command", "pattern", "url", "query", "key", "value", "action", "type", "schedule", "prompt", "label"];
+const DESK_MUTATING_TOOL_NAMES = new Set(["write", "edit", "bash", "generate_images"]);
 
 /**
  * 从 Pi SDK 的 content 块中提取纯文本
@@ -47,6 +48,16 @@ function extractTitleSourceText(content) {
 
 function isLikelyZh(text) {
   return /[\u4e00-\u9fff]/.test(String(text || ""));
+}
+
+function hasFileOutputs(toolName, details) {
+  if (!details || typeof details !== "object") return false;
+  if (toolName === "present_files" || toolName === "create_artifact") return false;
+  if (!Array.isArray(details.files) || details.files.length === 0) return false;
+  return details.files.some((item) => {
+    if (!item || typeof item !== "object") return false;
+    return typeof item.filePath === "string" && item.filePath.trim().length > 0;
+  });
 }
 
 export default async function chatRoute(app, { engine, hub }) {
@@ -379,7 +390,12 @@ export default async function chatRoute(app, { engine, hub }) {
         }
       }
 
-      if (isActive && ["write", "edit", "bash"].includes(event.toolName)) {
+      const toolName = String(event.toolName || "").toLowerCase();
+      const shouldRefreshDesk = isActive && (
+        DESK_MUTATING_TOOL_NAMES.has(toolName)
+        || hasFileOutputs(toolName, details)
+      );
+      if (shouldRefreshDesk) {
         broadcast({ type: "desk_changed" });
       }
     } else if (event.type === "jian_update") {

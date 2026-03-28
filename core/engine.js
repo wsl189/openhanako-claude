@@ -281,6 +281,9 @@ export class HanaEngine {
   resolveModelWithCredentials(modelRef, agentConfig) {
     return this._models.resolveModelWithCredentials(modelRef, agentConfig || this.agent?.config);
   }
+  resolveProviderCredentials(provider, agentConfig) {
+    return this._models.resolveProviderCredentials(provider, agentConfig || this.agent?.config);
+  }
   readFavorites() { return this._configCoord.readFavorites(); }
   async saveFavorites(f) { return this._configCoord.saveFavorites(f); }
   readAgentOrder() { return this._configCoord.readAgentOrder(); }
