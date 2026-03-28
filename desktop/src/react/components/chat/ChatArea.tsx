@@ -5,12 +5,12 @@
  * 不用 Virtuoso，不用 Activity，不用快照，不用任何花活。
  */
 
-import { memo, useRef, useEffect, useState, useCallback } from 'react';
+import { memo, useRef, useEffect, useState, useMemo } from 'react';
 import { useStore } from '../../stores';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { CompactionNotice, CompactionDoneDivider } from './CompactionNotice';
-import type { ChatListItem } from '../../stores/chat-types';
+import type { ChatListItem, ContentBlock, ChatMessage } from '../../stores/chat-types';
 
 const MAX_ALIVE = 5;
 
@@ -66,11 +66,153 @@ function PanelHost() {
 
 const SCROLL_THRESHOLD = 300;
 
+type ChainGroupMeta = {
+  key: string;
+  isOwner: boolean;
+  totalThinking: number;
+  totalTools: number;
+  allCompleted: boolean;
+  allSuccessful: boolean;
+};
+
+function isChainBlock(block: ContentBlock): boolean {
+  return block.type === 'thinking' || block.type === 'tool_group';
+}
+
+function isAssistantMessageItem(item: ChatListItem | undefined): item is Extract<ChatListItem, { type: 'message' }> {
+  return !!item && item.type === 'message' && item.data.role === 'assistant';
+}
+
+function getMessageChainStats(msg: ChatMessage): {
+  hasChain: boolean;
+  thinkingCount: number;
+  toolCount: number;
+  allCompleted: boolean;
+  allSuccessful: boolean;
+  onlyChainBlocks: boolean;
+} {
+  const blocks = msg.blocks || [];
+  let hasChain = false;
+  let thinkingCount = 0;
+  let toolCount = 0;
+  let allCompleted = true;
+  let allSuccessful = true;
+  let nonChainCount = 0;
+
+  for (const block of blocks) {
+    if (!isChainBlock(block)) {
+      nonChainCount += 1;
+      continue;
+    }
+    hasChain = true;
+    if (block.type === 'thinking') {
+      thinkingCount += 1;
+      if (!block.sealed) {
+        allCompleted = false;
+        allSuccessful = false;
+      }
+    } else if (block.type === 'tool_group') {
+      toolCount += block.tools.length;
+      const doneAll = block.tools.every(t => t.done);
+      const successAll = block.tools.every(t => t.done && t.success);
+      if (!doneAll) allCompleted = false;
+      if (!successAll) allSuccessful = false;
+    }
+  }
+
+  return {
+    hasChain,
+    thinkingCount,
+    toolCount,
+    allCompleted,
+    allSuccessful,
+    onlyChainBlocks: hasChain && nonChainCount === 0,
+  };
+}
+
+function buildChainGroupMeta(path: string, items: ChatListItem[]): Record<number, ChainGroupMeta> {
+  const map: Record<number, ChainGroupMeta> = {};
+  let i = 0;
+
+  while (i < items.length) {
+    const item = items[i];
+    if (!isAssistantMessageItem(item)) {
+      i += 1;
+      continue;
+    }
+
+    const runStart = i;
+    let runEnd = i;
+    while (runEnd + 1 < items.length && isAssistantMessageItem(items[runEnd + 1])) {
+      runEnd += 1;
+    }
+
+    const memberIndices: number[] = [];
+    let totalThinking = 0;
+    let totalTools = 0;
+    let allCompleted = true;
+    let allSuccessful = true;
+
+    for (let j = runStart; j <= runEnd; j++) {
+      const runItem = items[j];
+      if (!isAssistantMessageItem(runItem)) continue;
+      const stats = getMessageChainStats(runItem.data);
+      if (!stats.hasChain) continue;
+      memberIndices.push(j);
+      totalThinking += stats.thinkingCount;
+      totalTools += stats.toolCount;
+      if (!stats.allCompleted) allCompleted = false;
+      if (!stats.allSuccessful) allSuccessful = false;
+    }
+
+    if (memberIndices.length > 0) {
+      const ownerIndex = memberIndices[0];
+      const key = `${path}:${runStart}-${runEnd}:${totalThinking}-${totalTools}:${allCompleted ? 1 : 0}-${allSuccessful ? 1 : 0}`;
+      for (const idx of memberIndices) {
+        map[idx] = {
+          key,
+          isOwner: idx === ownerIndex,
+          totalThinking,
+          totalTools,
+          allCompleted,
+          allSuccessful,
+        };
+      }
+    }
+
+    i = runEnd + 1;
+  }
+
+  return map;
+}
+
 const Panel = memo(function Panel({ path, active }: { path: string; active: boolean }) {
   const items = useStore(s => s.chatSessions[path]?.items || []);
+  const isStreaming = useStore(s => s.isStreaming);
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
+  const chainMetaByIndex = useMemo(() => buildChainGroupMeta(path, items), [path, items]);
+  const [chainCollapsedByKey, setChainCollapsedByKey] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const unique = new Map<string, ChainGroupMeta>();
+    for (const meta of Object.values(chainMetaByIndex)) {
+      if (!unique.has(meta.key)) unique.set(meta.key, meta);
+    }
+
+    setChainCollapsedByKey(prev => {
+      const next: Record<string, boolean> = {};
+      for (const [key, meta] of unique) {
+        if (Object.prototype.hasOwnProperty.call(prev, key)) {
+          next[key] = prev[key];
+        } else {
+          next[key] = meta.allCompleted && meta.allSuccessful && !isStreaming;
+        }
+      }
+      return next;
+    });
+  }, [chainMetaByIndex, isStreaming]);
 
   // 判断是否在底部
   const checkAtBottom = () => {
@@ -146,6 +288,13 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             key={item.type === 'message' ? item.data.id : `c-${i}`}
             item={item}
             prevItem={i > 0 ? items[i - 1] : undefined}
+            chainMeta={chainMetaByIndex[i]}
+            chainCollapsed={!!(chainMetaByIndex[i] && chainCollapsedByKey[chainMetaByIndex[i].key])}
+            onToggleChain={() => {
+              const meta = chainMetaByIndex[i];
+              if (!meta) return;
+              setChainCollapsedByKey(prev => ({ ...prev, [meta.key]: !prev[meta.key] }));
+            }}
           />
         ))}
         <div className="chat-session-footer" />
@@ -180,9 +329,18 @@ function ScrollToBottomBtn() {
 
 // ── ItemView ──
 
-const ItemView = memo(function ItemView({ item, prevItem }: {
+const ItemView = memo(function ItemView({
+  item,
+  prevItem,
+  chainMeta,
+  chainCollapsed = false,
+  onToggleChain,
+}: {
   item: ChatListItem;
   prevItem?: ChatListItem;
+  chainMeta?: ChainGroupMeta;
+  chainCollapsed?: boolean;
+  onToggleChain?: () => void;
 }) {
   if (item.type === 'compaction') {
     return <CompactionNotice yuan={item.yuan} />;
@@ -196,5 +354,23 @@ const ItemView = memo(function ItemView({ item, prevItem }: {
   if (msg.role === 'user') {
     return <UserMessage message={msg} showAvatar={showAvatar} />;
   }
-  return <AssistantMessage message={msg} showAvatar={showAvatar} />;
+  if (chainMeta && chainCollapsed) {
+    const stats = getMessageChainStats(msg);
+    if (stats.onlyChainBlocks && !chainMeta.isOwner) return null;
+  }
+  return (
+    <AssistantMessage
+      message={msg}
+      showAvatar={showAvatar}
+      chainGroup={chainMeta ? {
+        isOwner: chainMeta.isOwner,
+        totalThinking: chainMeta.totalThinking,
+        totalTools: chainMeta.totalTools,
+        allCompleted: chainMeta.allCompleted,
+        allSuccessful: chainMeta.allSuccessful,
+        collapsed: chainCollapsed,
+        onToggle: onToggleChain || (() => {}),
+      } : undefined}
+    />
+  );
 });

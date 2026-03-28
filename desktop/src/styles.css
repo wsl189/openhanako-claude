@@ -4393,6 +4393,39 @@ html[data-platform="darwin"] .sv-topbar-title {
     color: var(--coral);
 }
 
+/* 消息级执行链折叠摘要 */
+.chain-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: var(--space-xs) 0;
+    padding: 0.35rem 0.7rem;
+    border: 0;
+    border-left: 2px solid var(--accent);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    background: var(--tool-bg);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    cursor: pointer;
+    user-select: none;
+    max-width: 100%;
+}
+
+.chain-summary:hover {
+    background: var(--overlay-subtle);
+}
+
+.chain-summary .chain-summary-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chain-summary .chain-summary-status {
+    color: var(--green);
+    margin-left: 0.25rem;
+}
+
 /* 思考折叠块 */
 .thinking-block {
     margin: var(--space-xs) 0;
@@ -12170,27 +12203,6 @@ a.about-link:hover {
 .channel-header-members {
     font-size: 0.72rem;
     color: var(--text-muted);
-}
-
-.channel-header-actions {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-}
-
-.channel-header-action-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 4px;
-    border-radius: var(--radius-sm);
-    transition: background 0.15s, color 0.15s;
-}
-
-.channel-header-action-btn:hover {
-    background: var(--overlay-light);
-    color: var(--text);
 }
 
 /* ── IM 风格消息 ── */

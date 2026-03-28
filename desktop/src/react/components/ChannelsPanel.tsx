@@ -323,56 +323,25 @@ function ChannelToggleController() {
 }
 
 // ══════════════════════════════════════════════════════
-// ChannelSidebarButtons — collapse + info toggle 按钮事件
+// ChannelSidebarButtons — collapse 按钮事件
 // ══════════════════════════════════════════════════════
 
 function ChannelSidebarButtons() {
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const [menuItems, setMenuItems] = useState<ContextMenuItem[]>([]);
-
   useEffect(() => {
     const collapseBtn = document.getElementById('channelCollapseBtn');
-    const infoToggle = document.getElementById('channelInfoToggle');
-    const menuBtn = document.getElementById('channelMenuBtn');
 
     const handleCollapse = () => {
       toggleSidebar();
     };
-    const handleInfoToggle = () => {
-      toggleJianSidebar();
-    };
-    const handleMenu = (e: Event) => {
-      const s = useStore.getState();
-      if (!s.currentChannel) return;
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      setMenuItems([
-        {
-          label: (window as any).t('channel.deleteChannel'),
-          danger: true,
-          action: () => confirmDeleteChannel(s.currentChannel!),
-        },
-      ]);
-      setMenuPos({ x: rect.left, y: rect.bottom + 4 });
-    };
 
     collapseBtn?.addEventListener('click', handleCollapse);
-    infoToggle?.addEventListener('click', handleInfoToggle);
-    menuBtn?.addEventListener('click', handleMenu);
 
     return () => {
       collapseBtn?.removeEventListener('click', handleCollapse);
-      infoToggle?.removeEventListener('click', handleInfoToggle);
-      menuBtn?.removeEventListener('click', handleMenu);
     };
   }, []);
 
-  const handleCloseMenu = useCallback(() => {
-    setMenuPos(null);
-  }, []);
-
-  return menuPos ? (
-    <ContextMenu items={menuItems} position={menuPos} onClose={handleCloseMenu} />
-  ) : null;
+  return null;
 }
 
 function confirmDeleteChannel(channelId: string) {
@@ -392,8 +361,6 @@ function ChannelHeaderSync() {
   const headerName = useStore((s) => s.channelHeaderName);
   const headerMembers = useStore((s) => s.channelHeaderMembersText);
   const channelInfoName = useStore((s) => s.channelInfoName);
-  const currentChannel = useStore((s) => s.currentChannel);
-  const isDM = useStore((s) => s.channelIsDM);
 
   useEffect(() => {
     const el = document.getElementById('channelHeaderName');
@@ -409,19 +376,6 @@ function ChannelHeaderSync() {
     const el = document.getElementById('channelInfoName');
     if (el) el.textContent = channelInfoName;
   }, [channelInfoName]);
-
-  useEffect(() => {
-    const infoToggle = document.getElementById('channelInfoToggle');
-    const menuBtn = document.getElementById('channelMenuBtn');
-    if (currentChannel) {
-      infoToggle?.classList.remove('hidden');
-      if (isDM) {
-        menuBtn?.classList.add('hidden');
-      } else {
-        menuBtn?.classList.remove('hidden');
-      }
-    }
-  }, [currentChannel, isDM]);
 
   return null;
 }

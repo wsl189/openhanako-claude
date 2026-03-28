@@ -22,14 +22,40 @@ import { normalizeAgentDisplayName } from '../../utils/agent-helpers';
 interface Props {
   message: ChatMessage;
   showAvatar: boolean;
+  chainGroup?: {
+    isOwner: boolean;
+    totalThinking: number;
+    totalTools: number;
+    allCompleted: boolean;
+    allSuccessful: boolean;
+    collapsed: boolean;
+    onToggle: () => void;
+  };
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar }: Props) {
+function isChainBlock(block: ContentBlock): boolean {
+  return block.type === 'thinking' || block.type === 'tool_group';
+}
+
+function isChainBlockCompleted(block: ContentBlock): boolean {
+  if (block.type === 'thinking') return !!block.sealed;
+  if (block.type === 'tool_group') return block.tools.every(t => t.done);
+  return true;
+}
+
+function isChainBlockSuccessful(block: ContentBlock): boolean {
+  if (block.type === 'thinking') return !!block.sealed;
+  if (block.type === 'tool_group') return block.tools.every(t => t.done && t.success);
+  return true;
+}
+
+export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, chainGroup }: Props) {
   const agentName = useStore(s => s.agentName) || 'Hanako';
   const agentYuan = useStore(s => s.agentYuan) || 'hanako';
   const agentAvatarUrl = useStore(s => s.agentAvatarUrl);
   const sessionAgent = useStore(s => s.sessionAgent);
   const agents = useStore(s => s.agents);
+  const isStreaming = useStore(s => s.isStreaming);
   const [avatarFailed, setAvatarFailed] = useState(false);
 
   // 非主 agent session 用 sessionAgent 信息
@@ -73,8 +99,80 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     ? blocks[finalTextIndex].html
     : '';
 
+  const chainStats = useMemo(() => {
+    let thinkingCount = 0;
+    let toolCount = 0;
+    let allCompleted = true;
+    let allSuccessful = true;
+
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      if (!isChainBlock(block)) continue;
+      if (block.type === 'thinking') thinkingCount += 1;
+      if (block.type === 'tool_group') toolCount += block.tools.length;
+      if (!isChainBlockCompleted(block)) allCompleted = false;
+      if (!isChainBlockSuccessful(block)) allSuccessful = false;
+    }
+
+    return {
+      hasChain: thinkingCount + toolCount > 0,
+      thinkingCount,
+      toolCount,
+      allCompleted,
+      allSuccessful,
+    };
+  }, [blocks]);
+
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
+  const [chainCollapsedLocal, setChainCollapsedLocal] = useState(false);
+  const [chainAutoCollapsedLocal, setChainAutoCollapsedLocal] = useState(false);
+
+  const chainThinkingCount = chainGroup ? chainGroup.totalThinking : chainStats.thinkingCount;
+  const chainToolCount = chainGroup ? chainGroup.totalTools : chainStats.toolCount;
+  const chainHasAny = chainGroup
+    ? (chainGroup.totalThinking + chainGroup.totalTools > 0)
+    : chainStats.hasChain;
+
+  const chainCanCollapse = chainHasAny &&
+    (chainGroup
+      ? (chainGroup.allCompleted && chainGroup.allSuccessful)
+      : (chainStats.allCompleted && chainStats.allSuccessful)) &&
+    !isStreaming;
+
+  useEffect(() => {
+    if (chainGroup) return;
+    if (chainCanCollapse && !chainAutoCollapsedLocal) {
+      setChainCollapsedLocal(true);
+      setChainAutoCollapsedLocal(true);
+      return;
+    }
+    if (!chainCanCollapse) {
+      setChainCollapsedLocal(false);
+      setChainAutoCollapsedLocal(false);
+    }
+  }, [chainCanCollapse, chainAutoCollapsedLocal, chainGroup]);
+
+  const chainCollapsed = chainGroup ? chainGroup.collapsed : chainCollapsedLocal;
+  const toggleChainCollapsed = useCallback(() => {
+    if (!chainCanCollapse) return;
+    if (chainGroup) {
+      chainGroup.onToggle();
+      return;
+    }
+    setChainCollapsedLocal(v => !v);
+  }, [chainCanCollapse, chainGroup]);
+
+  const chainSummaryText = useMemo(() => {
+    if (chainThinkingCount > 0 && chainToolCount > 0) {
+      return t('chain.summaryBoth', { thinking: chainThinkingCount, tools: chainToolCount });
+    }
+    if (chainThinkingCount > 0) {
+      return t('chain.summaryThinkingOnly', { thinking: chainThinkingCount });
+    }
+    return t('chain.summaryToolsOnly', { tools: chainToolCount });
+  }, [chainThinkingCount, chainToolCount, t]);
+
   const handleCopy = useCallback(() => {
     if (!finalTextHtml) return;
     const tmp = document.createElement('div');
@@ -115,7 +213,22 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
         </div>
       )}
       <div className="message assistant">
+        {chainCanCollapse && chainHasAny && (!chainGroup || chainGroup.isOwner) && (
+          <button
+            className={`chain-summary${chainCollapsed ? ' collapsed' : ' expanded'}`}
+            onClick={toggleChainCollapsed}
+            type="button"
+            aria-label={chainSummaryText}
+            title={chainSummaryText}
+          >
+            <span className={`thinking-block-arrow${chainCollapsed ? '' : ' open'}`}>›</span>
+            <span className="chain-summary-text">{chainSummaryText}</span>
+            {chainCollapsed ? <span className="chain-summary-status">✓</span> : null}
+          </button>
+        )}
         {blocks.map((block, i) => {
+          if (chainCanCollapse && isChainBlock(block) && chainCollapsed) return null;
+
           const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
           if (isFinalTextBlock) {
             return (

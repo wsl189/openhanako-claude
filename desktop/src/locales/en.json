@@ -322,6 +322,11 @@
     "count": "{n} tools",
     "running": "{n} tools running"
   },
+  "chain": {
+    "summaryBoth": "Execution chain ({thinking} thinking steps · {tools} tools)",
+    "summaryThinkingOnly": "Execution chain ({thinking} thinking steps)",
+    "summaryToolsOnly": "Execution chain ({tools} tools)"
+  },
   "tool": {
     "web_search": {
       "running": "🌐 Searching the web",
