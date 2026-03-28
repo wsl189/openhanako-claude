@@ -84,6 +84,8 @@ function listWorkspaceFiles(dir) {
 }
 
 export default async function deskRoute(app, { engine, hub }) {
+  const ACTIVITY_LIST_LIMIT = 50;
+
   function normalizeNotifyTarget(value, fallback = "auto") {
     const v = String(value ?? fallback).toLowerCase();
     return (v === "local" || v === "platform" || v === "auto") ? v : fallback;
@@ -170,7 +172,7 @@ export default async function deskRoute(app, { engine, hub }) {
     }
     // 按 startedAt 倒序
     allActivities.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
-    return { activities: allActivities };
+    return { activities: allActivities.slice(0, ACTIVITY_LIST_LIMIT) };
   });
 
   /** 读取指定活动的 session 对话消息（只读查看用） */

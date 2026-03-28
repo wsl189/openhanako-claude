@@ -244,7 +244,7 @@ export function handleServerMessage(msg: any): void {
 
     case 'activity_update':
       if (msg.activity) {
-        useStore.setState({ activities: [msg.activity, ...state.activities.slice(0, 499)] });
+        useStore.setState({ activities: [msg.activity, ...state.activities.slice(0, 49)] });
       }
       break;
 

@@ -1339,10 +1339,13 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
 }
 
-.act-card-duration {
+.act-card-duration-inline {
     display: flex;
     align-items: center;
     gap: 4px;
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    white-space: nowrap;
 }
 
 .act-card.error {
@@ -1351,18 +1354,6 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .act-card.error .act-card-summary {
     color: var(--danger);
-}
-
-.act-card-view-hint {
-    margin-left: auto;
-    color: var(--accent);
-    font-size: 0.68rem;
-    opacity: 0;
-    transition: opacity 0.15s;
-}
-
-.act-card:hover .act-card-view-hint {
-    opacity: 1;
 }
 
 .activity-empty {
