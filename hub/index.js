@@ -223,7 +223,7 @@ export class Hub {
 
     if (normalized !== "local" && text && this._bridgeManager?.sendProactive) {
       try {
-        const sent = await this._bridgeManager.sendProactive(text);
+        const sent = await this._bridgeManager.sendProactive(text, { agentId });
         if (sent) {
           return { delivered: "platform", ...sent };
         }

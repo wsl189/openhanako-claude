@@ -356,8 +356,14 @@ export class HanaEngine {
   //  Bridge 代理（→ BridgeSessionManager）
   // ════════════════════════════
 
-  getBridgeIndex() { return this._bridge.readIndex(); }
-  saveBridgeIndex(i) { return this._bridge.writeIndex(i); }
+  getBridgeIndex(agentId = null) {
+    const ag = agentId ? this.getAgent(agentId) : null;
+    return this._bridge.readIndex(ag || undefined);
+  }
+  saveBridgeIndex(i, agentId = null) {
+    const ag = agentId ? this.getAgent(agentId) : null;
+    return this._bridge.writeIndex(i, ag || undefined);
+  }
   async executeExternalMessage(p, sk, m, o) { return this._bridge.executeExternalMessage(p, sk, m, o); }
   injectBridgeMessage(sk, t) { return this._bridge.injectMessage(sk, t); }
 

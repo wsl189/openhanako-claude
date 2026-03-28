@@ -14,6 +14,13 @@ import {
 import { debugLog } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
 
+// Bridge 外部平台会话中禁用的工具（本地展示/agent 内部通信，不适合 IM 对话）
+const BRIDGE_BLOCKED_TOOL_NAMES = new Set([
+  "present_files",
+  "dm",
+  "message_agent",
+]);
+
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
   return isZh ? "（插话，无需 MOOD）\n" : "(Interjection, no MOOD needed)\n";
@@ -211,7 +218,7 @@ export class BridgeSessionManager {
       }
 
       // Bridge 媒体协议：让模型通过 MEDIA:<url|file://|绝对路径> 返回媒体项。
-      const mediaInstruction = "仅当用户明确要求“发送/上传图片或文件”时，才输出媒体指令。\n如果用户只是询问、列举、确认文件，不要输出 MEDIA: 或 <media> 标签。\n当你确实需要发送媒体文件（图片、视频、音频、文件）时，在回复中单独一行写 MEDIA:<source>。\nsource 只能是 http(s) URL、file:// 绝对路径、或本地绝对路径。\n路径里如果有空格，请用 <...> 包裹，例如：\nMEDIA:https://example.com/photo.jpg\nMEDIA:</Users/me/Documents/volatility trading/book 2.pdf>\n不要把 MEDIA: 写在代码块里。一行一个。";
+      const mediaInstruction = "你当前处于外部平台会话，支持发送媒体文件。不要声称“平台不支持发送图片/文件”。\n当用户请求查看/接收图片或文件，或你已经生成了可交付媒体（图片、视频、音频、文档）时，输出媒体指令。\n仅在用户明确说“不要发送/先别发”时，不要输出 MEDIA: 或 <media> 标签。\n如果用户只是询问文件信息、列举路径、确认存在性，也不要输出媒体指令。\n当你确实需要发送媒体文件时，在回复中单独一行写 MEDIA:<source>。\nsource 只能是 http(s) URL、file:// 绝对路径、或本地绝对路径。\n路径里如果有空格，请用 <...> 包裹，例如：\nMEDIA:https://example.com/photo.jpg\nMEDIA:</Users/me/Documents/volatility trading/book 2.pdf>\n不要把 MEDIA: 写在代码块里。一行一个。\n禁止使用 present_files / dm / message_agent 来给用户传图或传文件。";
 
       // 外部会话统一走完整 agent 能力（记忆 + 工具）
       const prefs = this._deps.getPreferences();
@@ -220,6 +227,12 @@ export class BridgeSessionManager {
         bridgeCwd,
         agent.tools,
         { agentDir: agent.agentDir, workspace: homeCwd },
+      );
+      const filteredBridgeTools = (bridgeTools || []).filter(
+        (tool) => !BRIDGE_BLOCKED_TOOL_NAMES.has(tool?.name),
+      );
+      const filteredBridgeCustomTools = (bridgeCustomTools || []).filter(
+        (tool) => !BRIDGE_BLOCKED_TOOL_NAMES.has(tool?.name),
       );
 
       const model = this._resolveBridgeModel(mm, agent);
@@ -240,9 +253,9 @@ export class BridgeSessionManager {
         model,
         thinkingLevel: mm.resolveThinkingLevel(prefs?.thinking_level || "auto"),
         resourceLoader: rl,
-        tools: bridgeTools,
+        tools: filteredBridgeTools,
         // 覆盖 SDK 默认内置工具，确保 bridge 会话也走沙盒包装后的 builtin。
-        customTools: [...bridgeCustomTools, ...bridgeTools],
+        customTools: [...filteredBridgeCustomTools, ...filteredBridgeTools],
         settingsManager: this._createSettings(model),
       };
 
