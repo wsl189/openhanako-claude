@@ -316,7 +316,7 @@
     "active": "Thinking"
   },
   "toolGroup": {
-    "success": "✿ {name} all done, piece of cake ~ · {n} steps",
+    "success": "✿ All done, piece of cake ~ · {n} steps",
     "failed": "⚠ Something seems off · {n} steps",
     "countWithFail": "{total} tools ({fail} failed)",
     "count": "{n} tools",
@@ -324,84 +324,84 @@
   },
   "tool": {
     "web_search": {
-      "running": "🌐 {name} is surfing the web",
-      "done": "🌐 {name} is back from surfing",
-      "failed": "🌐 {name} couldn't catch a wave"
+      "running": "🌐 Surfing the web",
+      "done": "🌐 Back from surfing",
+      "failed": "🌐 Couldn't catch a wave"
     },
     "web_fetch": {
-      "running": "📄 {name} is reading a webpage",
-      "done": "📄 {name} finished reading",
-      "failed": "📄 {name} couldn't fetch the page"
+      "running": "📄 Reading a webpage",
+      "done": "📄 Finished reading",
+      "failed": "📄 Couldn't fetch the page"
     },
     "search_memory": {
-      "running": "💭 {name} is trying to remember",
-      "done": "💭 {name} recalled something",
-      "failed": "💭 {name} couldn't recall"
+      "running": "💭 Trying to remember",
+      "done": "💭 Recalled something",
+      "failed": "💭 Couldn't recall"
     },
     "bash": {
-      "running": "💻 {name} is tiptoeing through your computer",
-      "done": "💻 {name} is done with the computer",
-      "failed": "💻 {name} command failed"
+      "running": "💻 Tiptoeing through your computer",
+      "done": "💻 Done with the computer",
+      "failed": "💻 Command failed"
     },
     "read": {
-      "running": "📖 {name} is reading a file",
-      "done": "📖 {name} finished reading",
-      "failed": "📖 {name} couldn't read"
+      "running": "📖 Reading a file",
+      "done": "📖 Finished reading",
+      "failed": "📖 Couldn't read"
     },
     "write": {
-      "running": "✏️ {name} is putting pen to paper",
-      "done": "✏️ {name} finished writing",
-      "failed": "✏️ {name} couldn't write"
+      "running": "✏️ Putting pen to paper",
+      "done": "✏️ Finished writing",
+      "failed": "✏️ Couldn't write"
     },
     "edit": {
-      "running": "✏️ {name} is putting pen to paper",
-      "done": "✏️ {name} done editing",
-      "failed": "✏️ {name} couldn't edit"
+      "running": "✏️ Putting pen to paper",
+      "done": "✏️ Done editing",
+      "failed": "✏️ Couldn't edit"
     },
     "edit-diff": {
-      "running": "✏️ {name} is putting pen to paper",
-      "done": "✏️ {name} done editing",
-      "failed": "✏️ {name} couldn't edit"
+      "running": "✏️ Putting pen to paper",
+      "done": "✏️ Done editing",
+      "failed": "✏️ Couldn't edit"
     },
     "glob": {
-      "running": "🔍 {name} is looking for files",
-      "done": "🔍 {name} found them",
-      "failed": "🔍 {name} couldn't find"
+      "running": "🔍 Looking for files",
+      "done": "🔍 Found them",
+      "failed": "🔍 Couldn't find"
     },
     "grep": {
-      "running": "🔍 {name} is searching through files",
-      "done": "🔍 {name} search done",
-      "failed": "🔍 {name} couldn't find"
+      "running": "🔍 Searching through files",
+      "done": "🔍 Search done",
+      "failed": "🔍 Couldn't find"
     },
     "find": {
-      "running": "🔍 {name} is looking for files",
-      "done": "🔍 {name} found them",
-      "failed": "🔍 {name} couldn't find"
+      "running": "🔍 Looking for files",
+      "done": "🔍 Found them",
+      "failed": "🔍 Couldn't find"
     },
     "ls": {
-      "running": "📂 {name} is peeking into a folder",
-      "done": "📂 {name} done peeking",
-      "failed": "📂 {name} couldn't peek"
+      "running": "📂 Peeking into a folder",
+      "done": "📂 Done peeking",
+      "failed": "📂 Couldn't peek"
     },
     "truncate": {
-      "running": "✂️ {name} is tidying up a file",
-      "done": "✂️ {name} all tidy",
-      "failed": "✂️ {name} couldn't tidy"
+      "running": "✂️ Tidying up a file",
+      "done": "✂️ All tidy",
+      "failed": "✂️ Couldn't tidy"
     },
     "present_files": {
-      "running": "📎 {name} is preparing the file",
+      "running": "📎 Preparing the file",
       "done": "📎 File ready",
       "failed": "📎 Failed to present file"
     },
     "browser": {
-      "running": "🌐 {name} is browsing the web",
-      "done": "🌐 {name} done browsing",
-      "failed": "🌐 {name} browser action failed"
+      "running": "🌐 Browsing the web",
+      "done": "🌐 Done browsing",
+      "failed": "🌐 Browser action failed"
     },
     "_fallback": {
-      "running": "🔧 {name} is busy working…",
-      "done": "🔧 {name} all done",
-      "failed": "🔧 {name} something went wrong"
+      "running": "🔧 Busy working…",
+      "done": "🔧 All done",
+      "failed": "🔧 Something went wrong"
     }
   },
   "file_output": {

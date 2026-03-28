@@ -316,7 +316,7 @@
     "active": "思考中"
   },
   "toolGroup": {
-    "success": "✿ {name} 忙完了，小事一桩～ · {n} 步",
+    "success": "✿ 忙完了，小事一桩～ · {n} 步",
     "failed": "⚠ 好像出了点问题 · {n} 步",
     "countWithFail": "{total} 个工具（{fail} 个失败）",
     "count": "{n} 个工具",
@@ -324,84 +324,84 @@
   },
   "tool": {
     "web_search": {
-      "running": "🌐 {name} 正在互联网冲浪",
-      "done": "🌐 {name} 冲浪回来了",
-      "failed": "🌐 {name} 没冲到浪"
+      "running": "🌐 正在互联网冲浪",
+      "done": "🌐 冲浪回来了",
+      "failed": "🌐 没冲到浪"
     },
     "web_fetch": {
-      "running": "📄 {name} 正在读取网页",
-      "done": "📄 {name} 读取完成",
-      "failed": "📄 {name} 网页读取失败"
+      "running": "📄 正在读取网页",
+      "done": "📄 读取完成",
+      "failed": "📄 网页读取失败"
     },
     "search_memory": {
-      "running": "💭 {name} 正在努力回想中",
-      "done": "💭 {name} 回想完毕",
-      "failed": "💭 {name} 记忆检索失败"
+      "running": "💭 正在努力回想中",
+      "done": "💭 回想完毕",
+      "failed": "💭 记忆检索失败"
     },
     "bash": {
-      "running": "💻 {name} 正在小心翼翼地用你的电脑",
-      "done": "💻 {name} 用完电脑了",
-      "failed": "💻 {name} 指令执行失败"
+      "running": "💻 正在小心翼翼地用你的电脑",
+      "done": "💻 用完电脑了",
+      "failed": "💻 指令执行失败"
     },
     "read": {
-      "running": "📖 {name} 正在读取文件",
-      "done": "📖 {name} 读取完成",
-      "failed": "📖 {name} 读取失败"
+      "running": "📖 正在读取文件",
+      "done": "📖 读取完成",
+      "failed": "📖 读取失败"
     },
     "write": {
-      "running": "✏️ {name} 提笔写字中",
-      "done": "✏️ {name} 写完了",
-      "failed": "✏️ {name} 写入失败"
+      "running": "✏️ 提笔写字中",
+      "done": "✏️ 写完了",
+      "failed": "✏️ 写入失败"
     },
     "edit": {
-      "running": "✏️ {name} 提笔写字中",
-      "done": "✏️ {name} 改完了",
-      "failed": "✏️ {name} 修改失败"
+      "running": "✏️ 提笔写字中",
+      "done": "✏️ 改完了",
+      "failed": "✏️ 修改失败"
     },
     "edit-diff": {
-      "running": "✏️ {name} 提笔写字中",
-      "done": "✏️ {name} 改完了",
-      "failed": "✏️ {name} 修改失败"
+      "running": "✏️ 提笔写字中",
+      "done": "✏️ 改完了",
+      "failed": "✏️ 修改失败"
     },
     "glob": {
-      "running": "🔍 {name} 正在寻找文件",
-      "done": "🔍 {name} 找到了",
-      "failed": "🔍 {name} 查找失败"
+      "running": "🔍 正在寻找文件",
+      "done": "🔍 找到了",
+      "failed": "🔍 查找失败"
     },
     "grep": {
-      "running": "🔍 {name} 正在文件中搜索",
-      "done": "🔍 {name} 搜索完成",
-      "failed": "🔍 {name} 搜索失败"
+      "running": "🔍 正在文件中搜索",
+      "done": "🔍 搜索完成",
+      "failed": "🔍 搜索失败"
     },
     "find": {
-      "running": "🔍 {name} 正在寻找文件",
-      "done": "🔍 {name} 找到了",
-      "failed": "🔍 {name} 查找失败"
+      "running": "🔍 正在寻找文件",
+      "done": "🔍 找到了",
+      "failed": "🔍 查找失败"
     },
     "ls": {
-      "running": "📂 {name} 正在查看目录",
-      "done": "📂 {name} 查看完成",
-      "failed": "📂 {name} 查看失败"
+      "running": "📂 正在查看目录",
+      "done": "📂 查看完成",
+      "failed": "📂 查看失败"
     },
     "truncate": {
-      "running": "✂️ {name} 正在整理文件",
-      "done": "✂️ {name} 整理完成",
-      "failed": "✂️ {name} 整理失败"
+      "running": "✂️ 正在整理文件",
+      "done": "✂️ 整理完成",
+      "failed": "✂️ 整理失败"
     },
     "present_files": {
-      "running": "📎 {name} 正在整理文件",
+      "running": "📎 正在整理文件",
       "done": "📎 文件就绪",
       "failed": "📎 文件呈现失败"
     },
     "browser": {
-      "running": "🌐 {name} 正在操作浏览器",
-      "done": "🌐 {name} 浏览器操作完成",
-      "failed": "🌐 {name} 浏览器操作失败"
+      "running": "🌐 正在操作浏览器",
+      "done": "🌐 浏览器操作完成",
+      "failed": "🌐 浏览器操作失败"
     },
     "_fallback": {
-      "running": "🔧 {name} 正在忙碌中…",
-      "done": "🔧 {name} 操作完成",
-      "failed": "🔧 {name} 操作失败"
+      "running": "🔧 正在忙碌中…",
+      "done": "🔧 操作完成",
+      "failed": "🔧 操作失败"
     }
   },
   "file_output": {
