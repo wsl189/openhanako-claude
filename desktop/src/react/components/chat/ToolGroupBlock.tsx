@@ -14,9 +14,17 @@ interface Props {
   agentName: string;
 }
 
-function getToolLabel(name: string, phase: string, agentName: string): string {
+function getToolLabel(name: string, phase: string, agentName: string, args?: Record<string, unknown>): string {
   const t = (window as any).t;
   const vars = { name: agentName };
+
+  const action = typeof args?.action === 'string' ? args.action.trim().toLowerCase() : '';
+  if (action) {
+    const actionKey = `tool.${name}.actions.${action}.${phase}`;
+    const actionVal = t?.(actionKey, vars);
+    if (actionVal && actionVal !== actionKey) return actionVal;
+  }
+
   const val = t?.(`tool.${name}.${phase}`, vars);
   if (val && val !== `tool.${name}.${phase}`) return val;
   return t?.(`tool._fallback.${phase}`, vars) || name;
@@ -71,7 +79,8 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({ tools, collapsed: i
 
 const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: ToolCall; agentName: string }) {
   const detail = extractToolDetail(tool.name, tool.args);
-  const label = getToolLabel(tool.name, tool.done ? 'done' : 'running', agentName);
+  const phase = tool.done ? (tool.success ? 'done' : 'failed') : 'running';
+  const label = getToolLabel(tool.name, phase, agentName, tool.args);
 
   // 如果 args 里有 tag 类型信息（如 agent 名）
   const tag = tool.args?.agentId as string | undefined;

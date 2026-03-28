@@ -324,69 +324,69 @@
   },
   "tool": {
     "web_search": {
-      "running": "🌐 Surfing the web",
-      "done": "🌐 Back from surfing",
-      "failed": "🌐 Couldn't catch a wave"
+      "running": "🌐 Searching the web",
+      "done": "🌐 Web search completed",
+      "failed": "🌐 Web search failed"
     },
     "web_fetch": {
       "running": "📄 Reading a webpage",
-      "done": "📄 Finished reading",
+      "done": "📄 Webpage read",
       "failed": "📄 Couldn't fetch the page"
     },
     "search_memory": {
-      "running": "💭 Trying to remember",
-      "done": "💭 Recalled something",
-      "failed": "💭 Couldn't recall"
+      "running": "💭 Searching memory",
+      "done": "💭 Memory search completed",
+      "failed": "💭 Memory search failed"
     },
     "bash": {
-      "running": "💻 Tiptoeing through your computer",
-      "done": "💻 Done with the computer",
-      "failed": "💻 Command failed"
+      "running": "💻 Running terminal command",
+      "done": "💻 Command executed",
+      "failed": "💻 Command execution failed"
     },
     "read": {
       "running": "📖 Reading a file",
-      "done": "📖 Finished reading",
-      "failed": "📖 Couldn't read"
+      "done": "📖 File read",
+      "failed": "📖 File read failed"
     },
     "write": {
-      "running": "✏️ Putting pen to paper",
-      "done": "✏️ Finished writing",
-      "failed": "✏️ Couldn't write"
+      "running": "✏️ Writing file",
+      "done": "✏️ File written",
+      "failed": "✏️ File write failed"
     },
     "edit": {
-      "running": "✏️ Putting pen to paper",
-      "done": "✏️ Done editing",
-      "failed": "✏️ Couldn't edit"
+      "running": "✏️ Editing file",
+      "done": "✏️ File edited",
+      "failed": "✏️ File edit failed"
     },
     "edit-diff": {
-      "running": "✏️ Putting pen to paper",
-      "done": "✏️ Done editing",
-      "failed": "✏️ Couldn't edit"
+      "running": "✏️ Editing file",
+      "done": "✏️ File edited",
+      "failed": "✏️ File edit failed"
     },
     "glob": {
       "running": "🔍 Looking for files",
-      "done": "🔍 Found them",
-      "failed": "🔍 Couldn't find"
+      "done": "🔍 File search completed",
+      "failed": "🔍 File search failed"
     },
     "grep": {
       "running": "🔍 Searching through files",
-      "done": "🔍 Search done",
-      "failed": "🔍 Couldn't find"
+      "done": "🔍 Content search completed",
+      "failed": "🔍 Content search failed"
     },
     "find": {
       "running": "🔍 Looking for files",
-      "done": "🔍 Found them",
-      "failed": "🔍 Couldn't find"
+      "done": "🔍 File search completed",
+      "failed": "🔍 File search failed"
     },
     "ls": {
-      "running": "📂 Peeking into a folder",
-      "done": "📂 Done peeking",
-      "failed": "📂 Couldn't peek"
+      "running": "📂 Reading directory",
+      "done": "📂 Directory read",
+      "failed": "📂 Directory read failed"
     },
     "truncate": {
-      "running": "✂️ Tidying up a file",
-      "done": "✂️ All tidy",
-      "failed": "✂️ Couldn't tidy"
+      "running": "✂️ Processing file",
+      "done": "✂️ File processed",
+      "failed": "✂️ File processing failed"
     },
     "present_files": {
       "running": "📎 Preparing the file",
@@ -394,13 +394,80 @@
       "failed": "📎 Failed to present file"
     },
     "browser": {
-      "running": "🌐 Browsing the web",
-      "done": "🌐 Done browsing",
-      "failed": "🌐 Browser action failed"
+      "running": "🌐 Running browser action",
+      "done": "🌐 Browser action completed",
+      "failed": "🌐 Browser action failed",
+      "actions": {
+        "start": {
+          "running": "🌐 Starting browser",
+          "done": "🌐 Browser started",
+          "failed": "🌐 Browser start failed"
+        },
+        "stop": {
+          "running": "🌐 Closing browser",
+          "done": "🌐 Browser closed",
+          "failed": "🌐 Browser close failed"
+        },
+        "navigate": {
+          "running": "🌐 Opening webpage",
+          "done": "🌐 Webpage opened",
+          "failed": "🌐 Webpage open failed"
+        },
+        "snapshot": {
+          "running": "🌐 Capturing page snapshot",
+          "done": "🌐 Page snapshot captured",
+          "failed": "🌐 Page snapshot failed"
+        },
+        "screenshot": {
+          "running": "🌐 Taking screenshot",
+          "done": "🌐 Screenshot taken",
+          "failed": "🌐 Screenshot failed"
+        },
+        "click": {
+          "running": "🌐 Clicking page element",
+          "done": "🌐 Page element clicked",
+          "failed": "🌐 Click failed"
+        },
+        "type": {
+          "running": "🌐 Typing text",
+          "done": "🌐 Text entered",
+          "failed": "🌐 Text input failed"
+        },
+        "scroll": {
+          "running": "🌐 Scrolling page",
+          "done": "🌐 Page scrolled",
+          "failed": "🌐 Page scroll failed"
+        },
+        "select": {
+          "running": "🌐 Selecting option",
+          "done": "🌐 Option selected",
+          "failed": "🌐 Option selection failed"
+        },
+        "key": {
+          "running": "🌐 Sending key input",
+          "done": "🌐 Key input sent",
+          "failed": "🌐 Key input failed"
+        },
+        "wait": {
+          "running": "🌐 Waiting for page state",
+          "done": "🌐 Page is ready",
+          "failed": "🌐 Page wait failed"
+        },
+        "evaluate": {
+          "running": "🌐 Running page script",
+          "done": "🌐 Page script executed",
+          "failed": "🌐 Page script failed"
+        },
+        "show": {
+          "running": "🌐 Bringing browser to front",
+          "done": "🌐 Browser brought to front",
+          "failed": "🌐 Bring-to-front failed"
+        }
+      }
     },
     "_fallback": {
-      "running": "🔧 Busy working…",
-      "done": "🔧 All done",
+      "running": "🔧 Running action…",
+      "done": "🔧 Action completed",
       "failed": "🔧 Something went wrong"
     }
   },
