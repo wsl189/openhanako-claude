@@ -194,6 +194,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const isAtBottom = useRef(true);
   const chainMetaByIndex = useMemo(() => buildChainGroupMeta(path, items), [path, items]);
   const [chainCollapsedByKey, setChainCollapsedByKey] = useState<Record<string, boolean>>({});
+  const chainEligibleByKeyRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     const unique = new Map<string, ChainGroupMeta>();
@@ -203,13 +204,20 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
 
     setChainCollapsedByKey(prev => {
       const next: Record<string, boolean> = {};
+      const nextEligible: Record<string, boolean> = {};
       for (const [key, meta] of unique) {
+        const eligible = meta.allCompleted && meta.allSuccessful && !isStreaming;
+        const wasEligible = !!chainEligibleByKeyRef.current[key];
+        nextEligible[key] = eligible;
+
         if (Object.prototype.hasOwnProperty.call(prev, key)) {
-          next[key] = prev[key];
+          // 在“回复完成”这个状态跃迁点，自动折叠一次。
+          next[key] = (!wasEligible && eligible) ? true : prev[key];
         } else {
-          next[key] = meta.allCompleted && meta.allSuccessful && !isStreaming;
+          next[key] = eligible;
         }
       }
+      chainEligibleByKeyRef.current = nextEligible;
       return next;
     });
   }, [chainMetaByIndex, isStreaming]);
