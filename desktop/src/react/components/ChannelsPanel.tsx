@@ -231,7 +231,6 @@ export function ChannelsPanel() {
     <>
       <ChannelHeaderSync />
       <ChannelToggleController />
-      <ChannelSidebarButtons />
     </>
   );
 }
@@ -319,28 +318,6 @@ function useTabClickHandler() {
 // ══════════════════════════════════════════════════════
 
 function ChannelToggleController() {
-  return null;
-}
-
-// ══════════════════════════════════════════════════════
-// ChannelSidebarButtons — collapse 按钮事件
-// ══════════════════════════════════════════════════════
-
-function ChannelSidebarButtons() {
-  useEffect(() => {
-    const collapseBtn = document.getElementById('channelCollapseBtn');
-
-    const handleCollapse = () => {
-      toggleSidebar();
-    };
-
-    collapseBtn?.addEventListener('click', handleCollapse);
-
-    return () => {
-      collapseBtn?.removeEventListener('click', handleCollapse);
-    };
-  }, []);
-
   return null;
 }
 

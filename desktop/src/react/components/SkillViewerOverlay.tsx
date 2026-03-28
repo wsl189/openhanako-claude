@@ -4,10 +4,11 @@
  * 文件树 + 可编辑文本 + 自动保存（切文件/关窗时会触发保存）
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
+import { getMdWithOpts } from '../utils/markdown';
 
 interface SkillInfo {
   name: string;
@@ -24,6 +25,13 @@ interface TreeItem {
 }
 
 type SaveState = 'saved' | 'saving' | 'unsaved' | 'error';
+type ViewerMode = 'preview' | 'edit';
+const md = getMdWithOpts({ html: true, linkify: true, breaks: true });
+
+function isMarkdownFile(name: string): boolean {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  return ext === 'md' || ext === 'markdown';
+}
 
 export function SkillViewerOverlay() {
   const { t } = useI18n();
@@ -36,6 +44,7 @@ export function SkillViewerOverlay() {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [fileName, setFileName] = useState('SKILL.md');
   const [content, setContent] = useState<string | null>(null);
+  const [mode, setMode] = useState<ViewerMode>('preview');
   const [isDirty, setIsDirty] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [toast, setToast] = useState<string | null>(null);
@@ -51,6 +60,21 @@ export function SkillViewerOverlay() {
   useEffect(() => { contentRef.current = content; }, [content]);
   useEffect(() => { activeFileRef.current = activeFile; }, [activeFile]);
   useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
+
+  const isMarkdown = isMarkdownFile(fileName);
+  const markdownPreview = useMemo(() => {
+    if (mode !== 'preview' || !isMarkdown || content == null) {
+      return { html: '', description: '' };
+    }
+    let body = content;
+    let description = '';
+    const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+    if (fmMatch) {
+      body = content.slice(fmMatch[0].length);
+      description = parseFmDescription(fmMatch[1]);
+    }
+    return { html: md.render(body), description };
+  }, [content, isMarkdown, mode]);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -114,7 +138,8 @@ export function SkillViewerOverlay() {
       setFiles(items || []);
       setExpandedDirs({});
       const initialPath = data.filePath || (data.baseDir + '/SKILL.md');
-      await loadFile(initialPath, 'SKILL.md', data.baseDir);
+      const initialName = initialPath.split(/[\\/]/).pop() || 'SKILL.md';
+      await loadFile(initialPath, initialName, data.baseDir);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.baseDir, data?.filePath]);
@@ -158,6 +183,7 @@ export function SkillViewerOverlay() {
     setContent(text);
     setIsDirty(false);
     setSaveState('saved');
+    setMode('preview');
   }
 
   async function onCopy() {
@@ -200,6 +226,15 @@ export function SkillViewerOverlay() {
     }, 400);
   }, [saveCurrentFile]);
 
+  const toggleMode = useCallback(async () => {
+    if (mode === 'edit') {
+      await saveCurrentFile({ silent: true, force: true });
+      setMode('preview');
+      return;
+    }
+    setMode('edit');
+  }, [mode, saveCurrentFile]);
+
   if (!data) return null;
 
   return (
@@ -224,6 +259,11 @@ export function SkillViewerOverlay() {
               {saveState === 'error' && t('skillViewer.saveFailed')}
               {saveState === 'saved' && t('skillViewer.saved')}
             </span>
+            {content != null && (
+              <button className="sv-btn" onClick={() => { void toggleMode(); }}>
+                {mode === 'edit' ? t('skillViewer.preview') : t('skillViewer.edit')}
+              </button>
+            )}
             {!data.installed && (
               <button className="sv-btn sv-btn-outline" onClick={onCopy}>
                 {t('settings.skills.copyToSkills')}
@@ -253,16 +293,28 @@ export function SkillViewerOverlay() {
             ))}
           </div>
 
-          <div className="sv-content">
+          <div className={`sv-content ${mode === 'edit' ? 'is-edit' : 'is-preview'}`}>
             {content == null ? (
               <div className="sv-empty">{t('skillViewer.cantRead')}</div>
-            ) : (
+            ) : mode === 'edit' ? (
               <textarea
                 className="sv-editor"
                 value={content}
                 spellCheck={false}
                 onChange={(e) => onEditorChange(e.target.value)}
               />
+            ) : isMarkdown ? (
+              <>
+                {markdownPreview.description && (
+                  <div className="sv-description">
+                    <div className="sv-description-label">Description</div>
+                    <div className="sv-description-text">{markdownPreview.description}</div>
+                  </div>
+                )}
+                <div className="md-content" dangerouslySetInnerHTML={{ __html: markdownPreview.html }} />
+              </>
+            ) : (
+              <pre><code>{content}</code></pre>
             )}
           </div>
         </div>
@@ -356,4 +408,43 @@ function collectDirPaths(items: TreeItem[]): string[] {
   };
   walk(items);
   return out;
+}
+
+function parseFmDescription(fm: string): string {
+  const idx = fm.search(/^description:/m);
+  if (idx === -1) return '';
+  const fromDesc = fm.slice(idx);
+  const lines = fromDesc.split('\n');
+  const value = lines[0].replace(/^description:\s*/, '');
+
+  const q = value[0];
+  if (q === '"' || q === "'") {
+    let full = value.slice(1);
+    let i = 1;
+    while (!full.includes(q) && i < lines.length) {
+      full += '\n' + lines[i].replace(/^ {2,}/, '');
+      i++;
+    }
+    const ci = full.indexOf(q);
+    if (ci !== -1) full = full.slice(0, ci);
+    return decodeEscapedNewlines(full.trim());
+  }
+
+  if (value === '|' || value === '>' || value === '|+' || value === '>+') {
+    let block = '';
+    for (let i = 1; i < lines.length; i++) {
+      if (/^\S/.test(lines[i])) break;
+      block += lines[i].replace(/^ {2,}/, '') + '\n';
+    }
+    return decodeEscapedNewlines(block.trim());
+  }
+
+  return decodeEscapedNewlines(value.trim());
+}
+
+function decodeEscapedNewlines(text: string): string {
+  return text
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n');
 }

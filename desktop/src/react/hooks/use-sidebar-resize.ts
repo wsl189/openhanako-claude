@@ -16,8 +16,10 @@ export function useSidebarResize(): void {
     const rightHandle = document.getElementById('jianResizeHandle');
     const previewPanel = document.getElementById('previewPanel');
 
-    const LEFT_MIN = 180, LEFT_MAX = 400;
-    const RIGHT_MIN = 180, RIGHT_MAX = 600;
+    const fontSize = parseFloat(getComputedStyle(document.body).fontSize) || 15;
+    const twoCjkChars = Math.round(fontSize * 2);
+    const LEFT_MIN = 180 + twoCjkChars, LEFT_MAX = 400;
+    const RIGHT_MIN = 180 + twoCjkChars, RIGHT_MAX = 600;
     const PREVIEW_MIN = 320, PREVIEW_MAX = 800;
 
     const leftInner = sidebarEl?.querySelector('.sidebar-inner') as HTMLElement | null;
@@ -52,9 +54,18 @@ export function useSidebarResize(): void {
     const savedLeft = localStorage.getItem('hana-sidebar-width');
     const savedRight = localStorage.getItem('hana-jian-width');
     const savedPreview = localStorage.getItem('hana-preview-width');
-    if (savedLeft) applySidebarWidth(Number(savedLeft));
-    if (savedRight) applyJianWidth(Number(savedRight));
-    if (savedPreview) applyPreviewWidth(Number(savedPreview));
+    if (savedLeft) {
+      const leftWidth = Math.max(LEFT_MIN, Math.min(LEFT_MAX, Number(savedLeft)));
+      applySidebarWidth(leftWidth);
+    }
+    if (savedRight) {
+      const rightWidth = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, Number(savedRight)));
+      applyJianWidth(rightWidth);
+    }
+    if (savedPreview) {
+      const previewWidth = Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, Number(savedPreview)));
+      applyPreviewWidth(previewWidth);
+    }
 
     function setupHandle(
       handle: HTMLElement | null,

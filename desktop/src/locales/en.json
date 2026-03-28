@@ -1466,6 +1466,8 @@
     "cantRead": "Cannot read file",
     "copied": "Copied to skill list",
     "installFailed": "Install failed: ",
+    "edit": "Edit",
+    "preview": "Preview",
     "saveFailed": "Save failed",
     "saved": "Saved",
     "saving": "Saving...",

@@ -1466,6 +1466,8 @@
     "cantRead": "无法读取文件",
     "copied": "已复制到技能列表",
     "installFailed": "安装失败: ",
+    "edit": "编辑",
+    "preview": "预览",
     "saveFailed": "保存失败",
     "saved": "已保存",
     "saving": "保存中…",

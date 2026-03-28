@@ -427,7 +427,7 @@ function SkillRow({ skill, nameHint, onDelete }: {
   return (
     <div
       className="skills-list-item"
-      onClick={() => {
+      onDoubleClick={() => {
         if (skill.baseDir) {
           (window as any).platform?.openSkillViewer?.({
             name: skill.name,

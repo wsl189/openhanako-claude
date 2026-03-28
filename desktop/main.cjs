@@ -774,7 +774,8 @@ function _showSkillViewer(skillInfo, sourceWin = null) {
 /** 递归扫描目录，返回文件树 */
 function scanSkillDir(dir, rootDir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true })
-    .filter(e => !e.name.startsWith("."))
+    // 显示隐藏文件（如 .env），但跳过隐藏目录，避免扫描 .git 等超大目录
+    .filter(e => !e.name.startsWith(".") || !e.isDirectory())
     .sort((a, b) => {
       // 目录排前面，SKILL.md 排最前
       if (a.name === "SKILL.md") return -1;

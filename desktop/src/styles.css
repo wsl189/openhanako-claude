@@ -3709,6 +3709,64 @@ html[data-platform="darwin"] .sv-topbar-title {
 .sv-content {
     flex: 1;
     min-height: 0;
+}
+
+.sv-content.is-preview {
+    overflow-y: auto;
+    padding: 24px 32px;
+}
+
+.sv-content.is-preview .md-content {
+    font-family: 'Songti SC', 'Georgia', serif;
+    line-height: 1.75;
+    max-width: 720px;
+}
+
+.sv-content.is-preview .md-content h1 {
+    text-align: center;
+}
+
+.sv-description {
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    background: var(--tool-bg, rgba(0,0,0,0.025));
+    border-radius: 8px;
+    max-width: 720px;
+}
+
+.sv-description-label {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.sv-description-text {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-light, var(--text-secondary));
+    white-space: pre-line;
+}
+
+.sv-content.is-preview pre {
+    background: var(--tool-bg, var(--overlay-light));
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.sv-content.is-preview code {
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 13px;
+}
+
+.sv-content.is-edit {
     padding: 16px;
 }
 
@@ -4515,9 +4573,10 @@ html[data-platform="darwin"] .sv-topbar-title {
 }
 
 .input-area > * {
-    max-width: 646px;
-    margin-left: auto;
-    margin-right: auto;
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
 }
 
 /* 输入框上方：仅 todo 书签 */
@@ -13485,8 +13544,9 @@ body.resizing .preview-panel-inner {
 
 /* 消息列表居中限宽 */
 .chat-session-messages {
-    max-width: 640px;
-    margin: 0 auto;
+    width: 100%;
+    max-width: none;
+    margin: 0;
     display: flex;
     flex-direction: column;
 }
