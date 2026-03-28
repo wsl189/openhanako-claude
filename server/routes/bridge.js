@@ -174,8 +174,8 @@ function parseBridgeMessagesFile(filePath) {
           }
         }
         content = content
-          .replace(/```(?:mood|pulse|reflect|think|analysis|commentary|summary)[\s\S]*?```\n*/gi, "")
-          .replace(/<(?:mood|pulse|reflect|think|analysis|commentary|summary)>[\s\S]*?<\/(?:mood|pulse|reflect|think|analysis|commentary|summary)>\s*/gi, "")
+          .replace(/```(?:think|analysis|commentary|summary)[\s\S]*?```\n*/gi, "")
+          .replace(/<(?:think|analysis|commentary|summary)>[\s\S]*?<\/(?:think|analysis|commentary|summary)>\s*/gi, "")
           .replace(/<xing\s+title=["\u201C\u201D][^"\u201C\u201D]*["\u201C\u201D]>[\s\S]*?<\/xing>\s*/gi, "")
           .replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/gi, "")
           .replace(/<\/?(?:final|replying)\s*>/gi, "")

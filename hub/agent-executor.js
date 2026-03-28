@@ -114,7 +114,7 @@ function readImagesFromText(text = "", maxCount = 10) {
  * @param {boolean} [opts.noMemory=false] - 不注入记忆，只用 personality
  * @param {boolean} [opts.noTools=false] - 不注入工具
  * @param {boolean} [opts.extractInlineImages=false] - 是否从 round 文本中的附件路径自动读取图片
- * @returns {Promise<string>}  capture 轮的输出（已去掉 MOOD 块）
+ * @returns {Promise<string>}  capture 轮的输出
  */
 export async function runAgentSession(agentId, rounds, { engine, signal, sessionSuffix = "temp", systemAppend, keepSession = false, noMemory = false, noTools = false, extractInlineImages = false } = {}) {
   // 1. 从长驻 Map 获取 Agent 实例
@@ -128,7 +128,7 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
   const ctx = engine.createSessionContext();
   const tempResourceLoader = Object.create(ctx.resourceLoader);
 
-  // noMemory 模式：只用 personality（identity + yuan + ishiki），不注入记忆/用户档案等
+  // noMemory 模式：只用 personality（identity + ishiki），不注入记忆/用户档案等
   const basePrompt = noMemory ? agent.personality : agent.systemPrompt;
   tempResourceLoader.getSystemPrompt = () =>
     systemAppend ? `${basePrompt}\n\n${systemAppend}` : basePrompt;
@@ -238,7 +238,7 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
     }
   }
 
-  // 7. 清理内省/包裹标签，保证返回可见正文
+  // 7. 规范化可见文本（仅处理 reply/final 包裹）
   const text = sanitizeAssistantVisibleText(capturedText);
 
   debugLog()?.log("agent-executor", `${agentId} done, ${text.length} chars captured`);

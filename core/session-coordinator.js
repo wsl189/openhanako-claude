@@ -46,7 +46,7 @@ function extractLastAssistantText(messages) {
 
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
-  return isZh ? "（插话，无需 MOOD）\n" : "(Interjection, no MOOD needed)\n";
+  return isZh ? "（插话）\n" : "(Interjection)\n";
 }
 const MAX_CACHED_SESSIONS = 20;
 

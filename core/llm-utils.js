@@ -67,19 +67,17 @@ function parseSessionContent(sessionPath, { userLimit = 1000, assistantLimit = 1
   return { userText, assistantText, toolCalls };
 }
 
-function stripMoodAndMeta(text) {
+function stripMetaBlocks(text) {
   return String(text || "")
     .replace(/\r/g, "")
-    .replace(/<(?:mood|pulse|reflect|think)\b[^>]*>[\s\S]*?<\/(?:mood|pulse|reflect|think)\s*>/gi, " ")
-    .replace(/<\/?(?:mood|pulse|reflect|think)\b[^>]*>/gi, " ")
-    // 兼容未闭合或畸形残片，例如 "<pulse Echo: ..."
-    .replace(/<\s*(?:mood|pulse|reflect|think)\b/gi, " ")
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think\s*>/gi, " ")
+    .replace(/<\/?\s*think\b[^>]*>/gi, " ")
+    .replace(/<\s*think\b/gi, " ")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/\n+/g, "\n")
     .split("\n")
     .map(line => line.trim())
     .filter(Boolean)
-    .filter((line) => !/^(vibe|sparks|echo|read|reflections?|will|premise|conduct|act)\s*:/i.test(line))
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
@@ -127,21 +125,12 @@ function normalizeSummaryText(text) {
   return String(text || "")
     .replace(/\r/g, "")
     .replace(/```[\s\S]*?```/g, " ")
-    .replace(/<(?:mood|pulse|reflect|think|analysis|commentary|summary)\b[^>]*>[\s\S]*?<\/(?:mood|pulse|reflect|think|analysis|commentary|summary)\s*>/gi, " ")
-    .replace(/<\/?(?:mood|pulse|reflect|think|analysis|commentary|summary)\b[^>]*>/gi, " ")
-    // 兼容未闭合或畸形残片，例如 "<pulse Echo: ..."
-    .replace(/<\s*(?:mood|pulse|reflect|think|analysis|commentary|summary)\b/gi, " ")
+    .replace(/<(?:think|analysis|commentary|summary)\b[^>]*>[\s\S]*?<\/(?:think|analysis|commentary|summary)\s*>/gi, " ")
+    .replace(/<\/?(?:think|analysis|commentary|summary)\b[^>]*>/gi, " ")
+    .replace(/<\s*(?:think|analysis|commentary|summary)\b/gi, " ")
     .replace(/\s+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
-
-function hasIntrospectionLeak(text) {
-  const s = String(text || "");
-  if (!s) return false;
-  if (/<\s*(?:mood|pulse|reflect|think|analysis|commentary|summary)\b/i.test(s)) return true;
-  // 常见内省池字段，若出现在摘要中，通常表示污染
-  return /\b(?:vibe|sparks|echo|read|reflections?|will|premise|conduct|act)\s*:/i.test(s);
 }
 
 /**
@@ -150,7 +139,7 @@ function hasIntrospectionLeak(text) {
 export function buildLocalSummary(assistantText, toolCalls) {
   const isZh = getLocale().startsWith("zh");
   const uniqueTools = [...new Set(toolCalls)];
-  const cleanAssistant = stripMoodAndMeta(assistantText);
+  const cleanAssistant = stripMetaBlocks(assistantText);
   if (uniqueTools.length > 0) {
     if (isZh) {
       return `执行了 ${uniqueTools.slice(0, 3).join("、")}${uniqueTools.length > 3 ? " 等" : ""}`;
@@ -170,7 +159,7 @@ export function buildLocalSummary(assistantText, toolCalls) {
 
 export function normalizeActivitySummary(rawSummary, { assistantText = "", toolCalls = [], isZh = true } = {}) {
   const canonicalAllClear = isZh ? "巡检完毕，一切正常" : "Patrol complete, all clear";
-  const cleanAssistant = stripMoodAndMeta(assistantText);
+  const cleanAssistant = stripMetaBlocks(assistantText);
   const hasTools = Array.isArray(toolCalls) && toolCalls.length > 0;
   const fallback = buildLocalSummary(cleanAssistant, toolCalls) || (hasTools
     ? (isZh ? "已执行后台任务" : "Background task executed")
@@ -190,7 +179,6 @@ export function normalizeActivitySummary(rawSummary, { assistantText = "", toolC
     .trim();
 
   if (!singleLine) return fallback;
-  if (hasIntrospectionLeak(singleLine)) return fallback;
   if (!hasTools && (isAllClearText(singleLine) || isAllClearText(cleanAssistant))) {
     return canonicalAllClear;
   }
@@ -327,7 +315,7 @@ export async function summarizeActivity(utilConfig, sessionPath, emitDevLog) {
       ? `你是一个执行摘要生成器。根据 Agent 的巡检上下文、执行结果和使用的工具，概括它做了什么。
 
 规则：
-1. 用中文，50 字以内
+1. 用中文，30 字以内
 2. 直接输出摘要，不要前缀、不要解释
 3. 说清楚做了什么具体动作（拆解待办、搜索信息、标记完成、读取文件等）
 4. 如果调用了工具，提一下工具名称和做了什么
@@ -361,7 +349,7 @@ Rules:
         },
       ],
       temperature: 0,
-      max_tokens: 150,
+      max_tokens: 1000,
     });
 
     return normalizeActivitySummary(text, { assistantText, toolCalls, isZh });

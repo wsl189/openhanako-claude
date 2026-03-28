@@ -7,30 +7,16 @@
 
 // ── Mood 解析 ──
 
-const TAG_TO_YUAN: Record<string, string> = { mood: 'hanako', pulse: 'butter', reflect: 'ming' };
 const YUAN_LABELS: Record<string, string> = { hanako: '✿ MOOD', butter: '❊ PULSE', ming: '◈ REFLECT' };
 
 export function moodLabel(yuan: string): string {
   return YUAN_LABELS[yuan] || YUAN_LABELS.hanako;
 }
 
-export function cleanMoodText(raw: string): string {
-  return raw
-    .replace(/^```\w*\n?/, '')
-    .replace(/\n?```\s*$/, '')
-    .replace(/^\n+/, '')
-    .replace(/\n+$/, '');
-}
-
 export function parseMoodFromContent(content: string): { mood: string | null; yuan: string | null; text: string } {
   if (!content) return { mood: null, yuan: null, text: '' };
-  const moodRe = /<(mood|pulse|reflect)\b[^>]*>([\s\S]*?)<\/\s*\1\s*>/i;
-  const match = content.match(moodRe);
-  if (!match) return { mood: null, yuan: null, text: content };
-  const yuan = TAG_TO_YUAN[match[1].toLowerCase()] || 'hanako';
-  const mood = cleanMoodText(match[2].trim());
-  const text = content.replace(moodRe, '').replace(/^\n+/, '').trim();
-  return { mood, yuan, text };
+  // 兼容旧接口：不再解析/剥离 mood 标签
+  return { mood: null, yuan: null, text: content };
 }
 
 // ── Xing 解析 ──

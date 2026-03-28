@@ -8,9 +8,6 @@
  *
  * Server → Client:
  *   { type: "text_delta", delta: "..." }
- *   { type: "mood_start" }
- *   { type: "mood_text", delta: "..." }
- *   { type: "mood_end" }
  *   { type: "thinking_start" }
  *   { type: "thinking_delta", delta: "..." }
  *   { type: "thinking_end" }

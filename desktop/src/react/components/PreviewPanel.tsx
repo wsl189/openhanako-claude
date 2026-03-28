@@ -16,7 +16,7 @@ import { hanaUrl } from '../hooks/use-hana-fetch';
 import { renderMarkdown } from '../utils/markdown';
 import { parseCSV, injectCopyButtons } from '../utils/format';
 import { fileIconSvg } from '../utils/icons';
-import { updateLayout } from './SidebarLayout';
+import { closePreview as closePreviewAction } from '../stores/artifact-actions';
 import { ArtifactEditor } from './ArtifactEditor';
 import type { Artifact } from '../types';
 
@@ -37,8 +37,6 @@ export function PreviewPanel() {
   const currentArtifactId = useStore(s => s.currentArtifactId);
   const artifacts = useStore(s => s.artifacts);
   const editorDetached = useStore(s => s.editorDetached);
-  const setPreviewOpen = useStore(s => s.setPreviewOpen);
-  const setCurrentArtifactId = useStore(s => s.setCurrentArtifactId);
   const setEditorDetached = useStore(s => s.setEditorDetached);
 
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -46,16 +44,14 @@ export function PreviewPanel() {
   const editable = isEditable(artifact);
 
   const closePreview = useCallback(() => {
-    setPreviewOpen(false);
-    setCurrentArtifactId(null);
-    updateLayout();
-  }, [setPreviewOpen, setCurrentArtifactId]);
+    closePreviewAction();
+  }, []);
 
   // 拆分到独立窗口
   const handleDetach = useCallback(() => {
     if (!artifact?.filePath) return;
     setEditorDetached(true);
-    setPreviewOpen(false);
+    closePreviewAction();
     // 通过 IPC 打开编辑器窗口
     window.platform?.openEditorWindow?.({
       filePath: artifact.filePath,
@@ -63,7 +59,7 @@ export function PreviewPanel() {
       type: artifact.type,
       language: artifact.language,
     });
-  }, [artifact, setEditorDetached, setPreviewOpen]);
+  }, [artifact, setEditorDetached]);
 
   // 非编辑模式：渲染 artifact 内容到 body（命令式 DOM）
   // 注意：editable 时也要清理上一次命令式插入的残留 DOM（iframe 等），

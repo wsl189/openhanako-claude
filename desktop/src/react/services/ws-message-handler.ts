@@ -27,7 +27,6 @@ declare function t(key: string, vars?: Record<string, string>): any;
 
 const REACT_CHAT_EVENTS = new Set([
   'text_delta', 'thinking_start', 'thinking_delta', 'thinking_end',
-  'mood_start', 'mood_text', 'mood_end',
   'xing_start', 'xing_text', 'xing_end',
   'tool_start', 'tool_end', 'turn_end',
   'file_output', 'skill_activated', 'artifact',

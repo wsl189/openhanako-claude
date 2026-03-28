@@ -28,8 +28,6 @@ export function startCLI({ port, token, agentName, userName }) {
 
   let ws = null;
   let isStreaming = false;
-  let currentMood = "";
-  let inMood = false;
   let inThinking = false;
 
   // ── HTTP 工具 ──
@@ -76,28 +74,6 @@ ${c.dim}${t("cli.disconnected")}${c.reset}`);
           process.stdout.write("\n");
         }
         process.stdout.write(msg.delta);
-        break;
-
-      case "mood_start":
-        inMood = true;
-        currentMood = "";
-        break;
-
-      case "mood_text":
-        currentMood += msg.delta;
-        break;
-
-      case "mood_end":
-        inMood = false;
-        // 灰色显示 mood
-        if (currentMood.trim()) {
-          process.stdout.write(`${c.gray}${c.italic}`);
-          for (const line of currentMood.trim().split("\n")) {
-            process.stdout.write(`  ${line}\n`);
-          }
-          process.stdout.write(`${c.reset}`);
-        }
-        currentMood = "";
         break;
 
       case "thinking_start":

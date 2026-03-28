@@ -12,7 +12,7 @@ import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { toSlash } from '../utils/format';
 import type { DeskFile } from '../types';
-import { openFilePreview } from '../utils/file-preview';
+import { openFilePreviewWithOptions } from '../utils/file-preview';
 import {
   loadDeskFiles,
   deskFullPath,
@@ -310,7 +310,7 @@ function DeskFileItem({
     const full = deskFullPath(file.name);
     if (!full) return;
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    openFilePreview(full, file.name, ext);
+    openFilePreviewWithOptions(full, file.name, ext, { replaceRightSidebar: true });
   }, [file]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {

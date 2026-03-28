@@ -82,7 +82,7 @@ function seedDefaultAgent(agentsDir, productDir) {
     fs.writeFileSync(path.join(agentDir, "identity.md"), filled, "utf-8");
   }
 
-  // yuan 由 buildSystemPrompt 实时从 lib/yuan/ 读取，无需复制
+  // yuan 配置项保留在 config 中；不再注入 yuan 模板内容
 
   // ishiki.md
   const ishikiSrc = path.join(productDir, "ishiki.example.md");

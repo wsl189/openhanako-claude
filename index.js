@@ -2,7 +2,6 @@ import fs from "fs";
 import readline from "readline";
 import { HanaEngine } from "./core/engine.js";
 import { ensureFirstRun } from "./core/first-run.js";
-import { MoodParser } from "./core/events.js";
 
 // ═══════════════════════════════════════
 // Project Hana — CLI Agent with Memory
@@ -83,9 +82,6 @@ function stopThinkingAnim() {
   process.stdout.write(`\r\x1b[K`);
 }
 
-// MOOD 解析器
-const moodParser = new MoodParser();
-
 // 订阅引擎事件 → CLI 渲染
 engine.subscribe((event) => {
   if (event.type === "message_update") {
@@ -93,18 +89,7 @@ engine.subscribe((event) => {
     if (sub === "text_delta") {
       stopThinkingAnim();
       const delta = event.assistantMessageEvent.delta;
-
-      moodParser.feed(delta, (evt) => {
-        if (evt.type === "text") {
-          process.stdout.write(`${hanaColor}${evt.data}${resetColor}`);
-        } else if (evt.type === "mood_start") {
-          process.stdout.write(`\x1b[90m<mood>\x1b[0m`);
-        } else if (evt.type === "mood_text") {
-          process.stdout.write(`\x1b[90m${evt.data}\x1b[0m`);
-        } else if (evt.type === "mood_end") {
-          process.stdout.write(`\x1b[90m</mood>\x1b[0m`);
-        }
-      });
+      process.stdout.write(`${hanaColor}${delta}${resetColor}`);
     } else if (sub === "thinking_delta") {
       startThinkingAnim();
     } else if (sub === "toolcall_start") {

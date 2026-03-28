@@ -23,13 +23,13 @@ const BRIDGE_BLOCKED_TOOL_NAMES = new Set([
 
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
-  return isZh ? "（插话，无需 MOOD）\n" : "(Interjection, no MOOD needed)\n";
+  return isZh ? "（插话）\n" : "(Interjection)\n";
 }
 
 export class BridgeSessionManager {
   /**
    * @param {object} deps - 注入依赖（不持有 engine 引用）
-   * @param {() => object} deps.getAgent - 返回当前 agent（需 sessionDir, yuanPrompt）
+   * @param {() => object} deps.getAgent - 返回当前 agent（需 sessionDir）
    * @param {(id: string) => object|null} deps.getAgentById - 按 ID 获取 agent
    * @param {(agent: object) => object} [deps.getSkillsForAgent] - 获取指定 agent 的 skills
    * @param {() => import('./model-manager.js').ModelManager} deps.getModelManager

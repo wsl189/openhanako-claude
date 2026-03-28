@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { MoodParser } from "./events.js";
+import { ThinkTagParser } from "./events.js";
 
-function runMoodParser(chunks) {
-  const parser = new MoodParser();
+function runThinkParser(chunks) {
+  const parser = new ThinkTagParser();
   const events = [];
   for (const chunk of chunks) {
     parser.feed(chunk, (evt) => events.push(evt));
@@ -11,30 +11,29 @@ function runMoodParser(chunks) {
   return events;
 }
 
-describe("MoodParser", () => {
-  it("parses mood blocks with attributes and spaced closing tags", () => {
-    const events = runMoodParser(['<reflect mode="deep">思考内容</reflect   >\n正文']);
+describe("ThinkTagParser", () => {
+  it("parses think blocks", () => {
+    const events = runThinkParser(["前缀<think>思考内容</think>正文"]);
     const text = events.filter((e) => e.type === "text").map((e) => e.data).join("");
-    const mood = events.filter((e) => e.type === "mood_text").map((e) => e.data).join("");
+    const think = events.filter((e) => e.type === "think_text").map((e) => e.data).join("");
 
-    expect(mood).toBe("思考内容");
-    expect(text).toBe("正文");
-    expect(events.some((e) => e.type === "mood_start")).toBe(true);
-    expect(events.some((e) => e.type === "mood_end")).toBe(true);
+    expect(think).toBe("思考内容");
+    expect(text).toBe("前缀正文");
+    expect(events.some((e) => e.type === "think_start")).toBe(true);
+    expect(events.some((e) => e.type === "think_end")).toBe(true);
   });
 
   it("handles split open/close tags across streaming chunks", () => {
-    const events = runMoodParser([
-      "前缀<ref",
-      'lect mode="x">内',
-      "省</refl",
-      "ect>\n后缀",
+    const events = runThinkParser([
+      "前缀<th",
+      "ink>内",
+      "省</thi",
+      "nk>\n后缀",
     ]);
     const text = events.filter((e) => e.type === "text").map((e) => e.data).join("");
-    const mood = events.filter((e) => e.type === "mood_text").map((e) => e.data).join("");
+    const think = events.filter((e) => e.type === "think_text").map((e) => e.data).join("");
 
-    expect(mood).toBe("内省");
+    expect(think).toBe("内省");
     expect(text).toBe("前缀后缀");
   });
 });
-

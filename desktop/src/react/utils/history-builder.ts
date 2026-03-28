@@ -5,7 +5,7 @@
  */
 
 import type { ChatMessage, ChatListItem, ContentBlock } from '../stores/chat-types';
-import { parseMoodFromContent, parseXingFromContent, parseUserAttachments } from './message-parser';
+import { parseXingFromContent, parseUserAttachments } from './message-parser';
 import { renderMarkdown } from './markdown';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -58,7 +58,7 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
 
     if (m.role === 'user') {
       // strip steer 前缀（内部标记，不应展示给用户）
-      const rawContent = (m.content || '').replace(/^（插话，无需 MOOD）\n?/, '');
+      const rawContent = (m.content || '').replace(/^（插话(?:，无需 MOOD)?）\n?/, '');
       const { text, files, deskContext } = parseUserAttachments(rawContent);
       const msg: ChatMessage = {
         id,
@@ -81,13 +81,9 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         blocks.push({ type: 'thinking', content: m.thinking, sealed: true });
       }
 
-      // 2. Mood + 主文本
-      const { mood, yuan, text: afterMood } = parseMoodFromContent(m.content);
-      if (mood && yuan) {
-        blocks.push({ type: 'mood', yuan, text: mood });
-      }
+      const assistantContent = String(m.content || '');
 
-      // 3. Tool calls
+      // 2. Tool calls
       if (m.toolCalls?.length) {
         // 分离确认类工具和普通工具
         const normalTools = [];
@@ -135,18 +131,18 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         }
       }
 
-      // 4. 主文本（去掉 mood 和 xing 后的内容）
-      const { xingBlocks, text: mainText } = parseXingFromContent(afterMood);
+      // 3. 主文本（去掉 xing 后的内容）
+      const { xingBlocks, text: mainText } = parseXingFromContent(assistantContent);
       if (mainText) {
         blocks.push({ type: 'text', html: renderMarkdown(mainText) });
       }
 
-      // 5. Xing
+      // 4. Xing
       for (const xb of xingBlocks) {
         blocks.push({ type: 'xing', title: xb.title, content: xb.content, sealed: true });
       }
 
-      // 6. 跟在这条消息后面的 file outputs
+      // 5. 跟在这条消息后面的 file outputs
       const files = fileMap[i];
       if (files) {
         for (const f of files) {
@@ -154,7 +150,7 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         }
       }
 
-      // 7. 跟在这条消息后面的 artifacts
+      // 6. 跟在这条消息后面的 artifacts
       const arts = artMap[i];
       if (arts) {
         for (const a of arts) {

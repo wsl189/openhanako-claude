@@ -43,6 +43,15 @@ export async function readFileForPreview(filePath: string, ext: string): Promise
  * 打开文件预览：读取文件内容 → 创建 Artifact → 打开预览面板
  */
 export async function openFilePreview(filePath: string, label: string, ext: string): Promise<void> {
+  return openFilePreviewWithOptions(filePath, label, ext, {});
+}
+
+export async function openFilePreviewWithOptions(
+  filePath: string,
+  label: string,
+  ext: string,
+  opts: { replaceRightSidebar?: boolean } = {},
+): Promise<void> {
   const fileName = label || filePath.split('/').pop() || filePath;
 
   if (ext === 'skill') {
@@ -58,7 +67,7 @@ export async function openFilePreview(filePath: string, label: string, ext: stri
         content: body,
       };
       upsertArtifact(artifact);
-      openPreview(artifact);
+      openPreview(artifact, { replaceRightSidebar: opts.replaceRightSidebar === true });
       return;
     }
     // 读取失败（可能是 zip 格式），尝试 skill viewer
@@ -77,7 +86,7 @@ export async function openFilePreview(filePath: string, label: string, ext: stri
       ext,
     };
     upsertArtifact(artifact);
-    openPreview(artifact);
+    openPreview(artifact, { replaceRightSidebar: opts.replaceRightSidebar === true });
     return;
   }
 
@@ -96,7 +105,7 @@ export async function openFilePreview(filePath: string, label: string, ext: stri
         language: previewType === 'code' ? ext : undefined,
       };
       upsertArtifact(artifact);
-      openPreview(artifact);
+      openPreview(artifact, { replaceRightSidebar: opts.replaceRightSidebar === true });
       return;
     }
   }
@@ -111,7 +120,7 @@ export async function openFilePreview(filePath: string, label: string, ext: stri
     ext,
   };
   upsertArtifact(artifact);
-  openPreview(artifact);
+  openPreview(artifact, { replaceRightSidebar: opts.replaceRightSidebar === true });
 }
 
 /**

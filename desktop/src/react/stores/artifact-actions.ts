@@ -11,24 +11,41 @@ import type { Artifact } from '../types';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 let _artifactCounter = 0;
+let _restoreJianAfterClose = false;
 
-export function openPreview(artifact: Artifact): void {
+export function openPreview(artifact: Artifact, opts?: { replaceRightSidebar?: boolean }): void {
   const s = useStore.getState();
+  const replaceRightSidebar = opts?.replaceRightSidebar === true;
   const arts = [...s.artifacts];
   const idx = arts.findIndex(a => a.id === artifact.id);
   if (idx >= 0) arts[idx] = artifact;
   else arts.push(artifact);
   s.setArtifacts(arts);
   s.setCurrentArtifactId(artifact.id);
+  if (replaceRightSidebar) {
+    _restoreJianAfterClose = s.jianOpen;
+    if (s.jianOpen) s.setJianOpen(false);
+  } else {
+    _restoreJianAfterClose = false;
+  }
   s.setPreviewOpen(true);
   updateLayout();
 }
 
 export function closePreview(): void {
   const s = useStore.getState();
+  const shouldRestoreJian = _restoreJianAfterClose;
+  _restoreJianAfterClose = false;
   s.setPreviewOpen(false);
   s.setCurrentArtifactId(null);
+  if (shouldRestoreJian) {
+    s.setJianOpen(true);
+    s.setJianAutoCollapsed(false);
+  }
   updateLayout();
+  if (shouldRestoreJian && !useStore.getState().jianOpen) {
+    useStore.setState({ jianOpen: true, jianAutoCollapsed: false });
+  }
 }
 
 /** 注册 artifact 到全局 store（流式事件 + 点击卡片都走这里） */

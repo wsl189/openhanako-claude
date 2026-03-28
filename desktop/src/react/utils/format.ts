@@ -121,18 +121,11 @@ export function cronToHuman(schedule: number | string, type?: string): string {
 }
 
 /**
- * 从 assistant 回复中解析 mood 区块
+ * 兼容旧调用：当前不再解析/剥离 mood 区块，直接返回原文。
  */
 export function parseMoodFromContent(content: string): { mood: string | null; text: string } {
   if (!content) return { mood: null, text: '' };
-  const moodRe = /<(mood|pulse|reflect)\b[^>]*>([\s\S]*?)<\/\s*\1\s*>/i;
-  const match = content.match(moodRe);
-  if (!match) return { mood: null, text: content };
-  const raw = match[2].trim()
-    .replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '')
-    .replace(/^\n+/, '').replace(/\n+$/, '');
-  const text = content.replace(moodRe, '').replace(/^\n+/, '').trim();
-  return { mood: raw, text };
+  return { mood: null, text: content };
 }
 
 /**

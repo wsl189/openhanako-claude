@@ -36,8 +36,8 @@ import { t } from "../server/i18n.js";
 export class Agent {
   /**
    * @param {object} opts
-   * @param {string} opts.agentDir   - 这个助手的数据目录（yuan, ishiki, config, memory, avatars）
-   * @param {string} opts.productDir - 产品模板目录（ishiki.example.md, yuan 模板等）
+   * @param {string} opts.agentDir   - 这个助手的数据目录（ishiki, config, memory, avatars）
+   * @param {string} opts.productDir - 产品模板目录（ishiki.example.md, identity 模板等）
    * @param {string} opts.userDir    - 用户数据目录（user.md, 用户头像）—— 跨助手共享
    */
   constructor({ agentDir, productDir, userDir, channelsDir, agentsDir }) {
@@ -379,7 +379,6 @@ export class Agent {
   get memoryMasterEnabled() { return this._memoryMasterEnabled; }
   /** per-session 级别（持久化、API 返回用，不受 master 影响） */
   get sessionMemoryEnabled() { return this._memorySessionEnabled; }
-  get yuanPrompt() { return this._readYuan(); }
   get publicIshiki() { return this._readPublicIshiki(); }
   get utilityModel() { return this._utilityModel; }
   get memoryModel() { return this._memoryModel; }
@@ -519,7 +518,7 @@ export class Agent {
   //  System Prompt 组装
   // ════════════════════════════
 
-  /** 返回纯人格 prompt（identity + yuan + ishiki），不含记忆、用户档案等 */
+  /** 返回纯人格 prompt（identity + ishiki），不含记忆、用户档案等 */
   get personality() {
     const isZh = String(this._config.locale || "").startsWith("zh");
     const agentId = path.basename(this.agentDir);
@@ -538,7 +537,6 @@ export class Agent {
       || readFile(path.join(this.productDir, "identity-templates", `${langDir}${yuanType}.md`))
       || readFile(path.join(this.productDir, "identity-templates", `${yuanType}.md`))
       || readFile(path.join(this.productDir, "identity.example.md"));
-    const yuanMd = this._readYuan();
     const ishikiMd = readFile(path.join(this.agentDir, "ishiki.md"))
       || readFile(path.join(this.productDir, "ishiki-templates", `${langDir}${yuanType}.md`))
       || readFile(path.join(this.productDir, "ishiki-templates", `${yuanType}.md`))
@@ -564,17 +562,7 @@ export class Agent {
             : `- If the user asks "Who am I / What's my name?", say their name is not set yet and ask how they want to be addressed.`,
           "- Do not claim any other name unless the user explicitly asks you to rename yourself.",
         ].join("\n");
-    return identityAnchor + "\n\n" + fill(identityMd) + "\n\n" + fill(yuanMd || "") + "\n\n" + fill(ishikiMd);
-  }
-
-  /** 读取 yuan 模板（能力定义） */
-  _readYuan() {
-    const yuanType = this._config?.agent?.yuan || "hanako";
-    const isZh = String(this._config.locale || "").startsWith("zh");
-    const langDir = isZh ? "" : "en/";
-    const readFile = (p) => { try { return fs.readFileSync(p, "utf-8"); } catch { return ""; } };
-    return readFile(path.join(this.productDir, "yuan", `${langDir}${yuanType}.md`))
-      || readFile(path.join(this.productDir, "yuan", `${yuanType}.md`));
+    return identityAnchor + "\n\n" + fill(identityMd) + "\n\n" + fill(ishikiMd);
   }
 
   /** 读取对外意识（public-ishiki.md），guest 会话使用 */
@@ -619,9 +607,7 @@ export class Agent {
       try { return fs.readFileSync(filePath, "utf-8"); } catch { return ""; }
     };
 
-    // identity + yuan + ishiki（复用 personality getter）
-    const yuanType = this._config?.agent?.yuan || "hanako";
-    if (!this._readYuan()) throw new Error(`Cannot find yuan "${yuanType}". Check lib/yuan/`);
+    // identity + ishiki（复用 personality getter）
     const ishiki = this.personality;
 
     // 可选文件

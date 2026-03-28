@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
-import { formatSessionDate, parseMoodFromContent } from '../utils/format';
+import { formatSessionDate } from '../utils/format';
 import { renderMarkdown } from '../utils/markdown';
 import { MarkdownContent } from './chat/MarkdownContent';
 
@@ -390,9 +390,7 @@ function ContactAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string }
 
 function ChatBubble({ message: m }: { message: BridgeMessage }) {
   if (m.role === 'assistant') {
-    const { text } = parseMoodFromContent(m.content);
-    // 这里不能用 `text || m.content`，否则“纯 reflect/mood 标签消息”会回退到原文并直接显示标签
-    let base = typeof text === 'string' ? text : '';
+    let base = String(m.content || '');
     const finalMatches = [...base.matchAll(/<final>\s*([\s\S]*?)\s*<\/final>/gi)];
     if (finalMatches.length) {
       base = finalMatches[finalMatches.length - 1][1];
@@ -401,8 +399,8 @@ function ChatBubble({ message: m }: { message: BridgeMessage }) {
       if (replyingMatches.length) base = replyingMatches[replyingMatches.length - 1][1];
     }
     const cleaned = base
-      .replace(/```(?:mood|pulse|reflect|think|analysis|commentary|summary)[\s\S]*?```\n*/gi, '')
-      .replace(/<(?:mood|pulse|reflect|think|analysis|commentary|summary)>[\s\S]*?<\/(?:mood|pulse|reflect|think|analysis|commentary|summary)>\s*/gi, '')
+      .replace(/```(?:think|analysis|commentary|summary)[\s\S]*?```\n*/gi, '')
+      .replace(/<(?:think|analysis|commentary|summary)>[\s\S]*?<\/(?:think|analysis|commentary|summary)>\s*/gi, '')
       .replace(/<xing\s+title=["\u201C\u201D][^"\u201C\u201D]*["\u201C\u201D]>[\s\S]*?<\/xing>\s*/gi, '')
       .replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/gi, '')
       .replace(/<\/?(?:final|replying)\s*>/gi, '')

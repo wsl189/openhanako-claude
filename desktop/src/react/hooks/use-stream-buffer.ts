@@ -11,7 +11,6 @@
 import type { ChatMessage, ContentBlock, ChatListItem } from '../stores/chat-types';
 import { useStore } from '../stores';
 import { renderMarkdown } from '../utils/markdown';
-import { cleanMoodText } from '../utils/message-parser';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -21,12 +20,9 @@ interface Buffer {
   sessionPath: string;
   textAcc: string;
   thinkingAcc: string;
-  moodAcc: string;
-  moodYuan: string;
   xingAcc: string;
   xingTitle: string;
   inThinking: boolean;
-  inMood: boolean;
   inXing: boolean;
   lastFlushTime: number;
   flushTimer: ReturnType<typeof setTimeout> | null;
@@ -39,12 +35,9 @@ function createBuffer(sessionPath: string): Buffer {
     sessionPath,
     textAcc: '',
     thinkingAcc: '',
-    moodAcc: '',
-    moodYuan: 'hanako',
     xingAcc: '',
     xingTitle: '',
     inThinking: false,
-    inMood: false,
     inXing: false,
     lastFlushTime: 0,
     flushTimer: null,
@@ -116,22 +109,6 @@ class StreamBufferManager {
         else blocks.unshift(thinkingBlock); // thinking 在最前面
       }
 
-      // ── Mood ──
-      if (buf.moodAcc || buf.inMood) {
-        const idx = blocks.findIndex(b => b.type === 'mood');
-        const moodBlock: ContentBlock = {
-          type: 'mood',
-          yuan: buf.moodYuan,
-          text: buf.inMood ? buf.moodAcc : cleanMoodText(buf.moodAcc),
-        };
-        if (idx >= 0) blocks[idx] = moodBlock;
-        else {
-          // mood 在 thinking 后面
-          const insertAt = blocks.findIndex(b => b.type !== 'thinking') ;
-          blocks.splice(insertAt >= 0 ? insertAt : blocks.length, 0, moodBlock);
-        }
-      }
-
       // ── Text ──
       if (buf.textAcc) {
         const displayText = buf.textAcc.replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
@@ -189,24 +166,6 @@ class StreamBufferManager {
 
       case 'thinking_end':
         buf.inThinking = false;
-        this.flush(buf);
-        break;
-
-      case 'mood_start':
-        this.ensureMessage(buf);
-        buf.inMood = true;
-        buf.moodAcc = '';
-        buf.moodYuan = useStore.getState().agentYuan || 'hanako';
-        this.flush(buf);
-        break;
-
-      case 'mood_text':
-        buf.moodAcc += msg.delta || '';
-        this.scheduleFlush(buf);
-        break;
-
-      case 'mood_end':
-        buf.inMood = false;
         this.flush(buf);
         break;
 
@@ -403,10 +362,8 @@ class StreamBufferManager {
         // 清理 buffer
         buf.textAcc = '';
         buf.thinkingAcc = '';
-        buf.moodAcc = '';
         buf.xingAcc = '';
         buf.inThinking = false;
-        buf.inMood = false;
         buf.inXing = false;
         buf.messageAppended = false;
         break;
