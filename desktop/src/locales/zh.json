@@ -323,9 +323,9 @@
     "running": "{n} 个工具运行中"
   },
   "chain": {
-    "summaryBoth": "执行链（{thinking} 次思考 · {tools} 个工具）",
-    "summaryThinkingOnly": "执行链（{thinking} 次思考）",
-    "summaryToolsOnly": "执行链（{tools} 个工具）"
+    "summaryBoth": "思考和执行链（{thinking} 次思考 · {tools} 个工具）",
+    "summaryThinkingOnly": "思考和执行链（{thinking} 次思考）",
+    "summaryToolsOnly": "思考和执行链（{tools} 个工具）"
   },
   "tool": {
     "web_search": {
