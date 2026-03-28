@@ -430,7 +430,7 @@ function parseFmDescription(fm: string): string {
     return decodeEscapedNewlines(full.trim());
   }
 
-  if (value === '|' || value === '>' || value === '|+' || value === '>+') {
+  if (isYamlBlockIndicator(value)) {
     let block = '';
     for (let i = 1; i < lines.length; i++) {
       if (/^\S/.test(lines[i])) break;
@@ -440,6 +440,11 @@ function parseFmDescription(fm: string): string {
   }
 
   return decodeEscapedNewlines(value.trim());
+}
+
+function isYamlBlockIndicator(value: string): boolean {
+  const v = value.trim();
+  return /^(?:[>|](?:[+-]?[1-9]?|[1-9]?[+-]?))$/.test(v);
 }
 
 function decodeEscapedNewlines(text: string): string {

@@ -8,7 +8,7 @@
     --space-md: 1rem;
     --space-lg: 1.5rem;
     --space-xl: 2.5rem;
-    --conversation-side-gap: calc(var(--space-lg) + 4.5em); /* 额外增加约一个汉字距离 */
+    --conversation-side-gap: calc(var(--space-lg) + 1.5em); /* 额外增加约一个汉字距离 */
 
     /* 圆角 */
     --radius-sm: 6px;
