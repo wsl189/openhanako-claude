@@ -1905,6 +1905,7 @@ html[data-platform="linux"] .tb-toggle-right {
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md);
     color: var(--text);
+    font-family: var(--font-serif);
     font-size: 0.95rem;
     word-break: break-word;
 }
@@ -2010,23 +2011,29 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .assistant-final-reply {
     position: relative;
+    padding-right: 2rem;
 }
 
 .assistant-final-reply .msg-copy-btn {
     position: absolute;
-    top: 4px;
-    right: 4px;
+    top: 3px;
+    right: 3px;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: var(--hana-bg);
     border: 1px solid var(--hana-border);
     border-radius: 4px;
-    padding: 4px;
+    padding: 0;
     cursor: pointer;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.15s;
     color: var(--hana-text-muted);
     line-height: 1;
-    z-index: 2;
+    z-index: 6;
 }
 .assistant-final-reply:hover .msg-copy-btn,
 .assistant-final-reply:focus-within .msg-copy-btn {
@@ -2045,6 +2052,7 @@ html[data-platform="linux"] .tb-toggle-right {
 
 /* 助手回答正文 + 频道消息正文用宋体 */
 .message.assistant .md-content,
+.message.user .md-content,
 .channel-msg-text.md-content {
     font-family: var(--font-serif);
 }
@@ -6075,7 +6083,7 @@ body.resizing .jian-sidebar-inner {
 
 .input-box {
     width: 100%;
-    font-family: inherit;
+    font-family: var(--font-serif);
     font-size: 0.95rem;
     line-height: 1.6;
     color: var(--text);
@@ -12536,7 +12544,7 @@ a.about-link:hover {
     border: 1px solid var(--overlay-medium);
     border-radius: var(--radius-md);
     padding: 8px 12px;
-    font-family: var(--font-ui);
+    font-family: var(--font-serif);
     font-size: 0.88rem;
     background: var(--bg-card);
     color: var(--text);
