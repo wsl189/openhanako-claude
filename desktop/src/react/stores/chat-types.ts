@@ -44,7 +44,7 @@ export type ContentBlock =
   | { type: 'artifact'; artifactId: string; artifactType: string; title: string; content: string; language?: string }
   | { type: 'browser_screenshot'; base64: string; mimeType: string }
   | { type: 'skill'; skillName: string; skillFilePath: string }
-  | { type: 'cron_confirm'; jobData: Record<string, unknown>; status: 'pending' | 'approved' | 'rejected' }
+  | { type: 'cron_confirm'; confirmId?: string; jobData: Record<string, unknown>; status: 'pending' | 'approved' | 'rejected' }
   | { type: 'settings_confirm'; confirmId: string; settingKey: string; cardType: 'toggle' | 'list' | 'text'; currentValue: string; proposedValue: string; options?: string[]; optionLabels?: Record<string, string>; label: string; description?: string; frontend?: boolean; status: 'pending' | 'confirmed' | 'rejected' | 'timeout' };
 
 // ── 消息 ──

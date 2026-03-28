@@ -1084,7 +1084,13 @@
     "empty": "No scheduled tasks yet.\nThe assistant will create them when needed.",
     "defaultModel": "Default model",
     "edit": "Edit",
-    "delete": "Delete"
+    "delete": "Delete",
+    "cardPending": "Pending approval",
+    "cardCreated": "Created",
+    "cardScheduleEvery": "Every: {schedule}",
+    "cardScheduleEveryMinutes": "Every: {minutes} min",
+    "cardScheduleAt": "At: {schedule}",
+    "cardScheduleCron": "Cron: {schedule}"
   },
   "desk": {
     "title": "Desk",

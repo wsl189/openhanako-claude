@@ -70,14 +70,16 @@ function parseSessionContent(sessionPath, { userLimit = 1000, assistantLimit = 1
 function stripMoodAndMeta(text) {
   return String(text || "")
     .replace(/\r/g, "")
-    .replace(/<mood>[\s\S]*?<\/mood>/gi, " ")
-    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
+    .replace(/<(?:mood|pulse|reflect|think)\b[^>]*>[\s\S]*?<\/(?:mood|pulse|reflect|think)\s*>/gi, " ")
+    .replace(/<\/?(?:mood|pulse|reflect|think)\b[^>]*>/gi, " ")
+    // 兼容未闭合或畸形残片，例如 "<pulse Echo: ..."
+    .replace(/<\s*(?:mood|pulse|reflect|think)\b/gi, " ")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/\n+/g, "\n")
     .split("\n")
     .map(line => line.trim())
     .filter(Boolean)
-    .filter((line) => !/^(vibe|sparks|reflections|will)\s*:/i.test(line))
+    .filter((line) => !/^(vibe|sparks|echo|read|reflections?|will|premise|conduct|act)\s*:/i.test(line))
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
@@ -125,11 +127,21 @@ function normalizeSummaryText(text) {
   return String(text || "")
     .replace(/\r/g, "")
     .replace(/```[\s\S]*?```/g, " ")
-    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
-    .replace(/<\/?mood>/gi, " ")
+    .replace(/<(?:mood|pulse|reflect|think|analysis|commentary|summary)\b[^>]*>[\s\S]*?<\/(?:mood|pulse|reflect|think|analysis|commentary|summary)\s*>/gi, " ")
+    .replace(/<\/?(?:mood|pulse|reflect|think|analysis|commentary|summary)\b[^>]*>/gi, " ")
+    // 兼容未闭合或畸形残片，例如 "<pulse Echo: ..."
+    .replace(/<\s*(?:mood|pulse|reflect|think|analysis|commentary|summary)\b/gi, " ")
     .replace(/\s+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function hasIntrospectionLeak(text) {
+  const s = String(text || "");
+  if (!s) return false;
+  if (/<\s*(?:mood|pulse|reflect|think|analysis|commentary|summary)\b/i.test(s)) return true;
+  // 常见内省池字段，若出现在摘要中，通常表示污染
+  return /\b(?:vibe|sparks|echo|read|reflections?|will|premise|conduct|act)\s*:/i.test(s);
 }
 
 /**
@@ -178,6 +190,7 @@ export function normalizeActivitySummary(rawSummary, { assistantText = "", toolC
     .trim();
 
   if (!singleLine) return fallback;
+  if (hasIntrospectionLeak(singleLine)) return fallback;
   if (!hasTools && (isAllClearText(singleLine) || isAllClearText(cleanAssistant))) {
     return canonicalAllClear;
   }

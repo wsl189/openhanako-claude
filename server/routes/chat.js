@@ -399,27 +399,52 @@ export default async function chatRoute(app, { engine, hub }) {
       broadcast({ type: "browser_bg_status", running: event.running, url: event.url });
     } else if (event.type === "cron_confirmation" && event.confirmId) {
       // 新的阻塞式 cron 确认（通过 emitEvent 触发）
-      if (!ss) return;
-      emitStreamEvent(sessionPath, ss, {
-        type: "cron_confirmation",
-        confirmId: event.confirmId,
-        jobData: event.jobData,
-      });
+      if (ss) {
+        emitStreamEvent(sessionPath, ss, {
+          type: "cron_confirmation",
+          confirmId: event.confirmId,
+          jobData: event.jobData,
+        });
+      } else {
+        // 兜底：无流状态时也广播，避免确认卡片丢失
+        broadcast({
+          type: "cron_confirmation",
+          sessionPath: sessionPath || null,
+          confirmId: event.confirmId,
+          jobData: event.jobData,
+        });
+      }
     } else if (event.type === "settings_confirmation") {
-      if (!ss) return;
-      emitStreamEvent(sessionPath, ss, {
-        type: "settings_confirmation",
-        confirmId: event.confirmId,
-        settingKey: event.settingKey,
-        cardType: event.cardType,
-        currentValue: event.currentValue,
-        proposedValue: event.proposedValue,
-        options: event.options,
-        optionLabels: event.optionLabels || null,
-        label: event.label,
-        description: event.description,
-        frontend: event.frontend,
-      });
+      if (ss) {
+        emitStreamEvent(sessionPath, ss, {
+          type: "settings_confirmation",
+          confirmId: event.confirmId,
+          settingKey: event.settingKey,
+          cardType: event.cardType,
+          currentValue: event.currentValue,
+          proposedValue: event.proposedValue,
+          options: event.options,
+          optionLabels: event.optionLabels || null,
+          label: event.label,
+          description: event.description,
+          frontend: event.frontend,
+        });
+      } else {
+        broadcast({
+          type: "settings_confirmation",
+          sessionPath: sessionPath || null,
+          confirmId: event.confirmId,
+          settingKey: event.settingKey,
+          cardType: event.cardType,
+          currentValue: event.currentValue,
+          proposedValue: event.proposedValue,
+          options: event.options,
+          optionLabels: event.optionLabels || null,
+          label: event.label,
+          description: event.description,
+          frontend: event.frontend,
+        });
+      }
     } else if (event.type === "confirmation_resolved") {
       broadcast({
         type: "confirmation_resolved",

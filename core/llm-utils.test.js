@@ -42,6 +42,24 @@ describe("normalizeActivitySummary", () => {
     });
     expect(out).toBe("Patrol complete, all clear");
   });
+
+  it("falls back when malformed pulse prefix leaks into summary", () => {
+    const out = normalizeActivitySummary("<pulse Echo: 记忆里 WSL 刚输出过简报，继续提醒喝水", {
+      assistantText: "工作空间一切正常，无异常事项。继续待命。",
+      toolCalls: [],
+      isZh: true,
+    });
+    expect(out).toBe("巡检完毕，一切正常");
+  });
+
+  it("falls back when reflect block fields leak into summary", () => {
+    const out = normalizeActivitySummary("<reflect>Premise: 信息不足</reflect> 建议补充上下文", {
+      assistantText: "工作空间一切正常，无异常事项。继续待命。",
+      toolCalls: [],
+      isZh: true,
+    });
+    expect(out).toBe("巡检完毕，一切正常");
+  });
 });
 
 describe("summarizeTitle", () => {

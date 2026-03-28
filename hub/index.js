@@ -206,7 +206,7 @@ export class Hub {
 
   /**
    * 统一通知出口：
-   * - target=platform: 仅发平台私聊（失败不弹本地）
+   * - target=platform: 优先发平台私聊，失败回退本地弹窗
    * - target=auto: 优先发平台，失败再本地弹窗
    * - target=local: 仅本地弹窗
    */
@@ -228,11 +228,6 @@ export class Hub {
           return { delivered: "platform", ...sent };
         }
       } catch {}
-    }
-
-    // 显式要求 platform 时，不回退本地弹窗，避免重复打扰
-    if (normalized === "platform") {
-      return { delivered: "none", reason: "platform_unavailable" };
     }
 
     this._eventBus.emit(

@@ -2283,68 +2283,112 @@ html[data-platform="linux"] .tb-toggle-right {
    ======================================== */
 
 .cron-confirm-card {
-    margin: var(--space-sm) 0;
-    padding: var(--space-md);
-    background: var(--bg-card, #fff);
-    border-radius: var(--radius-md);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
-    font-size: 0.82rem;
+    margin: var(--space-xs) 0 var(--space-sm);
+    padding: 0.55rem 0.7rem 0.62rem;
+    background: color-mix(in oklab, var(--tool-bg) 78%, var(--bg) 22%);
+    border-left: 2px solid color-mix(in oklab, var(--accent) 72%, #fff 28%);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--border) 70%, transparent);
+    font-size: 0.8rem;
     width: fit-content;
-    max-width: 360px;
+    max-width: min(420px, 100%);
+    min-width: 220px;
 }
 
 .cron-confirm-title {
-    font-weight: 600;
+    font-weight: 580;
     color: var(--text);
-    margin-bottom: 2px;
+    margin-top: 0.14rem;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.cron-confirm-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
 }
 
 .cron-confirm-meta {
     color: var(--text-muted);
-    font-size: 0.75rem;
-}
-
-.cron-confirm-prompt {
-    margin-top: var(--space-xs);
-    color: var(--text-light);
-    font-size: 0.75rem;
-    font-style: italic;
-    line-height: 1.4;
+    font-size: 0.72rem;
+    white-space: nowrap;
 }
 
 .cron-confirm-actions {
-    margin-top: var(--space-sm);
+    margin-top: 0.5rem;
     display: flex;
-    gap: var(--space-xs);
+    gap: 0.36rem;
 }
 
 .cron-confirm-btn {
-    padding: 3px 12px;
-    border: none;
-    border-radius: var(--radius-sm);
-    font-size: 0.75rem;
+    padding: 0.24rem 0.62rem;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    line-height: 1.3;
     font-family: inherit;
     cursor: pointer;
-    transition: opacity 0.15s;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-.cron-confirm-btn:hover { opacity: 0.85; }
+.cron-confirm-btn:hover { opacity: 1; }
 .cron-confirm-btn:disabled { opacity: 0.5; cursor: default; }
 
 .cron-confirm-btn.approve {
-    background: var(--accent);
-    color: #fff;
+    background: color-mix(in oklab, var(--green) 18%, var(--bg-card, #fff) 82%);
+    border-color: color-mix(in oklab, var(--green) 45%, var(--border) 55%);
+    color: color-mix(in oklab, var(--green) 85%, var(--text) 15%);
+}
+
+.cron-confirm-btn.approve:hover {
+    background: color-mix(in oklab, var(--green) 26%, var(--bg-card, #fff) 74%);
+    border-color: color-mix(in oklab, var(--green) 58%, var(--border) 42%);
 }
 
 .cron-confirm-btn.reject {
-    background: var(--overlay-medium);
+    background: color-mix(in oklab, var(--overlay-medium) 65%, var(--bg-card, #fff) 35%);
+    border-color: color-mix(in oklab, var(--border) 82%, var(--overlay-medium) 18%);
     color: var(--text-light);
 }
 
+.cron-confirm-btn.reject:hover {
+    background: color-mix(in oklab, var(--overlay-medium) 82%, var(--bg-card, #fff) 18%);
+}
+
 .cron-confirm-status {
-    margin-top: var(--space-xs);
-    font-size: 0.75rem;
-    font-style: italic;
+    font-size: 0.72rem;
+    letter-spacing: 0.01em;
+}
+
+.cron-confirm-status.pending {
+    color: color-mix(in oklab, var(--accent) 60%, var(--text-muted) 40%);
+}
+
+.cron-confirm-card.done {
+    background: color-mix(in oklab, var(--bg-card, #fff) 85%, var(--tool-bg) 15%);
+}
+
+.cron-confirm-card.done.approved {
+    border-left-color: color-mix(in oklab, var(--green) 68%, #fff 32%);
+}
+
+.cron-confirm-card.done.rejected {
+    border-left-color: color-mix(in oklab, var(--text-muted) 55%, #fff 45%);
+}
+
+.cron-confirm-status.approved {
+    color: color-mix(in oklab, var(--green) 88%, var(--text) 12%);
+}
+
+.cron-confirm-status.rejected {
+    color: var(--text-muted);
+}
+
+/* old styles compatibility */
+.cron-confirm-prompt {
+    display: none;
 }
 
 /* ── 设置确认卡片 ── */
@@ -2468,8 +2512,6 @@ html[data-platform="linux"] .tb-toggle-right {
 }
 .settings-confirm-status.confirmed { color: var(--accent); }
 
-.cron-confirm-status.approved { color: var(--green); }
-.cron-confirm-status.rejected { color: var(--text-muted); }
 
 /* ═══ Xing 反省卡片 ═══ */
 

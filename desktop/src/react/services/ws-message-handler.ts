@@ -341,20 +341,47 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'confirmation_resolved': {
-      // 更新所有 session 中匹配 confirmId 的确认卡片状态
-      const sessions = state.chatSessions || {};
-      for (const sp of Object.keys(sessions)) {
-        useStore.getState().updateLastMessage(sp, (m: any) => {
-          if (!m.blocks) return m;
-          const updated = m.blocks.map((b: any) => {
-            if ((b.type === 'settings_confirm' || b.type === 'cron_confirm') && b.confirmId === msg.confirmId) {
-              return { ...b, status: msg.action === 'confirmed' ? 'confirmed' : 'rejected' };
-            }
-            return b;
+      // 更新所有 session 中匹配 confirmId 的确认卡片状态（不能只改最后一条）
+      useStore.setState((prev: any) => {
+        const chatSessions = prev.chatSessions || {};
+        let changed = false;
+        const nextSessions = { ...chatSessions };
+
+        for (const sp of Object.keys(chatSessions)) {
+          const session = chatSessions[sp];
+          if (!session?.items?.length) continue;
+
+          let sessionChanged = false;
+          const nextItems = session.items.map((item: any) => {
+            if (item?.type !== 'message' || !item.data?.blocks?.length) return item;
+
+            let msgChanged = false;
+            const nextBlocks = item.data.blocks.map((b: any) => {
+              if ((b.type !== 'settings_confirm' && b.type !== 'cron_confirm') || b.confirmId !== msg.confirmId) return b;
+
+              msgChanged = true;
+              if (b.type === 'settings_confirm') {
+                return { ...b, status: msg.action === 'confirmed' ? 'confirmed' : 'rejected' };
+              }
+              return { ...b, status: msg.action === 'confirmed' ? 'approved' : 'rejected' };
+            });
+
+            if (!msgChanged) return item;
+            sessionChanged = true;
+            return {
+              ...item,
+              data: { ...item.data, blocks: nextBlocks },
+            };
           });
-          return { ...m, blocks: updated };
-        });
-      }
+
+          if (sessionChanged) {
+            changed = true;
+            nextSessions[sp] = { ...session, items: nextItems };
+          }
+        }
+
+        return changed ? { chatSessions: nextSessions } : {};
+      });
       break;
     }
 

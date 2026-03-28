@@ -89,14 +89,33 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   }, [sessionAgent?.avatarUrl, agentAvatarUrl, fallbackAvatar]);
 
   const blocks = message.blocks || [];
+  const displayBlocks = useMemo(() => {
+    const chain: ContentBlock[] = [];
+    const confirms: ContentBlock[] = [];
+    const rest: ContentBlock[] = [];
+
+    for (const b of blocks) {
+      if (isChainBlock(b)) {
+        chain.push(b);
+        continue;
+      }
+      if (b.type === 'cron_confirm' || b.type === 'settings_confirm') {
+        confirms.push(b);
+        continue;
+      }
+      rest.push(b);
+    }
+    return [...chain, ...confirms, ...rest];
+  }, [blocks]);
+
   const finalTextIndex = useMemo(() => {
-    for (let i = blocks.length - 1; i >= 0; i--) {
-      if (blocks[i].type === 'text') return i;
+    for (let i = displayBlocks.length - 1; i >= 0; i--) {
+      if (displayBlocks[i].type === 'text') return i;
     }
     return -1;
-  }, [blocks]);
-  const finalTextHtml = finalTextIndex >= 0 && blocks[finalTextIndex].type === 'text'
-    ? blocks[finalTextIndex].html
+  }, [displayBlocks]);
+  const finalTextHtml = finalTextIndex >= 0 && displayBlocks[finalTextIndex].type === 'text'
+    ? displayBlocks[finalTextIndex].html
     : '';
 
   const chainStats = useMemo(() => {
@@ -105,8 +124,8 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     let allCompleted = true;
     let allSuccessful = true;
 
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i];
+    for (let i = 0; i < displayBlocks.length; i++) {
+      const block = displayBlocks[i];
       if (!isChainBlock(block)) continue;
       if (block.type === 'thinking') thinkingCount += 1;
       if (block.type === 'tool_group') toolCount += block.tools.length;
@@ -121,7 +140,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
       allCompleted,
       allSuccessful,
     };
-  }, [blocks]);
+  }, [displayBlocks]);
 
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -228,7 +247,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
             {chainCollapsed ? <span className="chain-summary-status">✓</span> : null}
           </button>
         )}
-        {blocks.map((block, i) => {
+        {displayBlocks.map((block, i) => {
           if (chainCanCollapse && isChainBlock(block) && chainCollapsed) return null;
 
           const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
@@ -410,6 +429,27 @@ const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, stat
   const [status, setStatus] = useState(initialStatus);
   const currentSessionPath = useStore(s => s.currentSessionPath);
   const label = (jobData.label as string) || (jobData.prompt as string)?.slice(0, 40) || '';
+  const scheduleType = String(jobData.type || '');
+  const schedule = String(jobData.schedule || '');
+
+  useEffect(() => {
+    setStatus(initialStatus);
+  }, [initialStatus]);
+
+  const scheduleText = useMemo(() => {
+    const wt = (key: string, vars?: Record<string, string>) => (window as any).t?.(key, vars) || '';
+    if (scheduleType === 'every') {
+      const rawMs = Number(schedule);
+      if (Number.isFinite(rawMs) && rawMs > 0) {
+        const minutes = Math.max(1, Math.round(rawMs / 60000));
+        return wt('automation.cardScheduleEveryMinutes', { minutes: String(minutes) });
+      }
+      return wt('automation.cardScheduleEvery', { schedule });
+    }
+    if (scheduleType === 'at') return wt('automation.cardScheduleAt', { schedule });
+    if (scheduleType === 'cron') return wt('automation.cardScheduleCron', { schedule });
+    return '';
+  }, [scheduleType, schedule]);
 
   const handleApprove = async () => {
     try {
@@ -447,17 +487,24 @@ const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, stat
 
   if (status !== 'pending') {
     return (
-      <div className="cron-confirm-card">
-        <div className="cron-confirm-title">{label}</div>
-        <div className={`cron-confirm-status ${status}`}>
-          {status === 'approved' ? (window as any).t('common.approved') : (window as any).t('common.rejected')}
+      <div className={`cron-confirm-card done ${status}`}>
+        <div className="cron-confirm-head">
+          <div className={`cron-confirm-status ${status}`}>
+            {status === 'approved' ? ((window as any).t?.('automation.cardCreated') || '已创建') : (window as any).t('common.rejected')}
+          </div>
+          {scheduleText ? <div className="cron-confirm-meta">{scheduleText}</div> : null}
         </div>
+        <div className="cron-confirm-title">{label}</div>
       </div>
     );
   }
 
   return (
-    <div className="cron-confirm-card">
+    <div className="cron-confirm-card pending">
+      <div className="cron-confirm-head">
+        <div className="cron-confirm-status pending">{(window as any).t('automation.cardPending')}</div>
+        {scheduleText ? <div className="cron-confirm-meta">{scheduleText}</div> : null}
+      </div>
       <div className="cron-confirm-title">{label}</div>
       <div className="cron-confirm-actions">
         <button className="cron-confirm-btn approve" onClick={handleApprove}>{(window as any).t('common.approve')}</button>

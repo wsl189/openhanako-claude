@@ -260,6 +260,7 @@ class StreamBufferManager {
       case 'tool_end':
         useStore.getState().updateLastMessage(sessionPath, (m) => {
           const blocks = [...(m.blocks || [])];
+          let updatedTool = false;
           // 从后往前找含该 tool 名且未 done 的
           for (let i = blocks.length - 1; i >= 0; i--) {
             if (blocks[i].type !== 'tool_group') continue;
@@ -270,10 +271,37 @@ class StreamBufferManager {
               tools[toolIdx] = { ...tools[toolIdx], done: true, success: !!msg.success };
               const allDone = tools.every(t => t.done);
               blocks[i] = { ...tg, tools, collapsed: allDone && tools.length > 1 };
-              return { ...m, blocks };
+              updatedTool = true;
+              break;
             }
           }
-          return m;
+
+          // cron add 成功后，实时补上“已创建”卡片（覆盖免确认场景）
+          if (msg.name === 'cron' && msg.success && msg.details?.action === 'added') {
+            const job = (msg.details?.job || {}) as Record<string, unknown>;
+            const jobData = {
+              type: String(job.type || msg.args?.type || ''),
+              schedule: job.schedule ?? msg.args?.schedule,
+              prompt: String(job.prompt || msg.args?.prompt || ''),
+              label: String(job.label || msg.args?.label || ''),
+            };
+            const match = (a: any, b: any) =>
+              String(a?.type || '') === String(b?.type || '')
+              && String(a?.schedule ?? '') === String(b?.schedule ?? '')
+              && String(a?.prompt || '') === String(b?.prompt || '')
+              && String(a?.label || '') === String(b?.label || '');
+
+            const existingIdx = blocks.findIndex((b: any) => b.type === 'cron_confirm' && match(b.jobData, jobData));
+            if (existingIdx >= 0) {
+              const card = blocks[existingIdx] as any;
+              blocks[existingIdx] = { ...card, status: 'approved' as const };
+            } else {
+              blocks.push({ type: 'cron_confirm', jobData, status: 'approved' as const } as any);
+            }
+            return { ...m, blocks };
+          }
+
+          return updatedTool ? { ...m, blocks } : m;
         });
         break;
 

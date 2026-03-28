@@ -1084,7 +1084,13 @@
     "empty": "暂无任务计划\n助手会在需要时自动创建",
     "defaultModel": "默认模型",
     "edit": "编辑",
-    "delete": "删除"
+    "delete": "删除",
+    "cardPending": "等待确认",
+    "cardCreated": "已创建",
+    "cardScheduleEvery": "间隔：{schedule}",
+    "cardScheduleEveryMinutes": "间隔：{minutes} 分钟",
+    "cardScheduleAt": "时间：{schedule}",
+    "cardScheduleCron": "规则：{schedule}"
   },
   "desk": {
     "title": "书桌",

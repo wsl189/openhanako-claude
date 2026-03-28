@@ -16,6 +16,7 @@ import { createCronScheduler } from "../lib/desk/cron-scheduler.js";
 import { CronStore } from "../lib/desk/cron-store.js";
 import { isToolCallBlock } from "../core/llm-utils.js";
 import { getLocale } from "../server/i18n.js";
+import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
 
 export class Scheduler {
   /**
@@ -357,15 +358,17 @@ export class Scheduler {
   async _emitReminderFallback(agentId, job, assistantText, summary) {
     const isZh = getLocale().startsWith("zh");
     const title = String(job?.label || "").trim() || (isZh ? "定时提醒" : "Scheduled reminder");
-    const cleanAssistant = String(assistantText || "")
+    const visibleAssistant = sanitizeAssistantVisibleText(assistantText);
+    const cleanAssistant = String(visibleAssistant || "")
       .replace(/[*_`>#-]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
+    const visibleSummary = sanitizeAssistantVisibleText(summary);
     const cleanPrompt = String(job?.prompt || "")
       .replace(/[*_`>#-]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-    const cleanSummary = String(summary || "").trim();
+    const cleanSummary = String(visibleSummary || "").trim();
     const body = (
       cleanAssistant
       || cleanSummary
