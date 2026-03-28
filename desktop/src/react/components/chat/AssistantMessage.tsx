@@ -16,6 +16,7 @@ import { useI18n } from '../../hooks/use-i18n';
 import { openFilePreview, openSkillPreview } from '../../utils/file-preview';
 import { openPreview } from '../../stores/artifact-actions';
 import { normalizeAgentDisplayName } from '../../utils/agent-helpers';
+import { cronToHuman } from '../../utils/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -438,15 +439,13 @@ const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, stat
 
   const scheduleText = useMemo(() => {
     const wt = (key: string, vars?: Record<string, string>) => (window as any).t?.(key, vars) || '';
-    if (scheduleType === 'every') {
-      const rawMs = Number(schedule);
-      if (Number.isFinite(rawMs) && rawMs > 0) {
-        const minutes = Math.max(1, Math.round(rawMs / 60000));
-        return wt('automation.cardScheduleEveryMinutes', { minutes: String(minutes) });
-      }
-      return wt('automation.cardScheduleEvery', { schedule });
-    }
     if (scheduleType === 'at') return wt('automation.cardScheduleAt', { schedule });
+
+    // every / cron 统一走人类可读格式，避免展示 */1 * * * * 这种原始表达式
+    const human = cronToHuman(schedule, scheduleType);
+    if (human) return human;
+
+    if (scheduleType === 'every') return wt('automation.cardScheduleEvery', { schedule });
     if (scheduleType === 'cron') return wt('automation.cardScheduleCron', { schedule });
     return '';
   }, [scheduleType, schedule]);

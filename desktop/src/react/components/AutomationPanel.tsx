@@ -7,6 +7,7 @@ import { normalizeAgentDisplayName, yuanFallbackAvatar } from '../utils/agent-he
 interface CronJob {
   id: string;
   enabled: boolean;
+  type?: 'at' | 'every' | 'cron' | string;
   label?: string;
   prompt?: string;
   schedule: string | number;
@@ -217,7 +218,7 @@ function AutomationItem({
             />
             <span className="auto-item-executor-name">{ownerName}</span>
           </div>
-          <span className="auto-item-schedule">{cronToHuman(job.schedule)}</span>
+          <span className="auto-item-schedule">{cronToHuman(job.schedule, job.type)}</span>
           {favorites.length > 0 && (
             <span className="auto-item-model-wrap">
               <select

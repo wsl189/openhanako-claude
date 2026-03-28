@@ -65,7 +65,7 @@ export function formatSessionDate(isoStr: string): string {
   return t('time.dateFormat', { m, d });
 }
 
-export function cronToHuman(schedule: number | string): string {
+export function cronToHuman(schedule: number | string, type?: string): string {
   const t = window.t ?? ((p: string) => p);
   const toEveryMinutes = (raw: number): number => {
     if (!Number.isFinite(raw) || raw <= 0) return 1;
@@ -84,6 +84,13 @@ export function cronToHuman(schedule: number | string): string {
     return renderEveryByMinutes(toEveryMinutes(schedule));
   }
   const s = String(schedule);
+  // 兼容旧数据：某些 daily cron 可能被存成 "21:00" 这类时间字符串
+  const hhmm = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (hhmm && type === 'cron') {
+    const hour = String(Math.max(0, Math.min(23, Number(hhmm[1]))));
+    const min = hhmm[2];
+    return t('cron.dailyAt', { hour, min });
+  }
   if (/^\d+$/.test(s)) {
     return renderEveryByMinutes(toEveryMinutes(parseInt(s, 10)));
   }
