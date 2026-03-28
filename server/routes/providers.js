@@ -9,6 +9,15 @@ function maskKey(key) {
   return key.slice(0, 4) + "..." + key.slice(-4);
 }
 
+function isModelscopeTarget(name, baseUrl) {
+  const lowerName = String(name || "").trim().toLowerCase();
+  if (lowerName === "modelscope") return true;
+  const lowerBase = String(baseUrl || "").trim().toLowerCase();
+  return lowerBase.includes("api-inference.modelscope.cn");
+}
+
+const MODELSCOPE_AUTH_PROBE_MODEL = "Qwen/Qwen-Image-2512";
+
 export default async function providersRoute(app, { engine }) {
 
   // ── Provider Summary ──
@@ -291,21 +300,62 @@ export default async function providersRoute(app, { engine }) {
 
   /**
    * 测试供应商连接
-   * body: { base_url, api, api_key }
+   * body: { name?, base_url?, api?, api_key? }
    */
   app.post("/api/providers/test", async (req, reply) => {
-    const { base_url, api } = req.body || {};
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const { base_url } = req.body || {};
+    let { api } = req.body || {};
     // 清洗 API key：去除非 ASCII 字符（防止粘贴时输入法带入中文）
-    const api_key = (req.body?.api_key || "").replace(/[^\x20-\x7E]/g, "").trim();
-    if (!base_url) {
+    let api_key = (req.body?.api_key || "").replace(/[^\x20-\x7E]/g, "").trim();
+
+    const providers = name ? getAllProviders(engine.configPath) : {};
+    const savedProvider = name ? providers[name] || {} : {};
+    const effectiveBaseUrl = base_url || savedProvider.base_url || "";
+    if (!api) api = savedProvider.api || "";
+    if (!api_key) api_key = savedProvider.api_key || "";
+    if (!api_key && name) {
+      try {
+        api_key = await engine.authStorage.getApiKey(name) || "";
+      } catch {}
+    }
+
+    if (!effectiveBaseUrl) {
       reply.code(400);
-      return { error: "base_url is required" };
+      return { error: "base_url is required (or provide a configured provider name)" };
     }
 
     try {
+      const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, "");
+
+      // ModelScope 的 /models 对鉴权不敏感（无 key 也可能 200），
+      // 这里改为真实鉴权探针：调用生图接口（异步模式，仅拿 task_id，不轮询下载）。
+      if (isModelscopeTarget(name, normalizedBaseUrl)) {
+        if (!api_key) {
+          reply.code(400);
+          return { ok: false, error: "api_key is required for ModelScope auth test" };
+        }
+        const headers = buildProviderAuthHeaders("openai-completions", api_key);
+        const res = await fetch(normalizedBaseUrl + "/images/generations", {
+          method: "POST",
+          headers: {
+            ...headers,
+            "X-ModelScope-Async-Mode": "true",
+          },
+          body: JSON.stringify({
+            model: MODELSCOPE_AUTH_PROBE_MODEL,
+            prompt: "auth probe",
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        // 401/403 = 鉴权失败；200 = 鉴权通过且接口可用
+        const ok = res.status === 200;
+        return { ok, status: res.status };
+      }
+
       // Anthropic 格式没有 /models 端点，用最小化 messages 请求验证认证
       if (api === "anthropic-messages") {
-        const baseUrl = base_url.replace(/\/+$/, "");
+        const baseUrl = normalizedBaseUrl;
         const headers = buildProviderAuthHeaders(api, api_key);
         const res = await fetch(baseUrl + "/messages", {
           method: "POST",
@@ -318,7 +368,7 @@ export default async function providersRoute(app, { engine }) {
         return { ok: authOk, status: res.status };
       }
 
-      const url = base_url.replace(/\/+$/, "") + "/models";
+      const url = normalizedBaseUrl + "/models";
       let headers = {};
       if (api_key) {
         if (!api) {

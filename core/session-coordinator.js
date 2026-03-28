@@ -17,6 +17,7 @@ import { createModuleLogger } from "../lib/debug-log.js";
 import { BrowserManager } from "../lib/browser/browser-manager.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
 import { t, getLocale } from "../server/i18n.js";
+import { buildCompactionSettings } from "./compaction-settings.js";
 
 const log = createModuleLogger("session");
 
@@ -691,11 +692,7 @@ export class SessionCoordinator {
     const ov = model?.id && overrides?.[model.id];
     const contextWindow = ov?.context || model?.contextWindow || 200_000;
     return SettingsManager.inMemory({
-      compaction: {
-        enabled: true,
-        reserveTokens: Math.max(contextWindow - 100_000, 16384),
-        keepRecentTokens: 20_000,
-      },
+      compaction: buildCompactionSettings(contextWindow),
     });
   }
 }

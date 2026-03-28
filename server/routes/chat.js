@@ -24,13 +24,46 @@ const DESK_MUTATING_TOOL_NAMES = new Set(["write", "edit", "bash", "generate_ima
 /**
  * 从 Pi SDK 的 content 块中提取纯文本
  */
+function isReasoningLikeType(type) {
+  const normalized = String(type || "").toLowerCase();
+  if (!normalized || normalized === "text") return false;
+  return /(reason|think|analysis|commentary|summary)/.test(normalized);
+}
+
+function pickBlockText(block) {
+  if (typeof block === "string") return block;
+  if (!block || typeof block !== "object") return "";
+  if (typeof block.text === "string") return block.text;
+  if (typeof block.content === "string") return block.content;
+  if (typeof block.reasoning === "string") return block.reasoning;
+  if (typeof block.thinking === "string") return block.thinking;
+  if (typeof block.output_text === "string") return block.output_text;
+  return "";
+}
+
+function extractContentParts(content) {
+  if (typeof content === "string") return { text: content, thinking: "" };
+  if (Array.isArray(content)) {
+    let text = "";
+    let thinking = "";
+    for (const block of content) {
+      const part = pickBlockText(block);
+      if (!part) continue;
+      if (isReasoningLikeType(block?.type)) thinking += part;
+      else text += part;
+    }
+    return { text, thinking };
+  }
+  if (!content || typeof content !== "object") return { text: "", thinking: "" };
+  if (typeof content.output_text === "string") return { text: content.output_text, thinking: "" };
+  const part = pickBlockText(content);
+  if (!part) return { text: "", thinking: "" };
+  if (isReasoningLikeType(content.type)) return { text: "", thinking: part };
+  return { text: part, thinking: "" };
+}
+
 function extractText(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter(b => b.type === "text" && b.text)
-    .map(b => b.text)
-    .join("");
+  return extractContentParts(content).text;
 }
 
 function extractTitleSourceText(content) {
@@ -239,17 +272,28 @@ export default async function chatRoute(app, { engine, hub }) {
     if (event.type === "message_update") {
       if (!ss) return;
       const sub = event.assistantMessageEvent?.type;
-
-      if (sub === "text_delta") {
-        ss.hasOutput = true;
+      const emitThinkingFallback = (rawThinking) => {
+        const thinking = typeof rawThinking === "string" ? rawThinking : "";
+        if (!thinking.trim()) return false;
+        if (!ss.isThinking) {
+          ss.isThinking = true;
+          emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
+        }
+        emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: thinking });
+        ss.isThinking = false;
+        emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+        return true;
+      };
+      const feedTextChunk = (rawChunk) => {
+        const chunk = typeof rawChunk === "string" ? rawChunk : "";
+        if (!chunk) return false;
         if (ss.isThinking) {
           ss.isThinking = false;
           emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
         }
 
-        const delta = event.assistantMessageEvent.delta;
         // ThinkTagParser（最外层）→ XingParser
-        ss.thinkTagParser.feed(delta, (tEvt) => {
+        ss.thinkTagParser.feed(chunk, (tEvt) => {
           switch (tEvt.type) {
             case "think_start":
               emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
@@ -280,6 +324,36 @@ export default async function chatRoute(app, { engine, hub }) {
               break;
           }
         });
+        return true;
+      };
+
+      if (sub === "text_delta") {
+        if (feedTextChunk(event.assistantMessageEvent.delta)) {
+          ss.hasOutput = true;
+        }
+      } else if (sub === "text_end") {
+        // 某些 provider 只在 text_end 提供完整 content，不会持续发 text_delta。
+        if (!ss.hasOutput) {
+          const { text, thinking } = extractContentParts(event.assistantMessageEvent.content);
+          emitThinkingFallback(thinking);
+          if (feedTextChunk(text)) {
+            ss.hasOutput = true;
+          }
+        }
+      } else if (sub === "done") {
+        // 最终 done 事件里通常带 partial 快照，作为 text_end 缺失时的兜底。
+        if (!ss.hasOutput) {
+          const { text, thinking } = extractContentParts(event.assistantMessageEvent.partial?.content);
+          emitThinkingFallback(thinking);
+          if (feedTextChunk(text)) {
+            ss.hasOutput = true;
+          }
+        }
+      } else if (sub === "thinking_start") {
+        if (!ss.isThinking) {
+          ss.isThinking = true;
+          emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
+        }
       } else if (sub === "thinking_delta") {
         if (!ss.isThinking) {
           ss.isThinking = true;
@@ -289,6 +363,17 @@ export default async function chatRoute(app, { engine, hub }) {
           type: "thinking_delta",
           delta: event.assistantMessageEvent.delta || "",
         });
+      } else if (sub === "thinking_end") {
+        // 兼容只在 thinking_end 带完整内容、不发 thinking_delta 的 provider。
+        emitThinkingFallback(
+          event.assistantMessageEvent.content
+          || event.assistantMessageEvent.delta
+          || "",
+        );
+        if (ss.isThinking) {
+          ss.isThinking = false;
+          emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+        }
       } else if (sub === "toolcall_start") {
         // 不在这里关闭 thinking 状态
       } else if (sub === "error") {

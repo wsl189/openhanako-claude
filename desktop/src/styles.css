@@ -11236,6 +11236,7 @@ a.about-link:hover {
     z-index: 60;
     margin-top: 4px;
     overflow-y: auto;
+    overscroll-behavior: contain;
     flex-direction: column;
     animation: dropdown-in 0.2s var(--ease-out);
     padding: var(--space-xs) 0;

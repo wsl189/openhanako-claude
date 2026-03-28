@@ -13,6 +13,7 @@ import { createAgentSession, SessionManager, SettingsManager } from "@mariozechn
 import { debugLog } from "../lib/debug-log.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
 import { t } from "../server/i18n.js";
+import { buildCompactionSettings } from "../core/compaction-settings.js";
 
 const IMAGE_MIME_BY_EXT = {
   ".png": "image/png",
@@ -158,11 +159,7 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
     cwd,
     sessionManager: tempSessionMgr,
     settingsManager: SettingsManager.inMemory({
-      compaction: {
-        enabled: true,
-        reserveTokens: Math.max(contextWindow - 100_000, 16384),
-        keepRecentTokens: 20_000,
-      },
+      compaction: buildCompactionSettings(contextWindow),
     }),
     authStorage: ctx.authStorage,
     modelRegistry: ctx.modelRegistry,

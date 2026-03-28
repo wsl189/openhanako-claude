@@ -69,7 +69,12 @@ export function SelectWidget({ options, value, onChange, placeholder }: SelectWi
   // 滚动时关闭（避免 fixed 面板脱轨）
   useEffect(() => {
     if (!open) return;
-    const handler = () => close();
+    const handler = (e: Event) => {
+      const target = e.target as Node | null;
+      if (target && panelRef.current?.contains(target)) return;
+      if (target && triggerRef.current?.contains(target)) return;
+      close();
+    };
     window.addEventListener('scroll', handler, true);
     return () => window.removeEventListener('scroll', handler, true);
   }, [open, close]);

@@ -13,6 +13,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { debugLog } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
+import { buildCompactionSettings } from "./compaction-settings.js";
 
 // Bridge 外部平台会话中禁用的工具（本地展示/agent 内部通信，不适合 IM 对话）
 const BRIDGE_BLOCKED_TOOL_NAMES = new Set([
@@ -378,11 +379,7 @@ export class BridgeSessionManager {
     const ov = model?.id && overrides?.[model.id];
     const contextWindow = ov?.context || model?.contextWindow || 200_000;
     return SettingsManager.inMemory({
-      compaction: {
-        enabled: true,
-        reserveTokens: Math.max(contextWindow - 100_000, 16384),
-        keepRecentTokens: 20_000,
-      },
+      compaction: buildCompactionSettings(contextWindow),
     });
   }
 }
