@@ -638,6 +638,122 @@ function DmIcon({ channel, selfInfo, agents, userName, userAvatarUrl, currentAge
   );
 }
 
+function ChannelWelcomeChip({
+  channel,
+  isSelected,
+  onOpen,
+}: {
+  channel: Channel;
+  isSelected: boolean;
+  onOpen: (channel: Channel) => void;
+}) {
+  const [avatarError, setAvatarError] = useState(false);
+
+  useEffect(() => {
+    setAvatarError(false);
+  }, [channel.id]);
+
+  const avatarUrl = hanaUrl(`/api/channels/${encodeURIComponent(channel.id)}/avatar?t=${_avatarTs}`);
+  const displayName = channel.name || channel.id || '?';
+
+  return (
+    <button
+      className={'welcome-agent-chip' + (isSelected ? ' selected' : '')}
+      onClick={() => onOpen(channel)}
+      title={displayName}
+    >
+      {!avatarError ? (
+        <img
+          className="welcome-agent-chip-avatar"
+          src={avatarUrl}
+          alt={displayName}
+          draggable={false}
+          onError={() => setAvatarError(true)}
+        />
+      ) : (
+        <span className="channel-welcome-chip-avatar-fallback">
+          {displayName.charAt(0).toUpperCase()}
+        </span>
+      )}
+      <span>{displayName}</span>
+    </button>
+  );
+}
+
+function ChannelWelcomeGroups() {
+  const { t } = useI18n();
+  const channels = useStore((s) => s.channels);
+  const selectedGroupId = useStore((s) => s.channelWelcomeSelectedId);
+  const setChannelWelcomeSelectedId = useStore((s) => s.setChannelWelcomeSelectedId);
+  const loadChannelPreview = useStore((s) => s.loadChannelPreview);
+  const openChannel = useStore((s) => s.openChannel);
+  const [heroAvatarError, setHeroAvatarError] = useState(false);
+
+  const groups = channels.filter((ch) => !ch.isDM);
+
+  useEffect(() => {
+    if (groups.length === 0) {
+      if (selectedGroupId !== null) setChannelWelcomeSelectedId(null);
+      return;
+    }
+    const exists = selectedGroupId && groups.some((ch) => ch.id === selectedGroupId);
+    if (!exists) setChannelWelcomeSelectedId(groups[0].id);
+  }, [groups, selectedGroupId, setChannelWelcomeSelectedId]);
+
+  const selectedGroup = groups.find((ch) => ch.id === selectedGroupId) || groups[0] || null;
+  const selectedGroupKey = selectedGroup?.id || '';
+
+  useEffect(() => {
+    setHeroAvatarError(false);
+  }, [selectedGroupKey]);
+
+  useEffect(() => {
+    if (!selectedGroupKey) return;
+    void loadChannelPreview(selectedGroupKey);
+  }, [loadChannelPreview, selectedGroupKey]);
+
+  const handleOpenGroup = useCallback((channel: Channel) => {
+    setChannelWelcomeSelectedId(channel.id);
+    void openChannel(channel.id, false);
+  }, [openChannel, setChannelWelcomeSelectedId]);
+
+  if (!selectedGroup) {
+    return <div className="channel-welcome">{t('channel.empty')}</div>;
+  }
+
+  const selectedDisplayName = selectedGroup.name || selectedGroup.id || '?';
+  const heroAvatarUrl = hanaUrl(`/api/channels/${encodeURIComponent(selectedGroup.id)}/avatar?t=${_avatarTs}`);
+
+  return (
+    <div className="welcome channel-welcome-home">
+      {!heroAvatarError ? (
+        <img
+          className="welcome-avatar"
+          src={heroAvatarUrl}
+          alt={selectedDisplayName}
+          draggable={false}
+          onError={() => setHeroAvatarError(true)}
+        />
+      ) : (
+        <div className="channel-welcome-hero-avatar-fallback">
+          {selectedDisplayName.charAt(0).toUpperCase()}
+        </div>
+      )}
+      <p className="welcome-text channel-welcome-home-text">{t('channel.welcomeTitle')}</p>
+      <div className="welcome-agent-selector channel-welcome-chip-list">
+        {groups.map((ch) => (
+          <ChannelWelcomeChip
+            key={ch.id}
+            channel={ch}
+            isSelected={ch.id === selectedGroup.id}
+            onOpen={handleOpenGroup}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════
 // ChannelMessages — 消息列表
 // ══════════════════════════════════════════════════════
@@ -712,7 +828,11 @@ export function ChannelMessages() {
     return () => ro.disconnect();
   }, [scrollToBottom]);
 
-  if (!currentChannel || messages.length === 0) {
+  if (!currentChannel) {
+    return <ChannelWelcomeGroups />;
+  }
+
+  if (messages.length === 0) {
     return <div className="channel-welcome">{t('channel.noMessages')}</div>;
   }
 
@@ -785,6 +905,8 @@ export function ChannelMessages() {
 
 export function ChannelMembers() {
   const currentChannel = useStore((s) => s.currentChannel);
+  const previewChannelId = useStore((s) => s.channelWelcomeSelectedId);
+  const previewMembers = useStore((s) => s.channelPreviewMembers);
   const channelMembers = useStore((s) => s.channelMembers);
   const channelAgentActivity = useStore((s) => s.channelAgentActivity);
   const isDM = useStore((s) => s.channelIsDM);
@@ -793,9 +915,10 @@ export function ChannelMembers() {
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
 
-  if (!currentChannel) return null;
+  const effectiveChannelId = currentChannel || previewChannelId;
+  if (!effectiveChannelId) return null;
 
-  if (isDM) {
+  if (currentChannel && isDM) {
     // DM: show peer and self info cards
     const peerId = channelMembers[0] || '';
     const peerInfo = resolveChannelMember(peerId, userName, userAvatarUrl, agents, currentAgentId);
@@ -814,7 +937,7 @@ export function ChannelMembers() {
             )}
             <div className="channel-member-name">{info.displayName}</div>
             {!info.isUser && (
-              <span className={`channel-member-status-dot${channelAgentActivity?.[currentChannel]?.[info.id] ? ' active' : ''}`} />
+              <span className={`channel-member-status-dot${channelAgentActivity?.[effectiveChannelId]?.[info.id] ? ' active' : ''}`} />
             )}
           </div>
         ))}
@@ -823,7 +946,8 @@ export function ChannelMembers() {
   }
 
   // Group channel: show all members (user + agents)
-  const displayMembers = [userName || 'user', ...channelMembers];
+  const groupMembers = currentChannel ? channelMembers : previewMembers;
+  const displayMembers = [userName || 'user', ...groupMembers];
   return (
     <>
       {displayMembers.map((m) => {
@@ -838,8 +962,8 @@ export function ChannelMembers() {
               </div>
             )}
             <div className="channel-member-name">{info.displayName}</div>
-            {!info.isUser && (
-              <span className={`channel-member-status-dot${channelAgentActivity?.[currentChannel]?.[info.id] ? ' active' : ''}`} />
+            {currentChannel && !info.isUser && (
+              <span className={`channel-member-status-dot${channelAgentActivity?.[effectiveChannelId]?.[info.id] ? ' active' : ''}`} />
             )}
           </div>
         );

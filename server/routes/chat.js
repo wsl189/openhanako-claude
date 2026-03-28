@@ -318,11 +318,13 @@ export default async function chatRoute(app, { engine, hub }) {
       emitStreamEvent(sessionPath, ss, { type: "tool_start", name: event.toolName || "", args });
     } else if (event.type === "tool_execution_end") {
       if (!ss) return;
+      const details = event.result?.details;
+      const hasDetailsError = typeof details?.error === "string" && details.error.trim().length > 0;
       emitStreamEvent(sessionPath, ss, {
         type: "tool_end",
         name: event.toolName || "",
-        success: !event.isError,
-        details: event.result?.details,
+        success: !event.isError && !hasDetailsError,
+        details,
       });
 
       if (event.toolName === "present_files") {

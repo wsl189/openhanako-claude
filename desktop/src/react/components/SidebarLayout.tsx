@@ -18,7 +18,7 @@ function getSidebarWidth(): number {
   return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 240;
 }
 function getJianWidth(): number {
-  return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--jian-sidebar-width')) || 260;
+  return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--jian-sidebar-width')) || 240;
 }
 function getPreviewWidth(): number {
   return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--preview-panel-width')) || 580;
@@ -147,4 +147,3 @@ export function SidebarLayout() {
   // 不渲染任何 DOM，只提供行为
   return null;
 }
-

@@ -4,6 +4,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 export interface ChannelSlice {
   channels: Channel[];
   currentChannel: string | null;
+  channelWelcomeSelectedId: string | null;
   channelMessages: ChannelMessage[];
   channelMembers: string[];
   channelAgentActivity: Record<string, Record<string, boolean>>;
@@ -12,13 +13,18 @@ export interface ChannelSlice {
   channelHeaderMembersText: string;
   channelInfoName: string;
   channelAnnouncement: string;
+  channelPreviewInfoName: string;
+  channelPreviewMembers: string[];
+  channelPreviewAnnouncement: string;
   channelIsDM: boolean;
   setChannels: (channels: Channel[]) => void;
   setCurrentChannel: (channel: string | null) => void;
+  setChannelWelcomeSelectedId: (channelId: string | null) => void;
   setChannelMessages: (messages: ChannelMessage[]) => void;
   setChannelTotalUnread: (count: number) => void;
   setChannelAnnouncement: (announcement: string) => void;
   loadChannels: () => Promise<void>;
+  loadChannelPreview: (channelId: string) => Promise<void>;
   openChannel: (channelId: string, isDM?: boolean) => Promise<void>;
   saveChannelAnnouncement: (announcement: string) => Promise<boolean>;
   sendChannelMessage: (text: string) => Promise<void>;
@@ -37,6 +43,7 @@ export const createChannelSlice = (
 ): ChannelSlice => ({
   channels: [],
   currentChannel: null,
+  channelWelcomeSelectedId: null,
   channelMessages: [],
   channelMembers: [],
   channelAgentActivity: {},
@@ -45,9 +52,13 @@ export const createChannelSlice = (
   channelHeaderMembersText: '',
   channelInfoName: '',
   channelAnnouncement: '',
+  channelPreviewInfoName: '',
+  channelPreviewMembers: [],
+  channelPreviewAnnouncement: '',
   channelIsDM: false,
   setChannels: (channels) => set({ channels }),
   setCurrentChannel: (channel) => set({ currentChannel: channel }),
+  setChannelWelcomeSelectedId: (channelId) => set({ channelWelcomeSelectedId: channelId }),
   setChannelMessages: (messages) => set({ channelMessages: messages }),
   setChannelTotalUnread: (count) => set({ channelTotalUnread: count }),
   setChannelAnnouncement: (announcement) => set({ channelAnnouncement: announcement }),
@@ -85,9 +96,41 @@ export const createChannelSlice = (
 
       const allChannels = [...channels, ...dms];
       const totalUnread = allChannels.reduce((sum, ch) => sum + (ch.newMessageCount || 0), 0);
-      set({ channels: allChannels, channelTotalUnread: totalUnread });
+      const groupIds = allChannels.filter((ch) => !ch.isDM).map((ch) => ch.id);
+      const nextWelcomeSelectedId = groupIds.includes(s.channelWelcomeSelectedId || '')
+        ? s.channelWelcomeSelectedId
+        : (groupIds[0] || null);
+      set({
+        channels: allChannels,
+        channelTotalUnread: totalUnread,
+        channelWelcomeSelectedId: nextWelcomeSelectedId,
+      });
     } catch (err) {
       console.error('[channels] load failed:', err);
+    }
+  },
+
+  loadChannelPreview: async (channelId: string) => {
+    const s = get!();
+    if (!channelId) return;
+    const ch = s.channels.find((c: Channel) => c.id === channelId);
+    if (!ch || ch.isDM) return;
+
+    try {
+      const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      // 防止异步请求回写过期选择
+      if (get!().channelWelcomeSelectedId !== channelId) return;
+
+      set({
+        channelPreviewInfoName: data.name || channelId,
+        channelPreviewMembers: Array.isArray(data.members) ? data.members : [],
+        channelPreviewAnnouncement: String(data.announcement || ''),
+      });
+    } catch (err) {
+      console.error('[channels] preview load failed:', err);
     }
   },
 
@@ -97,7 +140,10 @@ export const createChannelSlice = (
     const isThisDM = isDM ?? ch?.isDM ?? false;
     const t = (window as any).t;
 
-    set({ currentChannel: channelId });
+    set({
+      currentChannel: channelId,
+      ...(isThisDM ? {} : { channelWelcomeSelectedId: channelId }),
+    });
 
     try {
       if (isThisDM) {
@@ -128,6 +174,9 @@ export const createChannelSlice = (
           channelIsDM: false,
           channelInfoName: data.name || channelId,
           channelAnnouncement: String(data.announcement || ''),
+          channelPreviewInfoName: data.name || channelId,
+          channelPreviewMembers: members,
+          channelPreviewAnnouncement: String(data.announcement || ''),
         });
 
         // Mark as read

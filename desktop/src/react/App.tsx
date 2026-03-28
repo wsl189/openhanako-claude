@@ -562,7 +562,7 @@ function App() {
           </div>
 
           <div className="channel-view" id="channelView">
-            <div className="channel-header" id="channelHeader">
+            <div className={`channel-header${currentChannel ? '' : ' hidden'}`} id="channelHeader">
               <div className="channel-header-info">
                 <span className="channel-header-name" id="channelHeaderName"></span>
                 <span className="channel-header-members" id="channelHeaderMembers"></span>
@@ -596,29 +596,31 @@ function App() {
             </div>
 
             <div className="jian-channel-content hidden" id="jianChannelContent">
-              <div className="jian-card">
+              {currentChannel && (
+                <div className="jian-card">
                 <div className="channel-info-section">
                   <div className="channel-info-label-row">
                     <div className="channel-info-label">{t('channel.info')}</div>
-                    {!channelIsDM && currentChannel && (
+                    {!channelIsDM && (
                       <button
-                        className="channel-announcement-open-btn"
-                        type="button"
-                        onClick={openAnnouncementModal}
-                      >
-                        {t('channel.announcementBtn')}
-                      </button>
-                    )}
+                          className="channel-announcement-open-btn"
+                          type="button"
+                          onClick={openAnnouncementModal}
+                        >
+                          {t('channel.announcementBtn')}
+                        </button>
+                      )}
+                    </div>
+                    <div className="channel-info-name" id="channelInfoName"></div>
                   </div>
-                  <div className="channel-info-name" id="channelInfoName"></div>
-                </div>
-                <div className="channel-info-section">
-                  <div className="channel-info-label">{t('channel.members')}</div>
-                  <div className="channel-members-list" id="channelMembersList">
-                    <ChannelMembers />
+                  <div className="channel-info-section">
+                    <div className="channel-info-label">{t('channel.members')}</div>
+                    <div className="channel-members-list" id="channelMembersList">
+                      <ChannelMembers />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </aside>

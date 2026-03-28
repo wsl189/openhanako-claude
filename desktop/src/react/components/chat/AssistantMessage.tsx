@@ -133,8 +133,10 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const chainHasAny = chainGroup
     ? (chainGroup.totalThinking + chainGroup.totalTools > 0)
     : chainStats.hasChain;
+  const chainIsSingleThinkingOnly = chainThinkingCount === 1 && chainToolCount === 0;
 
   const chainCanCollapse = chainHasAny &&
+    !chainIsSingleThinkingOnly &&
     (chainGroup
       ? (chainGroup.allCompleted && chainGroup.allSuccessful)
       : (chainStats.allCompleted && chainStats.allSuccessful)) &&

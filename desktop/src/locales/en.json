@@ -7,6 +7,8 @@
     "dmHint": "Primary Agent Only",
     "groupLabel": "Channels",
     "noMessages": "No messages yet",
+    "welcomeTitle": "Choose a channel to start",
+    "welcomeHint": "Click any group to open the channel chat",
     "nameExists": "This channel name already exists",
     "membersCount": " members",
     "info": "Channel info",
@@ -50,7 +52,8 @@
     "announcementPlaceholder": "Enter the channel announcement. It auto-saves when this dialog closes.",
     "announcementHint": "After saving, it is injected into every agent round prompt and must be followed.",
     "announcementClose": "Close and save announcement",
-    "announcementSaveFailed": "Failed to save announcement"
+    "announcementSaveFailed": "Failed to save announcement",
+    "announcementEmpty": "No announcement yet"
   },
   "sidebar": {
     "title": "Chats",

@@ -2,18 +2,13 @@
  * useSidebarResize — 侧边栏宽度拖拽调整
  *
  * 从 sidebar-shim.ts 的 initSidebarResize 迁移。
- * 在 useEffect 中绑定 mousedown 事件，管理三个 resize handle。
+ * 在 useEffect 中绑定 pointer 事件，管理三个 resize handle。
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 
 export function useSidebarResize(): void {
-  const initialized = useRef(false);
-
   useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
-
     const root = document.documentElement;
     const sidebarEl = document.getElementById('sidebar');
     const jianSidebarEl = document.getElementById('jianSidebar');
@@ -22,7 +17,7 @@ export function useSidebarResize(): void {
     const previewPanel = document.getElementById('previewPanel');
 
     const LEFT_MIN = 180, LEFT_MAX = 400;
-    const RIGHT_MIN = 200, RIGHT_MAX = 600;
+    const RIGHT_MIN = 180, RIGHT_MAX = 600;
     const PREVIEW_MIN = 320, PREVIEW_MAX = 800;
 
     const leftInner = sidebarEl?.querySelector('.sidebar-inner') as HTMLElement | null;
@@ -72,47 +67,94 @@ export function useSidebarResize(): void {
       isRight: boolean,
     ): void {
       if (!handle) return;
+      let dragging = false;
+      let activePointerId: number | null = null;
+      let startX = 0;
+      let startW = 0;
 
-      handle.addEventListener('mousemove', (e: MouseEvent) => {
+      const setHandleY = (clientY: number) => {
         const rect = handle.getBoundingClientRect();
-        handle.style.setProperty('--handle-y', (e.clientY - rect.top) + 'px');
-      });
-      handle.addEventListener('mouseleave', () => {
-        handle.style.setProperty('--handle-y', '-999px');
-      });
+        handle.style.setProperty('--handle-y', `${clientY - rect.top}px`);
+      };
 
-      handle.addEventListener('mousedown', (e: MouseEvent) => {
+      const clearHandleY = () => {
+        handle.style.setProperty('--handle-y', '-999px');
+      };
+
+      const onHandlePointerMove = (e: PointerEvent) => setHandleY(e.clientY);
+      const onHandlePointerLeave = () => {
+        if (!dragging) clearHandleY();
+      };
+
+      const onHandlePointerDown = (e: PointerEvent) => {
+        if (e.button !== 0) return;
         e.preventDefault();
         const sidebarTarget = getSidebar();
         if (!sidebarTarget || sidebarTarget.classList.contains('collapsed')) return;
 
-        const startX = e.clientX;
-        const startW = getWidth();
+        startX = e.clientX;
+        startW = getWidth();
+        activePointerId = e.pointerId;
+        dragging = true;
         handle.classList.add('active');
         document.body.classList.add('resizing');
+        setHandleY(e.clientY);
+        try { handle.setPointerCapture(e.pointerId); } catch {}
+      };
 
-        function onMove(e: MouseEvent): void {
-          const delta = isRight ? startX - e.clientX : e.clientX - startX;
-          const w = Math.max(min, Math.min(max, startW + delta));
-          setWidth(w);
-          const rect = handle!.getBoundingClientRect();
-          handle!.style.setProperty('--handle-y', (e.clientY - rect.top) + 'px');
+      const stopDrag = (pointerId?: number): void => {
+        if (!dragging) return;
+        if (pointerId !== undefined && activePointerId !== null && pointerId !== activePointerId) return;
+
+        const pid = activePointerId;
+        dragging = false;
+        activePointerId = null;
+        handle.classList.remove('active');
+        document.body.classList.remove('resizing');
+        clearHandleY();
+        localStorage.setItem(storageKey, String(getWidth()));
+        if (pid !== null) {
+          try { handle.releasePointerCapture(pid); } catch {}
         }
+      };
 
-        function onUp(): void {
-          handle!.classList.remove('active');
-          document.body.classList.remove('resizing');
-          handle!.style.setProperty('--handle-y', '-999px');
-          const w = getWidth();
-          localStorage.setItem(storageKey, String(w));
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-        }
+      const onWindowPointerMove = (e: PointerEvent): void => {
+        if (!dragging) return;
+        if (activePointerId !== null && e.pointerId !== activePointerId) return;
 
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
+        const delta = isRight ? startX - e.clientX : e.clientX - startX;
+        const w = Math.max(min, Math.min(max, startW + delta));
+        setWidth(w);
+        setHandleY(e.clientY);
+      };
+
+      const onWindowPointerUp = (e: PointerEvent): void => stopDrag(e.pointerId);
+      const onWindowPointerCancel = (e: PointerEvent): void => stopDrag(e.pointerId);
+      const onWindowBlur = (): void => stopDrag();
+      const onHandleLostPointerCapture = (): void => stopDrag();
+
+      handle.addEventListener('pointermove', onHandlePointerMove);
+      handle.addEventListener('pointerleave', onHandlePointerLeave);
+      handle.addEventListener('pointerdown', onHandlePointerDown);
+      handle.addEventListener('lostpointercapture', onHandleLostPointerCapture);
+      window.addEventListener('pointermove', onWindowPointerMove);
+      window.addEventListener('pointerup', onWindowPointerUp);
+      window.addEventListener('pointercancel', onWindowPointerCancel);
+      window.addEventListener('blur', onWindowBlur);
+
+      cleanups.push(() => {
+        stopDrag();
+        handle.removeEventListener('pointermove', onHandlePointerMove);
+        handle.removeEventListener('pointerleave', onHandlePointerLeave);
+        handle.removeEventListener('pointerdown', onHandlePointerDown);
+        handle.removeEventListener('lostpointercapture', onHandleLostPointerCapture);
+        window.removeEventListener('pointermove', onWindowPointerMove);
+        window.removeEventListener('pointerup', onWindowPointerUp);
+        window.removeEventListener('pointercancel', onWindowPointerCancel);
+        window.removeEventListener('blur', onWindowBlur);
       });
     }
+    const cleanups: Array<() => void> = [];
 
     setupHandle(
       leftHandle,
@@ -125,7 +167,7 @@ export function useSidebarResize(): void {
     setupHandle(
       rightHandle,
       () => jianSidebarEl,
-      () => jianSidebarEl?.offsetWidth || 260,
+      () => jianSidebarEl?.offsetWidth || 240,
       (w) => applyJianWidth(w),
       RIGHT_MIN, RIGHT_MAX, 'hana-jian-width', true,
     );
@@ -138,5 +180,9 @@ export function useSidebarResize(): void {
       (w) => applyPreviewWidth(w),
       PREVIEW_MIN, PREVIEW_MAX, 'hana-preview-width', true,
     );
+
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+    };
   }, []);
 }
