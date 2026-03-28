@@ -8,6 +8,7 @@
     --space-md: 1rem;
     --space-lg: 1.5rem;
     --space-xl: 2.5rem;
+    --conversation-side-gap: calc(var(--space-lg) + 4.5em); /* 额外增加约一个汉字距离 */
 
     /* 圆角 */
     --radius-sm: 6px;
@@ -1417,7 +1418,7 @@ html[data-platform="linux"] .tb-toggle-right {
 .chat-area {
     flex: 1;
     overflow-y: auto;
-    padding: 56px var(--space-lg) 10rem;
+    padding: 56px var(--conversation-side-gap) 10rem;
     scroll-behavior: smooth;
 }
 
@@ -4562,7 +4563,7 @@ html[data-platform="darwin"] .sv-topbar-title {
     bottom: 0;
     left: 0;
     right: 0;
-    padding: var(--space-sm) var(--space-lg) var(--space-lg);
+    padding: var(--space-sm) var(--conversation-side-gap) var(--space-lg);
     background: transparent;
     z-index: 5;
 }
@@ -12217,10 +12218,12 @@ a.about-link:hover {
 
 .channel-item-meta {
     display: flex;
-    flex-direction: column;
+    flex-direction: column-reverse;
     align-items: flex-end;
+    justify-content: flex-start;
     gap: 4px;
     flex-shrink: 0;
+    align-self: stretch;
 }
 
 .channel-item-time {
@@ -12266,7 +12269,7 @@ a.about-link:hover {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px var(--space-lg);
+    padding: 12px var(--conversation-side-gap);
     padding-top: 56px;
     border-bottom: 1px solid var(--overlay-light);
     flex-shrink: 0;
@@ -12298,7 +12301,7 @@ a.about-link:hover {
     flex: 1;
     min-height: 0;       /* 关键：允许 flex 项被约束，overflow-y 才能生效 */
     overflow-y: auto;
-    padding: var(--space-sm) var(--space-lg);
+    padding: var(--space-sm) var(--conversation-side-gap);
     scroll-behavior: smooth;
 }
 
@@ -12445,7 +12448,7 @@ a.about-link:hover {
 /* ── 频道输入区 ── */
 .channel-input-area {
     flex-shrink: 0;
-    padding: var(--space-sm) var(--space-lg) var(--space-lg);
+    padding: var(--space-sm) var(--conversation-side-gap) var(--space-lg);
 }
 
 .channel-input-area.hidden {
@@ -12581,7 +12584,7 @@ a.about-link:hover {
 
 /* ── 只读 DM 提示 ── */
 .channel-readonly-notice {
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-md) var(--conversation-side-gap);
     text-align: center;
     font-size: 0.78rem;
     color: var(--text-muted);
@@ -12880,6 +12883,13 @@ a.about-link:hover {
         padding-right: var(--space-md);
     }
     .input-area {
+        padding-left: var(--space-md);
+        padding-right: var(--space-md);
+    }
+    .channel-header,
+    .channel-messages,
+    .channel-input-area,
+    .channel-readonly-notice {
         padding-left: var(--space-md);
         padding-right: var(--space-md);
     }
@@ -13547,7 +13557,7 @@ body.resizing .preview-panel-inner {
     bottom: 0;
     overflow-y: auto;
     /* 上：title bar 52px + 呼吸空间 24px = 76px；下：输入框空间由 footer 撑 */
-    padding: 76px var(--space-lg) 0;
+    padding: 76px var(--conversation-side-gap) 0;
 }
 
 /* 消息列表居中限宽 */
