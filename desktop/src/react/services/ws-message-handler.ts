@@ -203,6 +203,16 @@ export function handleServerMessage(msg: any): void {
       loadDeskFiles();
       break;
 
+    case 'cron_changed':
+      (async () => {
+        try {
+          const res = await hanaFetch('/api/desk/cron?all=1');
+          const data = await res.json();
+          useStore.setState({ automationCount: (data.jobs || []).length });
+        } catch { /* ignore */ }
+      })();
+      break;
+
     case 'browser_status':
       // 仅让当前会话的 browser 状态影响顶部提示，
       // 避免后台/其他 session 的事件串到当前页面。
