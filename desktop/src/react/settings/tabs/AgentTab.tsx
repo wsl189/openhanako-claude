@@ -521,6 +521,7 @@ export function AgentTab() {
       const payload = (evt as CustomEvent<any>)?.detail || {};
       const changedAgentId = String(payload.agentId || '').trim();
       if (changedAgentId && settingsAgentId && changedAgentId !== settingsAgentId) return;
+      void loadSettingsConfig();
       void loadArchivedSessionsForAgent(settingsAgentId);
     };
     window.addEventListener('hana-sessions-changed', onSessionsChanged as EventListener);

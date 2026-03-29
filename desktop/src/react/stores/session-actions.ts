@@ -259,6 +259,12 @@ export async function ensureSession(): Promise<boolean> {
       useStore.getState().initSession(data.path, [], false);
     }
 
+    (window as any).platform?.settingsChanged?.('sessions-changed', {
+      kind: 'create',
+      path: data.path || null,
+      agentId: data.agentId || patch.currentAgentId || s.currentAgentId || '',
+    });
+
     useStore.setState(patch);
 
     await loadSessions();

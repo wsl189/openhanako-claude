@@ -15,6 +15,11 @@ import { isToolCallBlock, getToolArgs } from "../../core/llm-utils.js";
  */
 const TOOL_ARG_SUMMARY_KEYS = ["file_path", "path", "command", "pattern", "url", "query", "key", "value", "action", "type", "schedule", "prompt", "label"];
 const SESSION_TITLES_FILE = "session-titles.json";
+const AUTO_WORKSPACE_TRACK_FILE = "auto-workspace-whitelist.json";
+const TRACK_STATE_ACTIVE = "active";
+const TRACK_STATE_ARCHIVED = "archived";
+const BASELINE_NONE = "none";
+const BASELINE_READ_ONLY = "read_only";
 
 /** 从文本中提取并剥离 <think>...</think> 标签 */
 function stripThinkTags(raw) {
@@ -219,7 +224,219 @@ async function resolveRestorePath(preferredPath) {
   return `${base}_restored-${Date.now()}${ext}`;
 }
 
+function normalizeAbsolutePath(rawPath) {
+  const p = String(rawPath || "").trim();
+  if (!p || !path.isAbsolute(p)) return "";
+  return path.resolve(p);
+}
+
+function normalizePathRules(rawRules) {
+  if (!Array.isArray(rawRules)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const rule of rawRules) {
+    const rulePath = normalizeAbsolutePath(rule?.path);
+    const access = String(rule?.access || "").trim();
+    if (!rulePath) continue;
+    if (access !== "read_only" && access !== "read_write") continue;
+    if (seen.has(rulePath)) continue;
+    seen.add(rulePath);
+    out.push({ path: rulePath, access });
+  }
+  return out;
+}
+
+function findPathRuleIndex(pathRules, targetPath) {
+  for (let i = 0; i < pathRules.length; i++) {
+    if (normalizeAbsolutePath(pathRules[i]?.path) === targetPath) return i;
+  }
+  return -1;
+}
+
+function createEmptyWorkspaceTracker() {
+  return {
+    version: 1,
+    sessions: {},
+    managedRules: {},
+  };
+}
+
+function normalizeWorkspaceTracker(raw) {
+  const out = createEmptyWorkspaceTracker();
+  if (!raw || typeof raw !== "object") return out;
+  out.version = 1;
+
+  if (raw.sessions && typeof raw.sessions === "object") {
+    for (const [sessionPath, item] of Object.entries(raw.sessions)) {
+      const normalizedSessionPath = normalizeAbsolutePath(sessionPath);
+      const agentId = String(item?.agentId || "").trim();
+      const cwd = normalizeAbsolutePath(item?.cwd);
+      const state = item?.state === TRACK_STATE_ARCHIVED ? TRACK_STATE_ARCHIVED : TRACK_STATE_ACTIVE;
+      if (!normalizedSessionPath || !agentId || !cwd) continue;
+      out.sessions[normalizedSessionPath] = { agentId, cwd, state };
+    }
+  }
+
+  if (raw.managedRules && typeof raw.managedRules === "object") {
+    for (const [agentIdRaw, cwdMapRaw] of Object.entries(raw.managedRules)) {
+      const agentId = String(agentIdRaw || "").trim();
+      if (!agentId || !cwdMapRaw || typeof cwdMapRaw !== "object") continue;
+      for (const [cwdRaw, rule] of Object.entries(cwdMapRaw)) {
+        const cwd = normalizeAbsolutePath(cwdRaw);
+        const baselineAccess = rule?.baselineAccess === BASELINE_READ_ONLY
+          ? BASELINE_READ_ONLY
+          : BASELINE_NONE;
+        if (!cwd) continue;
+        if (!out.managedRules[agentId]) out.managedRules[agentId] = {};
+        out.managedRules[agentId][cwd] = { baselineAccess };
+      }
+    }
+  }
+
+  return out;
+}
+
+async function readWorkspaceTracker(filePath) {
+  try {
+    const raw = await fs.readFile(filePath, "utf-8");
+    return normalizeWorkspaceTracker(JSON.parse(raw));
+  } catch {
+    return createEmptyWorkspaceTracker();
+  }
+}
+
+async function writeWorkspaceTracker(filePath, tracker) {
+  const normalized = normalizeWorkspaceTracker(tracker);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(normalized, null, 2), "utf-8");
+}
+
+function getManagedRule(tracker, agentId, cwd) {
+  return tracker?.managedRules?.[agentId]?.[cwd] || null;
+}
+
+function setManagedRule(tracker, agentId, cwd, baselineAccess) {
+  if (!tracker.managedRules[agentId]) tracker.managedRules[agentId] = {};
+  tracker.managedRules[agentId][cwd] = {
+    baselineAccess: baselineAccess === BASELINE_READ_ONLY ? BASELINE_READ_ONLY : BASELINE_NONE,
+  };
+}
+
+function deleteManagedRule(tracker, agentId, cwd) {
+  if (!tracker.managedRules?.[agentId]) return;
+  delete tracker.managedRules[agentId][cwd];
+  if (Object.keys(tracker.managedRules[agentId]).length === 0) {
+    delete tracker.managedRules[agentId];
+  }
+}
+
+function getTrackedSession(tracker, sessionPath) {
+  const normalized = normalizeAbsolutePath(sessionPath);
+  if (!normalized) return null;
+  return tracker.sessions?.[normalized] || null;
+}
+
+function setTrackedSession(tracker, sessionPath, data) {
+  const normalizedSessionPath = normalizeAbsolutePath(sessionPath);
+  const agentId = String(data?.agentId || "").trim();
+  const cwd = normalizeAbsolutePath(data?.cwd);
+  const state = data?.state === TRACK_STATE_ARCHIVED ? TRACK_STATE_ARCHIVED : TRACK_STATE_ACTIVE;
+  if (!normalizedSessionPath || !agentId || !cwd) return;
+  tracker.sessions[normalizedSessionPath] = { agentId, cwd, state };
+}
+
+function moveTrackedSession(tracker, fromPath, toPath, { state } = {}) {
+  const from = normalizeAbsolutePath(fromPath);
+  const to = normalizeAbsolutePath(toPath);
+  if (!from || !to) return null;
+  const current = tracker.sessions?.[from];
+  if (!current) return null;
+  delete tracker.sessions[from];
+  tracker.sessions[to] = {
+    ...current,
+    state: state === TRACK_STATE_ARCHIVED ? TRACK_STATE_ARCHIVED : (state === TRACK_STATE_ACTIVE ? TRACK_STATE_ACTIVE : current.state),
+  };
+  return tracker.sessions[to];
+}
+
+function deleteTrackedSession(tracker, sessionPath) {
+  const normalized = normalizeAbsolutePath(sessionPath);
+  if (!normalized) return;
+  delete tracker.sessions[normalized];
+}
+
+function countTrackedSessions(tracker, { agentId, cwd, state } = {}) {
+  let total = 0;
+  for (const item of Object.values(tracker.sessions || {})) {
+    if (agentId && item.agentId !== agentId) continue;
+    if (cwd && item.cwd !== cwd) continue;
+    if (state && item.state !== state) continue;
+    total++;
+  }
+  return total;
+}
+
+async function updateAgentPathRules(engine, agentId, mutate) {
+  const targetAgent = engine.getAgent(agentId);
+  if (!targetAgent) throw new Error(`agent not found: ${agentId}`);
+  const currentRules = normalizePathRules(engine.getAgentPermissionConfig(agentId)?.sandbox?.path_rules);
+  const nextRulesRaw = mutate([...currentRules]);
+  const nextRules = normalizePathRules(nextRulesRaw);
+  const currentStr = JSON.stringify(currentRules);
+  const nextStr = JSON.stringify(nextRules);
+  if (currentStr === nextStr) return { changed: false, rules: currentRules };
+  targetAgent.updateConfig({
+    sandbox: {
+      ...(targetAgent.config?.sandbox || {}),
+      path_rules: nextRules,
+    },
+  });
+  return { changed: true, rules: nextRules };
+}
+
+async function ensurePathRuleAccess(engine, agentId, cwd, access = "read_write") {
+  const normalizedCwd = normalizeAbsolutePath(cwd);
+  if (!normalizedCwd) return;
+  await updateAgentPathRules(engine, agentId, (rules) => {
+    const idx = findPathRuleIndex(rules, normalizedCwd);
+    if (idx >= 0) {
+      rules[idx] = { path: normalizedCwd, access };
+      return rules;
+    }
+    return [...rules, { path: normalizedCwd, access }];
+  });
+}
+
+async function removePathRule(engine, agentId, cwd) {
+  const normalizedCwd = normalizeAbsolutePath(cwd);
+  if (!normalizedCwd) return;
+  await updateAgentPathRules(engine, agentId, (rules) =>
+    rules.filter((rule) => normalizeAbsolutePath(rule.path) !== normalizedCwd),
+  );
+}
+
+async function reconcileManagedWorkspaceRule(engine, tracker, agentId, cwd) {
+  const managed = getManagedRule(tracker, agentId, cwd);
+  if (!managed) return;
+  const activeCount = countTrackedSessions(tracker, { agentId, cwd, state: TRACK_STATE_ACTIVE });
+  if (activeCount > 0) {
+    await ensurePathRuleAccess(engine, agentId, cwd, "read_write");
+    return;
+  }
+  if (managed.baselineAccess === BASELINE_READ_ONLY) {
+    await ensurePathRuleAccess(engine, agentId, cwd, "read_only");
+    return;
+  }
+  await removePathRule(engine, agentId, cwd);
+}
+
+function pruneManagedRuleIfUnused(tracker, agentId, cwd) {
+  const refs = countTrackedSessions(tracker, { agentId, cwd });
+  if (refs === 0) deleteManagedRule(tracker, agentId, cwd);
+}
+
 export default async function sessionsRoute(app, { engine }) {
+  const workspaceTrackerPath = path.join(engine.userDir, AUTO_WORKSPACE_TRACK_FILE);
 
   // 列出所有 agent 的历史 session
   app.get("/api/sessions", async (req, reply) => {
@@ -383,11 +600,35 @@ export default async function sessionsRoute(app, { engine }) {
     try {
       const { cwd, memoryEnabled, agentId } = req.body || {};
       const memFlag = memoryEnabled !== false; // 默认 true
+      const requestedCwd = normalizeAbsolutePath(cwd);
+      const targetAgentId = String(agentId || engine.currentAgentId || "").trim();
+      const defaultWorkspace = normalizeAbsolutePath(engine.getHomeFolder(targetAgentId) || "");
+      const shouldTrackWorkspace = !!requestedCwd && requestedCwd !== defaultWorkspace;
+      let workspaceTracker = null;
+      let pendingManagedBaseline = null;
       console.log("[sessions] 新建 session", {
         hasCwd: !!cwd,
         memoryEnabled: memFlag,
         customAgent: !!agentId,
       });
+
+      if (shouldTrackWorkspace) {
+        workspaceTracker = await readWorkspaceTracker(workspaceTrackerPath);
+        const managed = getManagedRule(workspaceTracker, targetAgentId, requestedCwd);
+        if (managed) {
+          await ensurePathRuleAccess(engine, targetAgentId, requestedCwd, "read_write");
+        } else {
+          const currentRules = normalizePathRules(engine.getAgentPermissionConfig(targetAgentId)?.sandbox?.path_rules);
+          const idx = findPathRuleIndex(currentRules, requestedCwd);
+          if (idx < 0) {
+            await ensurePathRuleAccess(engine, targetAgentId, requestedCwd, "read_write");
+            pendingManagedBaseline = BASELINE_NONE;
+          } else if (currentRules[idx].access === "read_only") {
+            await ensurePathRuleAccess(engine, targetAgentId, requestedCwd, "read_write");
+            pendingManagedBaseline = BASELINE_READ_ONLY;
+          }
+        }
+      }
 
       // 新建前挂起浏览器（保存当前 session 的浏览器状态）
       const bm = BrowserManager.instance();
@@ -408,6 +649,18 @@ export default async function sessionsRoute(app, { engine }) {
         history.unshift(cwd);
         if (history.length > 10) history.length = 10;  // 保留最近 10 条
         await engine.updateConfig({ last_cwd: cwd, cwd_history: history });
+      }
+
+      if (shouldTrackWorkspace && workspaceTracker && engine.currentSessionPath) {
+        if (pendingManagedBaseline) {
+          setManagedRule(workspaceTracker, engine.currentAgentId, requestedCwd, pendingManagedBaseline);
+        }
+        setTrackedSession(workspaceTracker, engine.currentSessionPath, {
+          agentId: engine.currentAgentId || targetAgentId,
+          cwd: requestedCwd,
+          state: TRACK_STATE_ACTIVE,
+        });
+        await writeWorkspaceTracker(workspaceTrackerPath, workspaceTracker);
       }
 
       console.log("[sessions] session 创建完成");
@@ -485,6 +738,8 @@ export default async function sessionsRoute(app, { engine }) {
       const { maxAgeDays = 90 } = req.body || {};
       const cutoff = Date.now() - maxAgeDays * 86400000;
       let deleted = 0;
+      let trackerDirty = false;
+      const workspaceTracker = await readWorkspaceTracker(workspaceTrackerPath);
 
       // 遍历所有 agent 的 sessions/archived/ 目录
       const agentsDir = engine.agentsDir;
@@ -500,10 +755,20 @@ export default async function sessionsRoute(app, { engine }) {
             const stat = await fs.stat(fp);
             if (stat.mtime.getTime() < cutoff) {
               await fs.unlink(fp);
+              const tracked = getTrackedSession(workspaceTracker, fp);
+              if (tracked) {
+                deleteTrackedSession(workspaceTracker, fp);
+                pruneManagedRuleIfUnused(workspaceTracker, tracked.agentId, tracked.cwd);
+                trackerDirty = true;
+              }
               deleted++;
             }
           } catch {}
         }
+      }
+
+      if (trackerDirty) {
+        await writeWorkspaceTracker(workspaceTrackerPath, workspaceTracker);
       }
 
       return { ok: true, deleted, maxAgeDays };
@@ -548,6 +813,17 @@ export default async function sessionsRoute(app, { engine }) {
       await fs.rename(sessionPath, destPath);
       await remapSessionTitle(sessDir, sessionPath, destPath);
 
+      try {
+        const workspaceTracker = await readWorkspaceTracker(workspaceTrackerPath);
+        const moved = moveTrackedSession(workspaceTracker, sessionPath, destPath, { state: TRACK_STATE_ARCHIVED });
+        if (moved) {
+          await reconcileManagedWorkspaceRule(engine, workspaceTracker, moved.agentId, moved.cwd);
+          await writeWorkspaceTracker(workspaceTrackerPath, workspaceTracker);
+        }
+      } catch (trackerErr) {
+        console.warn("[sessions] archive workspace tracker update failed:", trackerErr?.message || trackerErr);
+      }
+
       return { ok: true };
     } catch (err) {
       reply.code(500);
@@ -579,9 +855,24 @@ export default async function sessionsRoute(app, { engine }) {
       const sessionDir = path.dirname(archiveDir);
       const preferredTargetPath = path.join(sessionDir, path.basename(archivedPath));
       const targetPath = await resolveRestorePath(preferredTargetPath);
+      const workspaceTracker = await readWorkspaceTracker(workspaceTrackerPath);
+      const tracked = getTrackedSession(workspaceTracker, archivedPath);
+
+      if (tracked && getManagedRule(workspaceTracker, tracked.agentId, tracked.cwd)) {
+        await ensurePathRuleAccess(engine, tracked.agentId, tracked.cwd, "read_write");
+      }
 
       await fs.rename(archivedPath, targetPath);
       await remapSessionTitle(sessionDir, archivedPath, targetPath);
+
+      if (tracked) {
+        moveTrackedSession(workspaceTracker, archivedPath, targetPath, { state: TRACK_STATE_ACTIVE });
+        try {
+          await writeWorkspaceTracker(workspaceTrackerPath, workspaceTracker);
+        } catch (trackerErr) {
+          console.warn("[sessions] restore workspace tracker update failed:", trackerErr?.message || trackerErr);
+        }
+      }
 
       return { ok: true, path: targetPath };
     } catch (err) {
@@ -615,6 +906,18 @@ export default async function sessionsRoute(app, { engine }) {
       const archiveDir = path.dirname(archivedPath);
       const sessionDir = path.dirname(archiveDir);
       await removeSessionTitle(sessionDir, archivedPath);
+
+      try {
+        const workspaceTracker = await readWorkspaceTracker(workspaceTrackerPath);
+        const tracked = getTrackedSession(workspaceTracker, archivedPath);
+        if (tracked) {
+          deleteTrackedSession(workspaceTracker, archivedPath);
+          pruneManagedRuleIfUnused(workspaceTracker, tracked.agentId, tracked.cwd);
+          await writeWorkspaceTracker(workspaceTrackerPath, workspaceTracker);
+        }
+      } catch (trackerErr) {
+        console.warn("[sessions] delete archived workspace tracker update failed:", trackerErr?.message || trackerErr);
+      }
 
       return { ok: true };
     } catch (err) {
