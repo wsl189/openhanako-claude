@@ -74,6 +74,7 @@ type ChainGroupMeta = {
   totalTools: number;
   allCompleted: boolean;
   allSuccessful: boolean;
+  isSettled: boolean;
 };
 
 function isChainBlock(block: ContentBlock): boolean {
@@ -135,8 +136,15 @@ function getMessageChainStats(msg: ChatMessage): {
   };
 }
 
-function buildChainGroupMeta(path: string, items: ChatListItem[]): Record<number, ChainGroupMeta> {
+function buildChainGroupMeta(path: string, items: ChatListItem[], isStreaming: boolean): Record<number, ChainGroupMeta> {
   const map: Record<number, ChainGroupMeta> = {};
+  let lastAssistantIndex = -1;
+  for (let idx = items.length - 1; idx >= 0; idx--) {
+    if (isAssistantMessageItem(items[idx])) {
+      lastAssistantIndex = idx;
+      break;
+    }
+  }
   let i = 0;
 
   while (i < items.length) {
@@ -174,7 +182,11 @@ function buildChainGroupMeta(path: string, items: ChatListItem[]): Record<number
 
     if (memberIndices.length > 0) {
       const ownerIndex = memberIndices[0];
-      const key = `${path}:${runStart}-${runEnd}:${totalThinking}-${totalTools}:${allCompleted ? 1 : 0}-${allSuccessful ? 1 : 0}`;
+      const ownerMessageId = isAssistantMessageItem(items[ownerIndex])
+        ? items[ownerIndex].data.id
+        : `${runStart}`;
+      const key = `${path}:${ownerMessageId}`;
+      const isSettled = !(isStreaming && runEnd === lastAssistantIndex);
       for (const idx of memberIndices) {
         map[idx] = {
           key,
@@ -184,6 +196,7 @@ function buildChainGroupMeta(path: string, items: ChatListItem[]): Record<number
           totalTools,
           allCompleted,
           allSuccessful,
+          isSettled,
         };
       }
     }
@@ -196,10 +209,15 @@ function buildChainGroupMeta(path: string, items: ChatListItem[]): Record<number
 
 const Panel = memo(function Panel({ path, active }: { path: string; active: boolean }) {
   const items = useStore(s => s.chatSessions[path]?.items || []);
+  const streamingSessions = useStore(s => s.streamingSessions);
+  const isPathStreaming = streamingSessions.includes(path);
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
-  const chainMetaByIndex = useMemo(() => buildChainGroupMeta(path, items), [path, items]);
+  const chainMetaByIndex = useMemo(
+    () => buildChainGroupMeta(path, items, isPathStreaming),
+    [path, items, isPathStreaming],
+  );
   const [chainCollapsedByKey, setChainCollapsedByKey] = useState<Record<string, boolean>>({});
   const chainEligibleByKeyRef = useRef<Record<string, boolean>>({});
 
@@ -215,7 +233,8 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       for (const [key, meta] of unique) {
         // 折叠稳定性：执行链完成（thinking 封口 + tools done）即可折叠，
         // 不再要求“全部成功”，避免失败分支永不自动折叠。
-        const eligible = meta.allCompleted;
+        // 对于仍在流式进行中的尾部 run，延迟显示摘要，避免中途闪烁。
+        const eligible = meta.allCompleted && meta.isSettled;
         const wasEligible = !!chainEligibleByKeyRef.current[key];
         nextEligible[key] = eligible;
 
@@ -227,7 +246,14 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
         }
       }
       chainEligibleByKeyRef.current = nextEligible;
-      return next;
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (prevKeys.length !== nextKeys.length) return next;
+      for (const k of nextKeys) {
+        if (!Object.prototype.hasOwnProperty.call(prev, k)) return next;
+        if (prev[k] !== next[k]) return next;
+      }
+      return prev;
     });
   }, [chainMetaByIndex]);
 
@@ -390,6 +416,7 @@ const ItemView = memo(function ItemView({
         totalTools: chainMeta.totalTools,
         allCompleted: chainMeta.allCompleted,
         allSuccessful: chainMeta.allSuccessful,
+        isSettled: chainMeta.isSettled,
         collapsed: chainCollapsed,
         onToggle: onToggleChain || (() => {}),
       } : undefined}

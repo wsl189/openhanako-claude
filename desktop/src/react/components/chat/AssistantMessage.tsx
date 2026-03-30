@@ -30,6 +30,7 @@ interface Props {
     totalTools: number;
     allCompleted: boolean;
     allSuccessful: boolean;
+    isSettled: boolean;
     collapsed: boolean;
     onToggle: () => void;
   };
@@ -158,7 +159,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const chainCanCollapse = chainHasAny &&
     !chainIsSingleThinkingOnly &&
     (chainGroup
-      ? chainGroup.allCompleted
+      ? (chainGroup.allCompleted && chainGroup.isSettled)
       : chainStats.allCompleted);
 
   const chainAllSuccessful = chainGroup
