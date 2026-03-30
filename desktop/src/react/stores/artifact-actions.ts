@@ -13,7 +13,31 @@ import type { Artifact } from '../types';
 let _artifactCounter = 0;
 let _restoreJianAfterClose = false;
 
-export function openPreview(artifact: Artifact, opts?: { replaceRightSidebar?: boolean }): void {
+function ensurePreviewWidth(preferredWidth?: number): void {
+  if (!preferredWidth || typeof document === "undefined") return;
+  const min = 320, max = 800;
+  const target = Math.max(min, Math.min(max, Math.round(preferredWidth)));
+  const root = document.documentElement;
+  const currentCss = parseInt(getComputedStyle(root).getPropertyValue('--preview-panel-width')) || 0;
+  const saved = Number(localStorage.getItem('hana-preview-width') || 0);
+  const current = Math.max(currentCss, saved);
+  if (current >= target) return;
+
+  const px = `${target}px`;
+  root.style.setProperty('--preview-panel-width', px);
+  const previewPanel = document.getElementById('previewPanel');
+  const previewInner = previewPanel?.querySelector('.preview-panel-inner') as HTMLElement | null;
+  if (previewInner) {
+    previewInner.style.width = px;
+    previewInner.style.minWidth = px;
+  }
+  localStorage.setItem('hana-preview-width', String(target));
+}
+
+export function openPreview(
+  artifact: Artifact,
+  opts?: { replaceRightSidebar?: boolean; preferredWidth?: number },
+): void {
   const s = useStore.getState();
   const replaceRightSidebar = opts?.replaceRightSidebar === true;
   const arts = [...s.artifacts];
@@ -29,6 +53,7 @@ export function openPreview(artifact: Artifact, opts?: { replaceRightSidebar?: b
     _restoreJianAfterClose = false;
   }
   s.setPreviewOpen(true);
+  ensurePreviewWidth(opts?.preferredWidth);
   updateLayout();
 }
 

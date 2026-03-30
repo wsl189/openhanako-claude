@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld("hana", {
   onFileChanged: (cb) => ipcRenderer.on("file-changed", (_, filePath) => cb(filePath)),
   readFileBase64: (path) => ipcRenderer.invoke("read-file-base64", path),
   readDocxHtml: (path) => ipcRenderer.invoke("read-docx-html", path),
+  readDocxPdfBase64: (path) => ipcRenderer.invoke("read-docx-pdf-base64", path),
   readXlsxHtml: (path) => ipcRenderer.invoke("read-xlsx-html", path),
   getFilePath: (file) => webUtils.getPathForFile(file),
   getAvatarPath: (role) => ipcRenderer.invoke("get-avatar-path", role),

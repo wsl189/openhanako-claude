@@ -11,7 +11,7 @@
 const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, dialog, session, shell, nativeTheme, Tray, Menu, nativeImage, systemPreferences, Notification } = require("electron");
 const os = require("os");
 const path = require("path");
-const { fork, execFileSync } = require("child_process");
+const { fork, execFileSync, execFile } = require("child_process");
 const fs = require("fs");
 
 // Windows 通知必须绑定 AppUserModelID，否则常见“任务触发但通知不弹窗”。
@@ -1903,6 +1903,83 @@ ipcMain.handle("read-docx-html", async (_event, filePath) => {
     const mammoth = require("mammoth");
     const result = await mammoth.convertToHtml({ path: filePath });
     return result.value; // HTML string
+  } catch { return null; }
+});
+
+// 读取 docx 文件并通过 LibreOffice 转为 PDF（兼容 MathType / OLE 公式）
+ipcMain.handle("read-docx-pdf-base64", async (_event, filePath) => {
+  if (!filePath || !path.isAbsolute(filePath)) return null;
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return null;
+    if (stat.size > 40 * 1024 * 1024) return null;
+
+    const crypto = require("crypto");
+    const tmpRoot = path.join(os.tmpdir(), "hanako-docx-preview");
+    fs.mkdirSync(tmpRoot, { recursive: true });
+
+    const key = crypto
+      .createHash("sha1")
+      .update(`${filePath}:${stat.mtimeMs}:${stat.size}`)
+      .digest("hex")
+      .slice(0, 16);
+    const outDir = path.join(tmpRoot, key);
+    fs.mkdirSync(outDir, { recursive: true });
+
+    // 命中缓存（同一路径+mtime+size）
+    const cached = fs.readdirSync(outDir).find((n) => n.toLowerCase().endsWith(".pdf"));
+    if (cached) {
+      const pdfPath = path.join(outDir, cached);
+      return fs.readFileSync(pdfPath).toString("base64");
+    }
+
+    const args = [
+      "--headless",
+      "--nologo",
+      "--nodefault",
+      "--nolockcheck",
+      "--norestore",
+      "--convert-to",
+      "pdf",
+      "--outdir",
+      outDir,
+      filePath,
+    ];
+    const candidates = (() => {
+      if (process.platform === "win32") {
+        return ["soffice.exe"];
+      }
+      if (process.platform === "darwin") {
+        return [
+          "/opt/homebrew/bin/soffice",
+          "/usr/local/bin/soffice",
+          "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+          "soffice",
+        ];
+      }
+      return ["/usr/bin/soffice", "/usr/local/bin/soffice", "soffice"];
+    })();
+
+    let converted = false;
+    for (const cmd of candidates) {
+      if (cmd.includes("/") && !fs.existsSync(cmd)) continue;
+      const ok = await new Promise((resolve) => {
+        execFile(cmd, args, { windowsHide: true, timeout: 90_000 }, (err) => resolve(!err));
+      });
+      if (ok) {
+        converted = true;
+        break;
+      }
+    }
+    if (!converted) return null;
+
+    const pdfs = fs.readdirSync(outDir).filter((n) => n.toLowerCase().endsWith(".pdf"));
+    if (pdfs.length === 0) return null;
+
+    const pdfPath = path.join(outDir, pdfs[0]);
+    const pdfStat = fs.statSync(pdfPath);
+    if (!pdfStat.isFile() || pdfStat.size <= 0 || pdfStat.size > 100 * 1024 * 1024) return null;
+    return fs.readFileSync(pdfPath).toString("base64");
   } catch { return null; }
 });
 

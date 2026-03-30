@@ -13,9 +13,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import { hanaUrl } from '../hooks/use-hana-fetch';
-import { renderMarkdown } from '../utils/markdown';
+import { renderMarkdownForPreview } from '../utils/markdown';
 import { parseCSV, injectCopyButtons } from '../utils/format';
 import { fileIconSvg } from '../utils/icons';
+import {
+  enhanceHtmlForPreview,
+  isImageLikeHref,
+  toPreviewAssetUrl,
+} from '../utils/preview-path';
 import { closePreview as closePreviewAction } from '../stores/artifact-actions';
 import { ArtifactEditor } from './ArtifactEditor';
 import type { Artifact } from '../types';
@@ -30,6 +35,119 @@ function isEditable(artifact: Artifact | null): boolean {
 function getEditorMode(artifact: Artifact): 'markdown' | 'code' | 'text' {
   if (artifact.type === 'markdown') return 'markdown';
   return 'code';
+}
+
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const normalized = String(base64 || '').replace(/\s+/g, '');
+  const bin = atob(normalized);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function enhanceMarkdownImages(container: HTMLElement, baseFilePath?: string): void {
+  for (const img of Array.from(container.querySelectorAll('img[src]'))) {
+    const rawSrc = img.getAttribute('src') || '';
+    const previewSrc = toPreviewAssetUrl(rawSrc, baseFilePath);
+    if (previewSrc) img.setAttribute('src', previewSrc);
+    img.classList.add('preview-markdown-image');
+    img.setAttribute('loading', 'lazy');
+  }
+
+  for (const link of Array.from(container.querySelectorAll('a[href]'))) {
+    if (link.querySelector('img')) continue;
+    const href = link.getAttribute('href') || '';
+    if (!isImageLikeHref(href)) continue;
+
+    const previewSrc = toPreviewAssetUrl(href, baseFilePath);
+    if (!previewSrc) continue;
+
+    const holder = document.createElement('div');
+    holder.className = 'preview-markdown-image-link';
+
+    const img = document.createElement('img');
+    img.className = 'preview-markdown-image';
+    img.src = previewSrc;
+    img.alt = (link.textContent || '').trim() || 'image';
+    img.loading = 'lazy';
+    holder.appendChild(img);
+
+    const linkText = (link.textContent || '').trim();
+    if (!linkText || linkText === href.trim()) {
+      link.replaceWith(holder);
+    } else {
+      link.insertAdjacentElement('afterend', holder);
+    }
+  }
+}
+
+async function renderDocxPreview(container: HTMLDivElement, artifact: Artifact): Promise<void> {
+  const content = String(artifact.content || '').trim();
+  if (!content) {
+    container.textContent = '';
+    return;
+  }
+
+  // 兼容优先：先尝试 LibreOffice 转 PDF，解决 MathType / OLE 公式缺失问题。
+  if (artifact.filePath && window.platform?.readDocxPdfBase64) {
+    container.innerHTML = '<div class="preview-docx-loading">Rendering document...</div>';
+    const pdfBase64 = await window.platform.readDocxPdfBase64(artifact.filePath);
+    if (!container.isConnected) return;
+    if (pdfBase64) {
+      container.classList.add('preview-docx-pdf');
+      const iframe = document.createElement('iframe');
+      iframe.className = 'preview-pdf';
+      iframe.src = `data:application/pdf;base64,${pdfBase64}`;
+      container.innerHTML = '';
+      container.appendChild(iframe);
+      return;
+    }
+  }
+
+  // 兼容旧数据：若已是 HTML（mammoth 输出），直接渲染。
+  if (content.startsWith('<')) {
+    container.classList.add('preview-docx-html');
+    container.innerHTML = content;
+    return;
+  }
+
+  container.innerHTML = '<div class="preview-docx-loading">Loading...</div>';
+
+  try {
+    const docx = await import('docx-preview');
+    if (!container.isConnected) return;
+
+    const host = document.createElement('div');
+    host.className = 'preview-docx-host';
+    container.innerHTML = '';
+    container.appendChild(host);
+
+    const arrayBuffer = base64ToArrayBuffer(content);
+    await docx.renderAsync(arrayBuffer, host, undefined, {
+      className: 'docx',
+      inWrapper: true,
+      breakPages: true,
+      renderHeaders: true,
+      renderFooters: true,
+      renderChanges: true,
+      renderComments: true,
+      useBase64URL: true,
+    });
+  } catch {
+    // 动态渲染失败时回退到 mammoth HTML，保证可读性。
+    if (!artifact.filePath) {
+      container.innerHTML = '<div class="preview-docx-loading">Unable to render this document.</div>';
+      return;
+    }
+    const fallback = await window.platform?.readDocxHtml?.(artifact.filePath);
+    if (!container.isConnected) return;
+    if (fallback) {
+      container.classList.add('preview-docx-html');
+      container.innerHTML = fallback;
+    } else {
+      container.innerHTML = '<div class="preview-docx-loading">Unable to render this document.</div>';
+    }
+  }
 }
 
 export function PreviewPanel() {
@@ -80,14 +198,16 @@ export function PreviewPanel() {
       case 'html': {
         const iframe = document.createElement('iframe');
         iframe.sandbox.add('allow-scripts');
-        iframe.srcdoc = artifact.content;
+        iframe.sandbox.add('allow-same-origin');
+        iframe.srcdoc = enhanceHtmlForPreview(artifact.content, artifact.filePath);
         body.appendChild(iframe);
         break;
       }
       case 'markdown': {
         const div = document.createElement('div');
         div.className = 'preview-markdown md-content';
-        div.innerHTML = renderMarkdown(artifact.content);
+        div.innerHTML = renderMarkdownForPreview(artifact.content);
+        enhanceMarkdownImages(div, artifact.filePath);
         injectCopyButtons(div);
         body.appendChild(div);
         break;
@@ -104,9 +224,9 @@ export function PreviewPanel() {
       }
       case 'docx': {
         const div = document.createElement('div');
-        div.className = 'preview-docx md-content';
-        div.innerHTML = artifact.content;
+        div.className = 'preview-docx';
         body.appendChild(div);
+        void renderDocxPreview(div, artifact);
         break;
       }
       case 'xlsx': {

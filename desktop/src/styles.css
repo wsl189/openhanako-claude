@@ -13204,6 +13204,21 @@ a.about-link:hover {
     text-align: center;
 }
 
+.preview-panel-body .preview-markdown .preview-markdown-image,
+.preview-panel-body .preview-markdown img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0.6em 0;
+    border-radius: 8px;
+    border: 1px solid var(--overlay-light);
+    background: #fff;
+}
+
+.preview-panel-body .preview-markdown .preview-markdown-image-link {
+    margin: 0.4em 0 0.8em;
+}
+
 /* 代码预览 */
 .preview-panel-body .preview-code {
     padding: var(--space-md);
@@ -13216,11 +13231,57 @@ a.about-link:hover {
     margin: 0;
 }
 
-/* docx 预览（mammoth 转出的 HTML） */
+/* docx 预览（docx-preview，失败时回退 mammoth HTML） */
 .preview-panel-body .preview-docx {
     padding: var(--space-md) var(--space-lg);
-    line-height: 1.8;
+    line-height: normal;
     overflow-y: auto;
+    background: #f2f3f5;
+}
+
+.preview-panel-body .preview-docx.preview-docx-pdf {
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #fff;
+}
+
+.preview-docx-loading {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+.preview-docx .docx-wrapper {
+    background: transparent !important;
+    padding: 8px !important;
+}
+
+.preview-docx .docx {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    margin: 0 auto 12px !important;
+    line-height: normal !important;
+}
+
+.preview-docx .docx img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* mammoth 回退 HTML：尽量贴近 Word 阅读观感 */
+.preview-docx.preview-docx-html {
+    background: #fff;
+    color: #222;
+    font-family: "Times New Roman", "Songti SC", "SimSun", serif;
+    line-height: 1.45;
+}
+
+.preview-docx.preview-docx-html p {
+    margin: 0.28em 0;
+}
+
+.preview-docx.preview-docx-html table {
+    border-collapse: collapse;
+    width: 100%;
 }
 
 .preview-docx table {

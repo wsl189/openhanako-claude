@@ -115,6 +115,7 @@ export interface PlatformApi {
   onFileChanged(callback: (filePath: string) => void): void;
   readFileBase64(path: string): Promise<string | null>;
   readDocxHtml(path: string): Promise<string | null>;
+  readDocxPdfBase64?(path: string): Promise<string | null>;
   readXlsxHtml(path: string): Promise<string | null>;
   openEditorWindow(data: { filePath: string; title: string; type: string; language?: string | null }): void;
   onEditorDockFile?(callback: (data: { filePath: string; title: string; type: string; language?: string | null }) => void): void;

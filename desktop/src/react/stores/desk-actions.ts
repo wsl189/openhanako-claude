@@ -46,6 +46,12 @@ export async function loadDeskFiles(subdir?: string, overrideDir?: string, sessi
     const qs = params.toString() ? `?${params}` : '';
     const res = await hanaFetch(`/api/desk/files${qs}`);
     const data = await res.json();
+    if (data?.error) {
+      const msg = String(data.error || 'unknown error');
+      console.error('[jian-desk] load error:', msg);
+      useStore.getState().addToast(`Desk load failed: ${msg}`, 'error', 4000);
+      return;
+    }
     const st = useStore.getState();
     st.setDeskFiles(data.files || []);
     st.setDeskBasePath(typeof data.basePath === 'string' ? data.basePath : '');

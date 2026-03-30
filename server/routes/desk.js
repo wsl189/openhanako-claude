@@ -41,11 +41,22 @@ function isApprovedDir(dir, engine) {
   ].filter(Boolean);
   const resolved = realPath(dir);
   if (!resolved) return false;
-  return approved.some(root => {
+  const inApprovedRoots = approved.some(root => {
     const r = realPath(root);
     if (!r) return false;
     return resolved === r || resolved.startsWith(r + path.sep);
   });
+  if (inApprovedRoots) return true;
+
+  // 兼容欢迎页“打开文件夹”：允许用户显式选择的本地目录，
+  // 但仍屏蔽敏感目录（.ssh/.gnupg/.aws/.kube 以及 hanakoHome）。
+  try {
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  return !isSensitivePath(resolved, engine.hanakoHome);
 }
 
 /** 敏感 dot 目录（不允许 upload 从这些目录复制文件） */

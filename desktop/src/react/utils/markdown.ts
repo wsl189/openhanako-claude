@@ -11,6 +11,7 @@ import 'katex/dist/katex.min.css';
 type MarkdownIt = ReturnType<typeof markdownit>;
 
 let _md: MarkdownIt | null = null;
+let _mdPreview: MarkdownIt | null = null;
 
 const CJK_CHAR_CLASS = '\u3400-\u9FFF\uF900-\uFAFF';
 const HAIR_SPACE = '\u200A';
@@ -158,6 +159,43 @@ export function getMd(): MarkdownIt {
   return _md;
 }
 
+/** 预览用 markdown 实例：允许内联 HTML（用于本地文件预览） */
+function getMdPreview(): MarkdownIt {
+  if (_mdPreview) return _mdPreview;
+  _mdPreview = markdownit({
+    html: true,
+    breaks: true,
+    linkify: true,
+    typographer: true,
+  });
+  _mdPreview.use(mk);
+  return _mdPreview;
+}
+
+function sanitizePreviewHtml(html: string): string {
+  if (!html || typeof DOMParser === 'undefined') return html;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const blockedTags = ['script', 'iframe', 'object', 'embed', 'meta[http-equiv="refresh"]'];
+  for (const selector of blockedTags) {
+    for (const node of Array.from(doc.querySelectorAll(selector))) node.remove();
+  }
+
+  for (const el of Array.from(doc.querySelectorAll('*'))) {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      const val = String(attr.value || '').trim().toLowerCase();
+      if (name.startsWith('on')) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      if ((name === 'href' || name === 'src') && /^javascript:/.test(val)) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  return doc.body?.innerHTML || html;
+}
+
 const _cache = new Map<string, MarkdownIt>();
 
 /** 获取自定义选项的 md 实例（缓存复用） */
@@ -176,4 +214,11 @@ export function renderMarkdown(src: string): string {
   const normalized = normalizeMarkdownForCjkEmphasis(normalizedMath);
   const html = getMd().render(normalized);
   return html.replace(CJK_EMPHASIS_SPACER_RE, '$1');
+}
+
+export function renderMarkdownForPreview(src: string): string {
+  const normalizedMath = normalizeMarkdownMathBlocks(src);
+  const normalized = normalizeMarkdownForCjkEmphasis(normalizedMath);
+  const html = getMdPreview().render(normalized);
+  return sanitizePreviewHtml(html).replace(CJK_EMPHASIS_SPACER_RE, '$1');
 }
