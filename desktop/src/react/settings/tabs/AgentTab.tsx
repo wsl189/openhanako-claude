@@ -3,7 +3,6 @@ import { useSettingsStore } from '../store';
 import { hanaFetch, hanaUrl, yuanFallbackAvatar } from '../api';
 import { t, autoSaveConfig, savePins } from '../helpers';
 import { SelectWidget } from '../widgets/SelectWidget';
-import { Toggle } from '../widgets/Toggle';
 import { browseAgent, loadSettingsConfig, loadAgents } from '../actions';
 import { formatSessionDate } from '../../utils/format';
 
@@ -93,6 +92,7 @@ interface ArchivedSession {
   cwd: string | null;
   agentId: string;
 }
+type SandboxMode = 'standard' | 'balanced' | 'full-access';
 
 function parseExperience(raw: string): ExpCategory[] {
   if (!raw?.trim()) return [];
@@ -153,7 +153,7 @@ export function AgentTab() {
   const [identity, setIdentity] = useState('');
   const [ishiki, setIshiki] = useState('');
   const [agentWorkspace, setAgentWorkspace] = useState('');
-  const [sandboxMode, setSandboxMode] = useState<'standard' | 'full-access'>('standard');
+  const [sandboxMode, setSandboxMode] = useState<SandboxMode>('standard');
   const [sandboxPathRules, setSandboxPathRules] = useState<Array<{ path: string; access: 'read_only' | 'read_write' }>>([]);
   const [sandboxPathInput, setSandboxPathInput] = useState('');
   const [sandboxPathAccess, setSandboxPathAccess] = useState<'read_only' | 'read_write'>('read_only');
@@ -202,7 +202,9 @@ export function AgentTab() {
       setIdentity(settingsConfig._identity || '');
       setIshiki(settingsConfig._ishiki || '');
       setAgentWorkspace(settingsConfig.desk?.home_folder || '');
-      const mode = settingsConfig.sandbox?.mode === 'full-access' ? 'full-access' : 'standard';
+      const mode: SandboxMode = settingsConfig.sandbox?.mode === 'full-access'
+        ? 'full-access'
+        : (settingsConfig.sandbox?.mode === 'balanced' ? 'balanced' : 'standard');
       setSandboxMode(mode);
       const rules = Array.isArray(settingsConfig.sandbox?.path_rules)
         ? settingsConfig.sandbox.path_rules
@@ -311,7 +313,7 @@ export function AgentTab() {
     }
   };
 
-  const saveSandbox = async (nextMode: 'standard' | 'full-access', nextRules: Array<{ path: string; access: 'read_only' | 'read_write' }>) => {
+  const saveSandbox = async (nextMode: SandboxMode, nextRules: Array<{ path: string; access: 'read_only' | 'read_write' }>) => {
     await autoSaveConfig({
       sandbox: {
         mode: nextMode,
@@ -352,7 +354,7 @@ export function AgentTab() {
     return merged;
   };
 
-  const setSandboxModeAndSave = async (nextMode: 'standard' | 'full-access') => {
+  const setSandboxModeAndSave = async (nextMode: SandboxMode) => {
     let rulesToSave = sandboxPathRulesRef.current;
     if (sandboxConfigOpen) {
       const finalized = finalizeSandboxPathRules(false);
@@ -791,12 +793,19 @@ export function AgentTab() {
               <h3 className="settings-subsection-title">{t('settings.agent.sandboxTitle')}</h3>
               <span className="settings-subsection-hint">{t('settings.agent.sandboxHint')}</span>
             </div>
-            <Toggle
-              on={sandboxMode === 'standard'}
-              onChange={(on) => setSandboxModeAndSave(on ? 'standard' : 'full-access')}
-            />
+            <div className="agent-sandbox-mode-select">
+              <SelectWidget
+                options={[
+                  { value: 'standard', label: t('settings.agent.sandboxStrict') },
+                  { value: 'balanced', label: t('settings.agent.sandboxBalanced') },
+                  { value: 'full-access', label: t('settings.agent.sandboxRelaxed') },
+                ]}
+                value={sandboxMode}
+                onChange={(v) => setSandboxModeAndSave(v as SandboxMode)}
+              />
+            </div>
           </div>
-          {sandboxMode === 'standard' && (
+          {sandboxMode !== 'full-access' && (
             <>
               <button className="agent-sandbox-add-card" onClick={openSandboxConfig}>
                 {t('settings.agent.pathQuickAdd')}

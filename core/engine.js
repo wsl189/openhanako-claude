@@ -576,7 +576,7 @@ export class HanaEngine {
     const catalog = this.getToolCatalog(agentId);
     const legacyMode = this._legacySandboxMode();
     const configuredMode = ag?.config?.sandbox?.mode;
-    const mode = configuredMode === "full-access" || configuredMode === "standard"
+    const mode = configuredMode === "full-access" || configuredMode === "standard" || configuredMode === "balanced"
       ? configuredMode
       : legacyMode;
     const pathRules = this._normalizePathRules(ag?.config?.sandbox?.path_rules);

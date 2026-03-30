@@ -8293,6 +8293,15 @@ body.resizing .jian-sidebar-inner {
     align-items: center;
 }
 
+.agent-sandbox-mode-select {
+    width: 6.6em; /* 约五个汉字 + 下拉箭头/内边距 */
+    flex: 0 0 6.6em;
+}
+
+.agent-sandbox-mode-select .sdw {
+    max-width: 100%;
+}
+
 .agent-path-access-select {
     width: 100%;
 }

@@ -79,8 +79,8 @@ function normalizeSandboxPatch(rawSandbox) {
   const next = {};
   if (rawSandbox.mode !== undefined) {
     const mode = String(rawSandbox.mode || "").trim();
-    if (mode !== "standard" && mode !== "full-access") {
-      throw new Error("sandbox.mode must be \"standard\" or \"full-access\"");
+    if (mode !== "standard" && mode !== "balanced" && mode !== "full-access") {
+      throw new Error("sandbox.mode must be \"standard\" or \"balanced\" or \"full-access\"");
     }
     next.mode = mode;
   }

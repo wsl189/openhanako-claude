@@ -59,7 +59,7 @@ skills:
 
 # 沙盒（per-agent）
 sandbox:
-  mode: standard                     # standard / full-access
+  mode: balanced                     # standard(严格) / balanced(平衡) / full-access(宽松)
   path_rules: []                     # 额外路径白名单（绝对路径），每项: { path, access: read_only|read_write }
 
 # 工具权限（per-agent）
