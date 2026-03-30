@@ -780,6 +780,6 @@ export class HanaEngine {
     "recall_experience", "record_experience",
     "web_fetch",
     "todo", "cron", "notify",
-    "present_files", "message_agent",
+    "present_files", "message_agent", "channel",
   ];
 }

@@ -172,9 +172,14 @@ export class Scheduler {
     const ac = new AbortController();
     this._executingJobs.set(job.id, ac);
     try {
+      const engine = this._engine;
       const isZh = getLocale().startsWith("zh");
       const isReminderJob = this._isReminderJob(job);
       const notifyTarget = this._normalizeNotifyTarget(job?.notifyTarget, "auto");
+      const agentPatrolTools = engine.getAgent(agentId)?.config?.desk?.patrol_tools;
+      const cronToolFilter = Array.isArray(agentPatrolTools)
+        ? [...new Set([...agentPatrolTools, "channel"])]
+        : null;
       const prompt = isZh
         ? [
             `[定时任务 ${job.id}: ${job.label}]`,
@@ -215,6 +220,7 @@ export class Scheduler {
       const activity = await this._executeActivityForAgent(agentId, prompt, "cron", job.label, {
         model: job.model || undefined,
         signal: ac.signal,
+        ...(cronToolFilter ? { toolFilter: cronToolFilter } : {}),
       });
 
       // 兜底：提醒类任务如果模型没有调用 notify，补发一次系统通知。

@@ -381,9 +381,6 @@ export class ChannelRouter {
         console.log(`\x1b[90m[channel] ${agentId} replied #${channelName} (${replyText.length} chars)\x1b[0m`);
         debugLog()?.log("channel", `${agentId} replied #${channelName} (${replyText.length} chars)`);
 
-        // WS 广播
-        this._hub.eventBus.emit({ type: "channel_new_message", channelName, sender: agentId }, null);
-
         return { replied: true, replyContent: replyText, replyTimestamp };
       } catch (err) {
         if (isAbortError(err) || signal?.aborted) {
@@ -527,13 +524,16 @@ export class ChannelRouter {
   }
 
   /**
-   * 统一处理“agent 在频道发言后”的 @ 触发逻辑
+   * 统一处理“agent 在频道发言后”的实时广播 + @ 触发逻辑
    * @param {string} channelName
    * @param {string} senderId
    * @param {string} content
    * @param {{ source?: "tool" | "auto_reply" }} [opts]
    */
   _handleAgentPost(channelName, senderId, content = "", { source = "tool" } = {}) {
+    if (!channelName || !senderId) return;
+    this._hub.eventBus.emit({ type: "channel_new_message", channelName, sender: senderId }, null);
+
     const mentionedAgents = this._collectMentionedAgentsInChannel(channelName, content, { excludeAgentIds: [senderId] });
     if (!mentionedAgents.length) {
       debugLog()?.log("channel", `agent ${senderId} posted to #${channelName}, no @mentions → no dispatch`);

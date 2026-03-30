@@ -28,7 +28,7 @@ export const PATROL_TOOLS_DEFAULT = [
   "recall_experience", "record_experience",
   "web_fetch",
   "todo", "cron", "notify",
-  "present_files", "message_agent",
+  "present_files", "message_agent", "channel",
 ];
 
 function extractTextFromContent(content) {
