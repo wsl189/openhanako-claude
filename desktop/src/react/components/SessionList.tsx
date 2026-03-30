@@ -69,15 +69,28 @@ function SessionListInner() {
   const streamingSessions = useStore(s => s.streamingSessions);
 
   const [browserSessions, setBrowserSessions] = useState<Record<string, string>>({});
-
-  // Fetch browser sessions
-  useEffect(() => {
-    if (sessions.length === 0) return;
+  const refreshBrowserSessions = useCallback(() => {
+    if (sessions.length === 0) {
+      setBrowserSessions({});
+      return;
+    }
     hanaFetch('/api/browser/sessions')
       .then(r => r.json())
       .then(data => setBrowserSessions(data || {}))
       .catch(() => {});
-  }, [sessions]);
+  }, [sessions.length]);
+
+  // Fetch browser sessions
+  useEffect(() => {
+    refreshBrowserSessions();
+  }, [refreshBrowserSessions, sessions]);
+
+  // Refresh badge state when browser status changes (start/stop/close).
+  useEffect(() => {
+    const onBrowserSessionsChanged = () => refreshBrowserSessions();
+    window.addEventListener('hana-browser-sessions-changed', onBrowserSessionsChanged);
+    return () => window.removeEventListener('hana-browser-sessions-changed', onBrowserSessionsChanged);
+  }, [refreshBrowserSessions]);
 
   if (sessions.length === 0) {
     return <div className="session-empty">{t('sidebar.empty')}</div>;

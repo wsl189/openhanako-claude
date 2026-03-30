@@ -39,8 +39,11 @@ export function BrowserCard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionPath }),
+      }).then(() => {
+        window.dispatchEvent(new Event('hana-browser-sessions-changed'));
       }).catch(() => {});
     }
+    window.dispatchEvent(new Event('hana-browser-sessions-changed'));
   }, [setBrowserRunning, setBrowserToolActive, setBrowserToolSessionPath, setBrowserThumbnail]);
 
   const boundToCurrentSession = !!currentSessionPath && browserToolSessionPath === currentSessionPath;

@@ -34,6 +34,10 @@ const REACT_CHAT_EVENTS = new Set([
   'compaction_start', 'compaction_end',
 ]);
 
+function notifyBrowserSessionsChanged(): void {
+  window.dispatchEvent(new Event('hana-browser-sessions-changed'));
+}
+
 // ── Session 可见性 + 流状态 ──
 
 function ensureCurrentSessionVisible(): void {
@@ -241,6 +245,7 @@ export function handleServerMessage(msg: any): void {
           thumbnail: msg.running ? (msg.thumbnail || state.browserThumbnail) : null,
         });
       }
+      notifyBrowserSessionsChanged();
       break;
 
     case 'browser_bg_status': {
@@ -248,6 +253,7 @@ export function handleServerMessage(msg: any): void {
       // 只在结束时兜底清理，避免跨 session 的瞬时状态污染当前会话提示。
       if (!msg.running) {
         useStore.setState({ browserRunning: false, browserSessionPath: null, browserUrl: null, browserThumbnail: null });
+        notifyBrowserSessionsChanged();
       }
       break;
     }
@@ -438,6 +444,8 @@ export function handleServerMessage(msg: any): void {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sessionPath: sp }),
+          }).then(() => {
+            notifyBrowserSessionsChanged();
           }).catch(() => {});
         }
       }
