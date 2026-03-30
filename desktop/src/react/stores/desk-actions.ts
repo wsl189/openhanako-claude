@@ -32,12 +32,14 @@ export function deskCurrentDir(): string | null {
 
 // ── 文件操作 ──
 
-export async function loadDeskFiles(subdir?: string, overrideDir?: string): Promise<void> {
+export async function loadDeskFiles(subdir?: string, overrideDir?: string, sessionPath?: string): Promise<void> {
   const s = useStore.getState();
   if (!s.serverPort) return;
   if (subdir !== undefined) s.setDeskCurrentPath(subdir);
   try {
     const params = new URLSearchParams();
+    const targetSessionPath = sessionPath || s.currentSessionPath || '';
+    if (targetSessionPath) params.set('sessionPath', targetSessionPath);
     if (overrideDir) params.set('dir', overrideDir);
     const curPath = subdir !== undefined ? subdir : s.deskCurrentPath;
     if (curPath) params.set('subdir', curPath);
@@ -46,7 +48,7 @@ export async function loadDeskFiles(subdir?: string, overrideDir?: string): Prom
     const data = await res.json();
     const st = useStore.getState();
     st.setDeskFiles(data.files || []);
-    if (data.basePath) st.setDeskBasePath(data.basePath);
+    st.setDeskBasePath(typeof data.basePath === 'string' ? data.basePath : '');
     loadJianContent();
     updateDeskContextBtn();
   } catch (err) {
@@ -59,6 +61,7 @@ export async function loadJianContent(): Promise<void> {
   if (!s.serverPort) return;
   try {
     const params = new URLSearchParams();
+    if (s.currentSessionPath) params.set('sessionPath', s.currentSessionPath);
     if (s.deskBasePath) params.set('dir', s.deskBasePath);
     if (s.deskCurrentPath) params.set('subdir', s.deskCurrentPath);
     const qs = params.toString() ? `?${params}` : '';
@@ -79,7 +82,7 @@ export async function saveJianContent(content?: string): Promise<void> {
     await hanaFetch('/api/desk/jian', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', content: text }),
+      body: JSON.stringify({ dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', content: text, sessionPath: s.currentSessionPath || undefined }),
     });
     useStore.getState().setDeskJianContent(text || null);
     const st2 = useStore.getState();
@@ -101,7 +104,7 @@ export async function deskUploadFiles(paths: string[]): Promise<void> {
     const res = await hanaFetch('/api/desk/files', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'upload', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', paths }),
+      body: JSON.stringify({ action: 'upload', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', paths, sessionPath: s.currentSessionPath || undefined }),
     });
     const data = await res.json();
     if (data.files) useStore.getState().setDeskFiles(data.files);
@@ -120,7 +123,7 @@ export async function deskCreateFile(text: string): Promise<void> {
     const res = await hanaFetch('/api/desk/files', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'create', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', name, content: text }),
+      body: JSON.stringify({ action: 'create', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', name, content: text, sessionPath: s.currentSessionPath || undefined }),
     });
     const data = await res.json();
     if (data.files) useStore.getState().setDeskFiles(data.files);
@@ -135,7 +138,7 @@ export async function deskMoveFiles(names: string[], destFolder: string): Promis
     const res = await hanaFetch('/api/desk/files', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'move', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', names, destFolder }),
+      body: JSON.stringify({ action: 'move', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', names, destFolder, sessionPath: s.currentSessionPath || undefined }),
     });
     const data = await res.json();
     if (data.files) useStore.getState().setDeskFiles(data.files);
@@ -150,7 +153,7 @@ export async function deskRemoveFile(name: string): Promise<void> {
     const res = await hanaFetch('/api/desk/files', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'remove', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', name }),
+      body: JSON.stringify({ action: 'remove', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', name, sessionPath: s.currentSessionPath || undefined }),
     });
     const data = await res.json();
     if (data.files) useStore.getState().setDeskFiles(data.files);
@@ -175,7 +178,7 @@ export async function deskMkdir(): Promise<string | null> {
     const res = await hanaFetch('/api/desk/files', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'mkdir', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', name }),
+      body: JSON.stringify({ action: 'mkdir', dir: s.deskBasePath || undefined, subdir: s.deskCurrentPath || '', name, sessionPath: s.currentSessionPath || undefined }),
     });
     const data = await res.json();
     if (data.files) {
@@ -193,7 +196,14 @@ export async function deskRenameFile(oldName: string, newName: string): Promise<
     const res = await hanaFetch('/api/desk/files', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'rename', dir: useStore.getState().deskBasePath || undefined, subdir: useStore.getState().deskCurrentPath || '', oldName, newName }),
+      body: JSON.stringify({
+        action: 'rename',
+        dir: useStore.getState().deskBasePath || undefined,
+        subdir: useStore.getState().deskCurrentPath || '',
+        oldName,
+        newName,
+        sessionPath: useStore.getState().currentSessionPath || undefined,
+      }),
     });
     const data = await res.json();
     if (data.error) { console.error('[desk] rename error:', data.error); return false; }

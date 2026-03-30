@@ -91,6 +91,10 @@ export async function switchSession(path: string): Promise<void> {
     }
 
     const state = useStore.getState();
+    const nextAgentId = typeof data.agentId === 'string' ? data.agentId : null;
+    const nextHomeFolder = typeof data.homeFolder === 'string'
+      ? (data.homeFolder.trim() || null)
+      : null;
 
     // 同步 streamingSessions：切入的 session 可能正在 streaming
     let streamingSessions = state.streamingSessions;
@@ -118,6 +122,8 @@ export async function switchSession(path: string): Promise<void> {
       welcomeVisible: false,
       selectedFolder: null,
       selectedAgentId: null,
+      ...(nextAgentId ? { currentAgentId: nextAgentId } : {}),
+      ...(nextHomeFolder !== null ? { homeFolder: nextHomeFolder } : {}),
       memoryEnabled: data.memoryEnabled !== false,
       isStreaming: !!data.isStreaming,
       streamingSessions,
@@ -139,9 +145,12 @@ export async function switchSession(path: string): Promise<void> {
     if (!hasData) {
       await loadMessages(path);
     }
+    if (myVersion !== _switchVersion) return;
 
     // 加载 desk files
-    loadDeskFiles('');
+    const sessionCwd = typeof data.cwd === 'string' ? data.cwd.trim() : '';
+    await loadDeskFiles('', sessionCwd || undefined, path);
+    if (myVersion !== _switchVersion) return;
 
     // 切换会话后刷新 context ring
     useStore.setState({ contextTokens: null, contextWindow: null, contextPercent: null });
@@ -238,6 +247,10 @@ export async function ensureSession(): Promise<boolean> {
     if (data.agentId) {
       const switched = data.agentId !== s.currentAgentId;
       patch.currentAgentId = data.agentId;
+      const nextHomeFolder = typeof data.homeFolder === 'string'
+        ? (data.homeFolder.trim() || null)
+        : null;
+      if (nextHomeFolder !== null) patch.homeFolder = nextHomeFolder;
       if (data.agentName) patch.agentName = data.agentName;
       if (switched) {
         const ag = s.agents.find((a: any) => a.id === data.agentId);

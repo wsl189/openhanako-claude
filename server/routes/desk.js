@@ -9,6 +9,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { t } from "../i18n.js";
 import { normalizeEverySchedule } from "../../lib/desk/cron-schedule.js";
 
@@ -68,19 +69,72 @@ function isSensitivePath(srcPath, hanakoHome) {
 /** 列出工作空间目录下的文件 */
 function listWorkspaceFiles(dir) {
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true })
-    .filter(e => !e.name.startsWith("."))
-    .map(e => {
-      const fullPath = path.join(dir, e.name);
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files = [];
+  for (const e of entries) {
+    if (e.name.startsWith(".")) continue;
+    const fullPath = path.join(dir, e.name);
+    try {
+      // 使用 stat 跟随符号链接；若是悬空链接/权限错误则跳过该条目，避免整页 500。
       const stat = fs.statSync(fullPath);
-      return {
+      files.push({
         name: e.name,
         size: stat.size,
         mtime: stat.mtime.toISOString(),
-        isDir: e.isDirectory(),
-      };
-    })
-    .sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+        isDir: stat.isDirectory(),
+      });
+    } catch {
+      // skip invalid/unreadable entry
+    }
+  }
+
+  return files.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+}
+
+function isSessionPathAllowed(sessionPath, engine) {
+  const rawInput = String(sessionPath || "").trim();
+  if (!rawInput) return false;
+  let raw = rawInput;
+  try {
+    raw = decodeURIComponent(rawInput);
+  } catch {
+    raw = rawInput;
+  }
+  if (!raw) return false;
+  const resolved = path.resolve(raw);
+  const base = path.resolve(engine.agentsDir);
+  return resolved === base || resolved.startsWith(base + path.sep);
+}
+
+function resolveSessionDeskDir(sessionPath, engine) {
+  if (!isSessionPathAllowed(sessionPath, engine)) return null;
+  const rawInput = String(sessionPath || "").trim();
+  let raw = rawInput;
+  try {
+    raw = decodeURIComponent(rawInput);
+  } catch {
+    raw = rawInput;
+  }
+  const resolvedSessionPath = path.resolve(raw);
+  const agentId = engine.agentIdFromSessionPath(resolvedSessionPath);
+  if (!agentId) return null;
+  const sessionDir = path.join(engine.agentsDir, agentId, "sessions");
+  if (!isInsidePath(resolvedSessionPath, sessionDir)) return null;
+  try {
+    const mgr = SessionManager.open(resolvedSessionPath, sessionDir);
+    const cwd = mgr.getCwd?.();
+    if (typeof cwd !== "string") return null;
+    const trimmed = cwd.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
 }
 
 export default async function deskRoute(app, { engine, hub }) {
@@ -388,7 +442,8 @@ export default async function deskRoute(app, { engine, hub }) {
 
   /** 工作空间路径 */
   app.get("/api/desk/path", async (req) => {
-    const dir = req.query.dir ? decodeURIComponent(req.query.dir) : engine.deskCwd;
+    const sessionDir = resolveSessionDeskDir(req.query?.sessionPath, engine);
+    const dir = req.query.dir ? decodeURIComponent(req.query.dir) : (sessionDir || engine.deskCwd);
     if (!dir) return { path: null };
     if (req.query.dir && !isApprovedDir(dir, engine)) return { error: t("error.dirNotAllowed") };
     fs.mkdirSync(dir, { recursive: true });
@@ -397,7 +452,8 @@ export default async function deskRoute(app, { engine, hub }) {
 
   /** 列出工作空间文件（支持 ?subdir=xxx 浏览子目录, ?dir=xxx 覆盖基目录） */
   app.get("/api/desk/files", async (req) => {
-    const dir = req.query.dir ? decodeURIComponent(req.query.dir) : engine.deskCwd;
+    const sessionDir = resolveSessionDeskDir(req.query?.sessionPath, engine);
+    const dir = req.query.dir ? decodeURIComponent(req.query.dir) : (sessionDir || engine.deskCwd);
     if (!dir) return { files: [], subdir: "", basePath: null };
     if (req.query.dir && !isApprovedDir(dir, engine)) return { error: t("error.dirNotAllowed") };
     const subdir = req.query.subdir || "";
@@ -412,7 +468,8 @@ export default async function deskRoute(app, { engine, hub }) {
 
   /** 读取指定目录的 jian.md */
   app.get("/api/desk/jian", async (req) => {
-    const dir = req.query.dir ? decodeURIComponent(req.query.dir) : engine.deskCwd;
+    const sessionDir = resolveSessionDeskDir(req.query?.sessionPath, engine);
+    const dir = req.query.dir ? decodeURIComponent(req.query.dir) : (sessionDir || engine.deskCwd);
     if (!dir) return { content: null };
     if (req.query.dir && !isApprovedDir(dir, engine)) return { error: t("error.dirNotAllowed") };
     const subdir = req.query.subdir || "";
@@ -432,7 +489,8 @@ export default async function deskRoute(app, { engine, hub }) {
 
   /** 保存指定目录的 jian.md（自动创建 / 内容为空时删除） */
   app.post("/api/desk/jian", async (req) => {
-    const dir = req.body?.dir ? req.body.dir : engine.deskCwd;
+    const sessionDir = resolveSessionDeskDir(req.body?.sessionPath, engine);
+    const dir = req.body?.dir ? req.body.dir : (sessionDir || engine.deskCwd);
     if (!dir) return { error: t("error.noWorkspace") };
     if (req.body?.dir && !isApprovedDir(dir, engine)) return { error: t("error.dirNotAllowed") };
     const { subdir, content } = req.body || {};
@@ -461,7 +519,8 @@ export default async function deskRoute(app, { engine, hub }) {
 
   /** 工作空间文件操作（支持 subdir + dir override） */
   app.post("/api/desk/files", async (req) => {
-    const baseDir = req.body?.dir || engine.deskCwd;
+    const sessionDir = resolveSessionDeskDir(req.body?.sessionPath, engine);
+    const baseDir = req.body?.dir || sessionDir || engine.deskCwd;
     if (!baseDir) return { error: t("error.noWorkspace") };
     if (req.body?.dir && !isApprovedDir(baseDir, engine)) return { error: t("error.dirNotAllowed") };
     fs.mkdirSync(baseDir, { recursive: true });

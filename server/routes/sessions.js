@@ -670,6 +670,7 @@ export default async function sessionsRoute(app, { engine }) {
         cwd: engine.cwd,
         agentId: engine.currentAgentId,
         agentName: engine.agentName,
+        homeFolder: engine.getHomeFolder(engine.currentAgentId) || null,
       };
     } catch (err) {
       reply.code(500);
@@ -707,6 +708,7 @@ export default async function sessionsRoute(app, { engine }) {
         cwd: engine.cwd,
         agentId: engine.currentAgentId,
         agentName: engine.agentName,
+        homeFolder: engine.getHomeFolder(engine.currentAgentId) || null,
         browserRunning: bm.isRunning,
         browserUrl: bm.currentUrl || null,
         isStreaming: engine.isStreaming,
