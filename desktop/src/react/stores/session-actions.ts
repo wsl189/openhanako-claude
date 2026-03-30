@@ -293,7 +293,12 @@ export async function ensureSession(): Promise<boolean> {
       useStore.setState({ cwdHistory });
     }
 
-    loadDeskFiles('');
+    const sessionCwd = typeof data.cwd === 'string' ? data.cwd.trim() : '';
+    await loadDeskFiles(
+      '',
+      sessionCwd || justSelected || useStore.getState().homeFolder || undefined,
+      data.path || undefined,
+    );
 
     return true;
   } catch (err) {
