@@ -30,6 +30,87 @@ interface Buffer {
   messageAppended: boolean;
 }
 
+type CronConfirmStatus = 'pending' | 'approved' | 'rejected';
+type CronConfirmBlock = Extract<ContentBlock, { type: 'cron_confirm' }>;
+
+function normalizeCronEverySchedule(raw: unknown): string {
+  const toMinutes = (value: number): number => {
+    if (!Number.isFinite(value) || value <= 0) return 1;
+    // 兼容旧数据：小于 1000 的数字按“分钟数”理解。
+    if (value < 1000) return Math.max(1, Math.round(value));
+    return Math.max(1, Math.round(value / 60000));
+  };
+
+  if (typeof raw === 'number') return `every:${toMinutes(raw)}m`;
+  const text = String(raw ?? '').trim();
+  if (!text) return '';
+  if (/^\d+$/.test(text)) return `every:${toMinutes(parseInt(text, 10))}m`;
+  const cronEveryMin = text.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
+  if (cronEveryMin?.[1]) return `every:${Math.max(1, parseInt(cronEveryMin[1], 10))}m`;
+  return text;
+}
+
+function normalizeCronJobIdentity(jobData: Record<string, unknown> | undefined) {
+  const type = String(jobData?.type ?? '').trim().toLowerCase();
+  const prompt = String(jobData?.prompt ?? '').trim();
+  const label = String(jobData?.label ?? '').trim();
+  const scheduleRaw = jobData?.schedule;
+  const schedule = type === 'every'
+    ? normalizeCronEverySchedule(scheduleRaw)
+    : String(scheduleRaw ?? '').trim();
+  return {
+    type,
+    schedule,
+    // prompt 优先作为身份键，避免 label 在默认补全时造成误判。
+    identityText: prompt || label,
+  };
+}
+
+function sameCronJob(
+  a: Record<string, unknown> | undefined,
+  b: Record<string, unknown> | undefined,
+): boolean {
+  if (!a || !b) return false;
+  const na = normalizeCronJobIdentity(a);
+  const nb = normalizeCronJobIdentity(b);
+  if (!na.type || !nb.type || na.type !== nb.type) return false;
+  if (!na.schedule || !nb.schedule || na.schedule !== nb.schedule) return false;
+  if (na.identityText && nb.identityText) return na.identityText === nb.identityText;
+  return true;
+}
+
+function findCronCardIndex(
+  blocks: ContentBlock[],
+  params: { confirmId?: string; jobData?: Record<string, unknown> },
+): number {
+  if (params.confirmId) {
+    const idx = blocks.findIndex(
+      (b: any) => b.type === 'cron_confirm' && b.confirmId === params.confirmId,
+    );
+    if (idx >= 0) return idx;
+  }
+  return blocks.findIndex(
+    (b: any) => b.type === 'cron_confirm' && sameCronJob(b.jobData, params.jobData),
+  );
+}
+
+function mergeCronCard(
+  current: CronConfirmBlock,
+  incoming: CronConfirmBlock,
+): CronConfirmBlock {
+  const mergedStatus: CronConfirmStatus =
+    current.status !== 'pending' && incoming.status === 'pending'
+      ? current.status
+      : incoming.status;
+
+  return {
+    ...current,
+    confirmId: incoming.confirmId || current.confirmId,
+    jobData: { ...(current.jobData || {}), ...(incoming.jobData || {}) },
+    status: mergedStatus,
+  };
+}
+
 function createBuffer(sessionPath: string): Buffer {
   return {
     sessionPath,
@@ -244,16 +325,15 @@ class StreamBufferManager {
               prompt: String(job.prompt || msg.args?.prompt || ''),
               label: String(job.label || msg.args?.label || ''),
             };
-            const match = (a: any, b: any) =>
-              String(a?.type || '') === String(b?.type || '')
-              && String(a?.schedule ?? '') === String(b?.schedule ?? '')
-              && String(a?.prompt || '') === String(b?.prompt || '')
-              && String(a?.label || '') === String(b?.label || '');
-
-            const existingIdx = blocks.findIndex((b: any) => b.type === 'cron_confirm' && match(b.jobData, jobData));
+            const existingIdx = findCronCardIndex(blocks, { jobData });
             if (existingIdx >= 0) {
-              const card = blocks[existingIdx] as any;
-              blocks[existingIdx] = { ...card, status: 'approved' as const };
+              const card = blocks[existingIdx] as CronConfirmBlock;
+              blocks[existingIdx] = mergeCronCard(card, {
+                type: 'cron_confirm',
+                confirmId: card.confirmId,
+                jobData,
+                status: 'approved',
+              });
             } else {
               blocks.push({ type: 'cron_confirm', jobData, status: 'approved' as const } as any);
             }
@@ -310,10 +390,26 @@ class StreamBufferManager {
       case 'cron_confirmation':
         this.ensureMessage(buf);
         this.flush(buf);
-        useStore.getState().updateLastMessage(sessionPath, (m) => ({
-          ...m,
-          blocks: [...(m.blocks || []), { type: 'cron_confirm', confirmId: msg.confirmId, jobData: msg.jobData, status: 'pending' as const }],
-        }));
+        useStore.getState().updateLastMessage(sessionPath, (m) => {
+          const blocks = [...(m.blocks || [])];
+          const incoming: CronConfirmBlock = {
+            type: 'cron_confirm' as const,
+            confirmId: msg.confirmId,
+            jobData: (msg.jobData || {}) as Record<string, unknown>,
+            status: 'pending' as const,
+          };
+          const existingIdx = findCronCardIndex(blocks, {
+            confirmId: msg.confirmId,
+            jobData: msg.jobData,
+          });
+          if (existingIdx >= 0) {
+            const card = blocks[existingIdx] as CronConfirmBlock;
+            blocks[existingIdx] = mergeCronCard(card, incoming);
+          } else {
+            blocks.push(incoming);
+          }
+          return { ...m, blocks };
+        });
         break;
 
       case 'settings_confirmation':

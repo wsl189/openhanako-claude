@@ -1064,9 +1064,10 @@ html[data-platform="linux"] .tb-toggle-right {
 
 /* 单条任务卡片 */
 .auto-item {
+    position: relative;
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    flex-direction: column;
+    gap: 6px;
     padding: 0.55rem 0.7rem;
     border: 1px solid var(--overlay-light);
     border-radius: var(--radius-md);
@@ -1131,15 +1132,51 @@ html[data-platform="linux"] .tb-toggle-right {
     user-select: none;
 }
 
-.auto-item-info {
+.auto-item-toggle {
+    position: absolute;
+    top: 0.55rem;
+    right: 0.7rem;
+}
+
+.auto-item-main {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
+    gap: 6px;
+    padding-right: 0;
+}
+
+.auto-item-topline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding-right: 60px;
+}
+
+.auto-item-bottomline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    width: 100%;
+}
+
+.auto-item-label-wrap {
+    display: flex;
+    align-items: center;
     gap: 2px;
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-right: auto;
+    max-width: calc(100% - 28px);
 }
 
 .auto-item-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
     font-size: 0.78rem;
     color: var(--text);
     overflow: hidden;
@@ -1154,6 +1191,8 @@ html[data-platform="linux"] .tb-toggle-right {
 
 /* 编辑状态的 input */
 .auto-item-label-input {
+    flex: 1;
+    min-width: 0;
     font-size: 0.78rem;
     font-family: inherit;
     color: var(--text);
@@ -1168,21 +1207,18 @@ html[data-platform="linux"] .tb-toggle-right {
 .auto-item-schedule {
     font-size: 0.65rem;
     color: var(--text-muted);
-}
-
-/* 元信息：执行人 + 频率（上下排列） */
-.auto-item-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 2px 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-left: 5ch;
 }
 
 .auto-item-executor {
     display: flex;
     align-items: center;
-    gap: 4px;
-    width: 100%;
+    gap: 5px;
+    min-width: 0;
+    flex: 0 1 auto;
+    max-width: 52%;
 }
 
 .auto-item-executor-avatar {
@@ -1196,36 +1232,33 @@ html[data-platform="linux"] .tb-toggle-right {
 .auto-item-executor-name {
     font-size: 0.65rem;
     color: var(--text-muted);
-}
-
-/* 频率与模型之间的分隔点 */
-.auto-item-meta .auto-item-model-wrap::before {
-    content: "·";
-    margin-right: 8px;
-    color: var(--overlay-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .auto-item-model-wrap {
     display: flex;
     align-items: center;
+    flex-shrink: 0;
 }
 
-.auto-item-model-select {
-    font-size: 0.6rem;
-    font-family: inherit;
-    color: var(--text-muted);
-    background: var(--overlay-subtle);
-    border: none;
-    border-radius: 4px;
-    padding: 1px 4px;
-    cursor: pointer;
-    max-width: 120px;
-    text-overflow: ellipsis;
+.auto-item-model-wrap .sdw {
+    width: 160px;
+    max-width: 160px;
 }
 
-.auto-item-model-select:hover {
-    color: var(--text-secondary);
-    background: var(--overlay-light);
+.auto-item-model-wrap .sdw-trigger {
+    font-size: 0.72rem;
+    padding: 0.34rem 0.52rem;
+}
+
+.auto-item-model-wrap .sdw-arrow {
+    font-size: 0.58rem;
+}
+
+.auto-item-model-wrap .sdw-option {
+    font-size: 0.7rem;
 }
 
 .auto-item-actions {
@@ -1233,12 +1266,16 @@ html[data-platform="linux"] .tb-toggle-right {
     align-items: center;
     gap: 2px;
     flex-shrink: 0;
+    margin-left: auto;
     opacity: 0;
+    pointer-events: none;
     transition: opacity 0.15s;
 }
 
-.auto-item:hover .auto-item-actions {
+.auto-item:hover .auto-item-actions,
+.auto-item:focus-within .auto-item-actions {
     opacity: 1;
+    pointer-events: auto;
 }
 
 .auto-item-btn {
@@ -1260,6 +1297,40 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .auto-item-btn.danger:hover {
     color: var(--danger, #d9534f);
+}
+
+.auto-item-btn-inline {
+    display: flex;
+    margin-left: 3ch;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+}
+
+.auto-item-label-wrap:hover .auto-item-btn-edit,
+.auto-item-label-wrap:focus-within .auto-item-btn-edit {
+    opacity: 0.85;
+    pointer-events: auto;
+}
+
+.auto-item-btn-delete {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+}
+
+.auto-item:hover .auto-item-btn-delete,
+.auto-item:focus-within .auto-item-btn-delete {
+    opacity: 1;
+    pointer-events: auto;
+    transition-delay: 0.08s;
+}
+
+.auto-item-label-wrap:hover + .auto-item-actions .auto-item-btn-delete,
+.auto-item-label-wrap:focus-within + .auto-item-actions .auto-item-btn-delete {
+    opacity: 0;
+    pointer-events: none;
+    transition-delay: 0s;
 }
 
 .automation-empty {
