@@ -83,7 +83,39 @@ export function cronToHuman(schedule: number | string, type?: string): string {
   if (typeof schedule === 'number') {
     return renderEveryByMinutes(toEveryMinutes(schedule));
   }
-  const s = String(schedule);
+  const s = String(schedule).trim();
+
+  // 兼容旧数据：every 可能被存成自然语言字符串（如 "every minute" / "每分钟"）
+  const parseLegacyEvery = (text: string): { unit: 'minutes' | 'hours'; n: number } | null => {
+    const en = text.match(/^every\s*(\d+)?\s*(minute|minutes|hour|hours)$/i);
+    if (en) {
+      const n = Math.max(1, parseInt(en[1] || '1', 10));
+      const unit = /hour/i.test(en[2]) ? 'hours' : 'minutes';
+      return { unit, n };
+    }
+
+    const zhMinute = text.match(/^每\s*(\d+)?\s*分(?:钟)?$/);
+    if (zhMinute) {
+      const n = Math.max(1, parseInt(zhMinute[1] || '1', 10));
+      return { unit: 'minutes', n };
+    }
+
+    const zhHour = text.match(/^每\s*(\d+)?\s*(?:小)?时$/);
+    if (zhHour) {
+      const n = Math.max(1, parseInt(zhHour[1] || '1', 10));
+      return { unit: 'hours', n };
+    }
+
+    return null;
+  };
+
+  const legacyEvery = parseLegacyEvery(s);
+  if (legacyEvery) {
+    return legacyEvery.unit === 'hours'
+      ? t('cron.everyHours', { n: legacyEvery.n })
+      : t('cron.everyMinutes', { n: legacyEvery.n });
+  }
+
   // 兼容旧数据：某些 daily cron 可能被存成 "21:00" 这类时间字符串
   const hhmm = s.match(/^(\d{1,2}):(\d{2})$/);
   if (hhmm && type === 'cron') {

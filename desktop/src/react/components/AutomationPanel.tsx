@@ -17,6 +17,16 @@ interface CronJob {
   agentName?: string;
 }
 
+function normalizeDefaultModelValue(raw: unknown): string {
+  const value = String(raw ?? '').trim();
+  if (!value) return '';
+  const lower = value.toLowerCase();
+  if (lower === 'default' || lower === 'default model' || value === '默认' || value === '默认模型') {
+    return '';
+  }
+  return value;
+}
+
 export function AutomationPanel() {
   const activePanel = useStore(s => s.activePanel);
   const agents = useStore(s => s.agents);
@@ -183,7 +193,8 @@ function AutomationItem({
   // 构建模型选项
   const modelOptions: string[] = [];
   const modelSet = new Set(favorites);
-  if (job.model && !modelSet.has(job.model)) modelOptions.push(job.model);
+  const normalizedModelValue = normalizeDefaultModelValue(job.model);
+  if (normalizedModelValue && !modelSet.has(normalizedModelValue)) modelOptions.push(normalizedModelValue);
   modelOptions.push(...favorites);
   const modelSelectOptions = [
     { value: '', label: (window.t ?? ((p: string) => p))('automation.defaultModel') },
@@ -211,7 +222,7 @@ function AutomationItem({
           <span className="auto-item-model-wrap">
             <SelectWidget
               options={modelSelectOptions}
-              value={job.model || ''}
+              value={normalizedModelValue}
               onChange={(modelId) => onUpdate(job.id, { model: modelId }, job.agentId)}
               placeholder={(window.t ?? ((p: string) => p))('automation.defaultModel')}
             />

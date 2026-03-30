@@ -13,7 +13,6 @@ import fs from "fs";
 import path from "path";
 import { createHeartbeat } from "../lib/desk/heartbeat.js";
 import { createCronScheduler } from "../lib/desk/cron-scheduler.js";
-import { CronStore } from "../lib/desk/cron-store.js";
 import { isToolCallBlock } from "../core/llm-utils.js";
 import { getLocale } from "../server/i18n.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
@@ -125,16 +124,12 @@ export class Scheduler {
   _startAgentCron(agentId) {
     if (this._agentCrons.has(agentId)) return;
     const engine = this._engine;
-    const agentDir = path.join(engine.agentsDir, agentId);
-    const deskDir = path.join(agentDir, "desk");
-
-    let cronStore;
-    try {
-      cronStore = new CronStore(
-        path.join(deskDir, "cron-jobs.json"),
-        path.join(deskDir, "cron-runs"),
-      );
-    } catch { return; }
+    const agent = engine.getAgent(agentId);
+    const cronStore = agent?.cronStore || null;
+    if (!cronStore) {
+      console.warn(`\x1b[90m[scheduler] cron 跳过 ${agentId}: cronStore 未就绪\x1b[0m`);
+      return;
+    }
 
     const sched = createCronScheduler({
       cronStore,
