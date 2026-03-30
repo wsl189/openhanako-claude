@@ -352,6 +352,15 @@ function resolveLightboxMime(ext: string): string {
   return LIGHTBOX_MIME_BY_EXT[ext] || 'image/png';
 }
 
+const LIGHTBOX_MIN_SCALE = 0.25;
+const LIGHTBOX_MAX_SCALE = 6;
+const LIGHTBOX_WHEEL_SPEED = 0.0025;
+const LIGHTBOX_PINCH_WHEEL_SPEED = 0.004;
+
+function clampLightboxScale(value: number): number {
+  return Math.min(LIGHTBOX_MAX_SCALE, Math.max(LIGHTBOX_MIN_SCALE, value));
+}
+
 const FileOutputCard = memo(function FileOutputCard({ filePath, label, ext }: { filePath: string; label: string; ext: string }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState('');
@@ -502,6 +511,13 @@ const ImageLightbox = memo(function ImageLightbox({
   alt: string;
   onClose: () => void;
 }) {
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    if (!open) return;
+    setScale(1);
+  }, [open, src]);
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -511,11 +527,20 @@ const ImageLightbox = memo(function ImageLightbox({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [open, onClose]);
 
+  const handleWheelZoom = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const speed = e.ctrlKey ? LIGHTBOX_PINCH_WHEEL_SPEED : LIGHTBOX_WHEEL_SPEED;
+    const factor = Math.exp(-e.deltaY * speed);
+    setScale(prev => clampLightboxScale(prev * factor));
+  }, []);
+
   if (!open || !src) return null;
 
   return (
     <div
       className="chat-image-lightbox"
+      onWheel={handleWheelZoom}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -536,6 +561,7 @@ const ImageLightbox = memo(function ImageLightbox({
         className="chat-image-lightbox-img"
         src={src}
         alt={alt}
+        style={{ transform: `scale(${scale})` }}
         onClick={(e) => e.stopPropagation()}
       />
     </div>

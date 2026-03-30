@@ -59,6 +59,7 @@ let browserViewerWindow = null;
 let _browserWebView = null;        // 当前活跃的 WebContentsView
 const _browserViews = new Map();   // sessionPath → WebContentsView（挂起的浏览器）
 let _currentBrowserSession = null; // 当前浏览器绑定的 sessionPath
+const _browserDownloadHookedSessions = new WeakSet();
 
 /** 页面统一加载（优先 dist-renderer，fallback 到 src） */
 const _distRenderer = path.join(__dirname, "dist-renderer");
@@ -78,6 +79,50 @@ function isAllowedBrowserUrl(url) {
     const p = new URL(url);
     return p.protocol === "http:" || p.protocol === "https:";
   } catch { return false; }
+}
+
+function getUniqueDownloadPath(dir, filename) {
+  const fallback = "download";
+  const safeBase = path.basename(String(filename || "").replace(/\0/g, "")).trim() || fallback;
+  const parsed = path.parse(safeBase);
+  const baseName = parsed.name || fallback;
+  const ext = parsed.ext || "";
+
+  let candidate = path.join(dir, safeBase);
+  let index = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${baseName} (${index})${ext}`);
+    index += 1;
+  }
+  return candidate;
+}
+
+function attachBrowserDownloadHandler(ses) {
+  if (!ses || _browserDownloadHookedSessions.has(ses)) return;
+  _browserDownloadHookedSessions.add(ses);
+
+  ses.on("will-download", (_event, item) => {
+    const isBrowserViewerVisible = !!(browserViewerWindow && !browserViewerWindow.isDestroyed() && browserViewerWindow.isVisible());
+    // 浏览器窗口在后台运行时，静默保存到 ~/Downloads，避免系统保存面板把浏览器窗口带到前台。
+    if (isBrowserViewerVisible) return;
+
+    try {
+      const downloadsDir = app.getPath("downloads") || path.join(os.homedir(), "Downloads");
+      fs.mkdirSync(downloadsDir, { recursive: true });
+      const targetPath = getUniqueDownloadPath(downloadsDir, item.getFilename());
+      item.setSavePath(targetPath);
+      console.log(`[browser-download] auto-save: ${targetPath}`);
+      item.once("done", (_e, state) => {
+        if (state === "completed") {
+          console.log(`[browser-download] completed: ${targetPath}`);
+        } else {
+          console.warn(`[browser-download] ${state}: ${targetPath}`);
+        }
+      });
+    } catch (err) {
+      console.warn("[browser-download] auto-save setup failed:", err?.message || err);
+    }
+  });
 }
 let _browserViewerTheme = "warm-paper"; // 当前主题（用于 backgroundColor）
 const TITLEBAR_HEIGHT = 44;        // 浏览器窗口标题栏高度（px）
@@ -1028,6 +1073,7 @@ async function handleBrowserCommand(cmd, params) {
     case "launch": {
       if (_browserWebView) return {};
       const ses = session.fromPartition("persist:hana-browser");
+      attachBrowserDownloadHandler(ses);
       const view = new WebContentsView({
         webPreferences: {
           session: ses,

@@ -13514,8 +13514,9 @@ body.resizing .preview-panel-inner {
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgba(16, 22, 32, 0.38);
-    backdrop-filter: blur(2px);
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     animation: chat-lightbox-fade-in 0.32s ease-out;
 }
 
@@ -13527,6 +13528,8 @@ body.resizing .preview-panel-inner {
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
     object-fit: contain;
     transform-origin: center center;
+    transition: transform 0.08s ease-out;
+    will-change: transform;
     animation: chat-lightbox-zoom-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
