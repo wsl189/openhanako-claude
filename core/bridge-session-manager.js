@@ -14,6 +14,7 @@ import {
 import { debugLog } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
 import { buildCompactionSettings } from "./compaction-settings.js";
+import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
 
 // Bridge 外部平台会话中禁用的工具（本地展示/agent 内部通信，不适合 IM 对话）
 const BRIDGE_BLOCKED_TOOL_NAMES = new Set([
@@ -237,6 +238,10 @@ export class BridgeSessionManager {
       );
 
       const model = this._resolveBridgeModel(mm, agent);
+      const runtimeModel = applyRuntimeModelOverrides(
+        model,
+        agent?.config?.models?.overrides,
+      );
 
       const baseRL = this._deps.getResourceLoader();
       const rl = Object.create(baseRL, {
@@ -251,13 +256,13 @@ export class BridgeSessionManager {
       }
 
       const sessionOpts = {
-        model,
+        model: runtimeModel,
         thinkingLevel: mm.resolveThinkingLevel(prefs?.thinking_level || "auto"),
         resourceLoader: rl,
         tools: filteredBridgeTools,
         // 覆盖 SDK 默认内置工具，确保 bridge 会话也走沙盒包装后的 builtin。
         customTools: [...filteredBridgeCustomTools, ...filteredBridgeTools],
-        settingsManager: this._createSettings(model),
+        settingsManager: this._createSettings(runtimeModel),
       };
 
       const { session } = await createAgentSession({
@@ -372,12 +377,9 @@ export class BridgeSessionManager {
     }
   }
 
-  /** 创建 bridge 专用 settings：100k token 触发压缩 */
+  /** 创建 bridge 专用 settings（按模型 contextWindow 动态计算压缩阈值） */
   _createSettings(model) {
-    // 用户手动设置的 context 覆盖优先
-    const overrides = this._deps.getAgent?.()?.config?.models?.overrides;
-    const ov = model?.id && overrides?.[model.id];
-    const contextWindow = ov?.context || model?.contextWindow || 200_000;
+    const contextWindow = model?.contextWindow || 200_000;
     return SettingsManager.inMemory({
       compaction: buildCompactionSettings(contextWindow),
     });

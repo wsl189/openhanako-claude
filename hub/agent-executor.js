@@ -14,6 +14,7 @@ import { debugLog } from "../lib/debug-log.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
 import { t } from "../server/i18n.js";
 import { buildCompactionSettings } from "../core/compaction-settings.js";
+import { applyRuntimeModelOverrides } from "../core/model-runtime-overrides.js";
 
 const IMAGE_MIME_BY_EXT = {
   ".png": "image/png",
@@ -153,7 +154,10 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
     // 将“沙箱包装后的 builtin”同名注入 customTools，确保运行时执行的是受限版本。
     customTools = [...built.customTools, ...built.tools];
   }
-  const model = ctx.resolveModel(agent.config);
+  const model = applyRuntimeModelOverrides(
+    ctx.resolveModel(agent.config),
+    agent?.config?.models?.overrides,
+  );
   const contextWindow = model?.contextWindow || 200_000;
   const { session } = await createAgentSession({
     cwd,

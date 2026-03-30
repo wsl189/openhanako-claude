@@ -18,6 +18,7 @@ import { BrowserManager } from "../lib/browser/browser-manager.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
 import { t, getLocale } from "../server/i18n.js";
 import { buildCompactionSettings } from "./compaction-settings.js";
+import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
 
 const log = createModuleLogger("session");
 
@@ -117,20 +118,21 @@ export class SessionCoordinator {
     // 仅使用 tools 的“名字”而忽略传入实例。把沙盒后的 builtin 同名注入 customTools，
     // 确保运行时真正执行的是我们包装后的工具实现。
     const sessionRuntimeTools = [...sessionCustomTools, ...sessionTools];
+    const runtimeModel = this._applyRuntimeModelOverrides(models.currentModel);
     const { session } = await createAgentSession({
       cwd: effectiveCwd,
       sessionManager: sessionMgr,
-      settingsManager: this._createSettings(models.currentModel),
+      settingsManager: this._createSettings(runtimeModel),
       authStorage: models.authStorage,
       modelRegistry: models.modelRegistry,
-      model: models.currentModel,
+      model: runtimeModel,
       thinkingLevel: models.resolveThinkingLevel(this._d.getPrefs().getThinkingLevel()),
       resourceLoader: this._d.getResourceLoader(),
       tools: sessionTools,
       customTools: sessionRuntimeTools,
     });
     const elapsed = Date.now() - t0;
-    log.log(`session created (${elapsed}ms), model=${models.currentModel?.name || "?"}`);
+    log.log(`session created (${elapsed}ms), model=${runtimeModel?.name || "?"}`);
     this._session = session;
     this._sessionStarted = false;
     // 会话切到新 cwd 后，立即重建 system prompt，避免 cwd 文案滞后
@@ -576,7 +578,10 @@ export class SessionCoordinator {
           log.log(`[executeIsolated] 模型 "${modelId}" 不可用，fallback → ${resolvedModel.id}`);
         }
       }
-      const execModel = models.resolveExecutionModel(resolvedModel);
+      const execModel = this._applyRuntimeModelOverrides(
+        models.resolveExecutionModel(resolvedModel),
+        targetAgent?.config?.models?.overrides,
+      );
       tempSessionMgr = SessionManager.create(execCwd, sessionDir);
       const { tools: allBuiltinTools, customTools: allCustomTools } = this._d.buildTools(
         execCwd,
@@ -610,7 +615,7 @@ export class SessionCoordinator {
       const { session } = await createAgentSession({
         cwd: execCwd,
         sessionManager: tempSessionMgr,
-        settingsManager: this._createSettings(execModel),
+        settingsManager: this._createSettings(execModel, targetAgent?.config?.models?.overrides),
         authStorage: models.authStorage,
         modelRegistry: models.modelRegistry,
         model: execModel,
@@ -685,12 +690,15 @@ export class SessionCoordinator {
     }
   }
 
+  _applyRuntimeModelOverrides(model, overrides = null) {
+    const activeOverrides = overrides || this._d.getAgent?.()?.config?.models?.overrides;
+    return applyRuntimeModelOverrides(model, activeOverrides);
+  }
+
   /** 创建 session 专用 settings（控制 compaction + max_completion_tokens） */
-  _createSettings(model) {
-    // 用户手动设置的 context 覆盖（models.overrides）优先于模型自身的值
-    const overrides = this._d.getAgent?.()?.config?.models?.overrides;
-    const ov = model?.id && overrides?.[model.id];
-    const contextWindow = ov?.context || model?.contextWindow || 200_000;
+  _createSettings(model, overrides = null) {
+    const runtimeModel = this._applyRuntimeModelOverrides(model, overrides);
+    const contextWindow = runtimeModel?.contextWindow || 200_000;
     return SettingsManager.inMemory({
       compaction: buildCompactionSettings(contextWindow),
     });

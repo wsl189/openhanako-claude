@@ -16,6 +16,7 @@ import {
   loadModelsRegistry,
   resolveApiKeyFromAuth,
 } from "../lib/memory/config-loader.js";
+import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
 
 const log = createModuleLogger("config");
 
@@ -225,7 +226,9 @@ export class ConfigCoordinator {
         models.currentModel = chatModel;
         const session = this._d.getSession();
         if (session) {
-          await session.setModel(chatModel);
+          await session.setModel(
+            applyRuntimeModelOverrides(chatModel, agent?.config?.models?.overrides),
+          );
           session.setThinkingLevel(models.resolveThinkingLevel(this.getThinkingLevel()));
         }
       }
@@ -239,7 +242,9 @@ export class ConfigCoordinator {
     const model = models.setModel(modelId);
     const session = this._d.getSession();
     if (session) {
-      await session.setModel(model);
+      await session.setModel(
+        applyRuntimeModelOverrides(model, this._d.getAgent?.()?.config?.models?.overrides),
+      );
       if (typeof this._d.refreshCurrentSessionTools === "function") {
         try {
           await this._d.refreshCurrentSessionTools();
@@ -378,7 +383,9 @@ export class ConfigCoordinator {
         log.log(`default model switched to: ${newModel.name || newModel.id}`);
         const session = this._d.getSession();
         if (session) {
-          await session.setModel(newModel);
+          await session.setModel(
+            applyRuntimeModelOverrides(newModel, agent?.config?.models?.overrides),
+          );
           session.setThinkingLevel(
             models.resolveThinkingLevel(this.getThinkingLevel())
           );
