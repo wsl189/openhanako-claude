@@ -786,6 +786,7 @@ function useDeskSkillsAgentId() {
 }
 
 let _loadAgentSkillsSeq = 0;
+const SKILLS_PANEL_REFRESH_MS = 2_000;
 
 async function loadAgentSkills(targetAgentId?: string | null) {
   const agentId = targetAgentId || resolveDeskSkillsAgentId();
@@ -894,7 +895,22 @@ function DeskAgentSkillsPanel() {
   }, []);
 
   useEffect(() => {
-    if (open) loadAgentSkills(skillsAgentId);
+    if (!open || !skillsAgentId) return;
+    void loadAgentSkills(skillsAgentId);
+    const timer = window.setInterval(() => {
+      void loadAgentSkills(skillsAgentId);
+    }, SKILLS_PANEL_REFRESH_MS);
+    const onFocus = () => { void loadAgentSkills(skillsAgentId); };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void loadAgentSkills(skillsAgentId);
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [open, skillsAgentId]);
 
   const updateEnabled = useCallback(async (name: string, enabled: boolean) => {

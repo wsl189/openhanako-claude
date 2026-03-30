@@ -19,6 +19,22 @@ const CLAWHUB_INSTALL_TIMEOUT_MS = 30 * 60_000;
 const CLAWHUB_INSTALL_POLL_INTERVAL_MS = 700;
 const CLAWHUB_INSTALL_POLL_REQUEST_TIMEOUT_MS = 45_000;
 const CLAWHUB_INSTALL_POLL_MAX_ERRORS = 5;
+const SKILLS_AUTO_REFRESH_MS = 2_000;
+
+function buildSkillSignature(list: SkillInfo[] = []): string {
+  return list
+    .map((s) => [
+      s.name,
+      s.enabled ? 1 : 0,
+      s.hidden ? 1 : 0,
+      s.baseDir || '',
+      s.filePath || '',
+      s.description || '',
+      s.source || '',
+      s.readonly ? 1 : 0,
+    ].join('|'))
+    .join('\n');
+}
 
 export function SkillsTab() {
   const { skillsList, showToast } = useSettingsStore();
@@ -32,14 +48,23 @@ export function SkillsTab() {
   const [remoteInstallState, setRemoteInstallState] = useState<Record<string, 'installing' | 'done' | 'failed'>>({});
   const [installProgress, setInstallProgress] = useState<Record<string, number>>({});
   const marketRef = useRef<HTMLDivElement | null>(null);
+  const loadingRef = useRef(false);
 
-  const loadSkills = useCallback(async () => {
+  const loadSkills = useCallback(async (opts: { silent?: boolean } = {}) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     try {
       const res = await hanaFetch('/api/skills');
       const data = await res.json();
-      useSettingsStore.setState({ skillsList: data.skills || [] });
+      const nextList = Array.isArray(data.skills) ? data.skills : [];
+      const prevList = useSettingsStore.getState().skillsList || [];
+      if (buildSkillSignature(prevList) !== buildSkillSignature(nextList)) {
+        useSettingsStore.setState({ skillsList: nextList });
+      }
     } catch (err) {
-      console.error('[skills] load failed:', err);
+      if (!opts.silent) console.error('[skills] load failed:', err);
+    } finally {
+      loadingRef.current = false;
     }
   }, []);
 
@@ -63,7 +88,21 @@ export function SkillsTab() {
   }, [loadSkills, showToast]);
 
   useEffect(() => {
-    loadSkills();
+    void loadSkills({ silent: true });
+    const timer = window.setInterval(() => {
+      void loadSkills({ silent: true });
+    }, SKILLS_AUTO_REFRESH_MS);
+    const onFocus = () => { void loadSkills({ silent: true }); };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void loadSkills({ silent: true });
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [loadSkills]);
 
   const visible = skillsList.filter(s => !s.hidden);

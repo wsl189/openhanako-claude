@@ -136,7 +136,7 @@ export class SkillManager {
     try {
       this._watcher = chokidar.watch(watchPaths, {
         ignoreInitial: true,
-        ignored: [/(^|[/\\])\./, /[~#]$/],
+        ignored: (watchedPath) => this._shouldIgnoreWatchPath(watchedPath),
         persistent: true,
       });
       this._watcher.on("all", () => {
@@ -233,5 +233,12 @@ export class SkillManager {
     } catch {
       return false;
     }
+  }
+
+  _shouldIgnoreWatchPath(watchedPath) {
+    const p = String(watchedPath || "");
+    const base = path.basename(p);
+    // 注意：不能按完整路径匹配 "/."，否则会误伤 ~/.hanako/ 下的正常目录监听。
+    return base.startsWith(".") || /[~#]$/.test(base);
   }
 }
