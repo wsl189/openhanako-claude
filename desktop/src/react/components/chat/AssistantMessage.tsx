@@ -25,6 +25,7 @@ interface Props {
   showAvatar: boolean;
   chainGroup?: {
     isOwner: boolean;
+    hideTextWhenCollapsed: boolean;
     totalThinking: number;
     totalTools: number;
     allCompleted: boolean;
@@ -56,7 +57,6 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const agentAvatarUrl = useStore(s => s.agentAvatarUrl);
   const sessionAgent = useStore(s => s.sessionAgent);
   const agents = useStore(s => s.agents);
-  const isStreaming = useStore(s => s.isStreaming);
   const [avatarFailed, setAvatarFailed] = useState(false);
 
   // 非主 agent session 用 sessionAgent 信息
@@ -158,9 +158,12 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const chainCanCollapse = chainHasAny &&
     !chainIsSingleThinkingOnly &&
     (chainGroup
-      ? (chainGroup.allCompleted && chainGroup.allSuccessful)
-      : (chainStats.allCompleted && chainStats.allSuccessful)) &&
-    !isStreaming;
+      ? chainGroup.allCompleted
+      : chainStats.allCompleted);
+
+  const chainAllSuccessful = chainGroup
+    ? chainGroup.allSuccessful
+    : chainStats.allSuccessful;
 
   useEffect(() => {
     if (chainGroup) return;
@@ -245,11 +248,14 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
           >
             <span className={`thinking-block-arrow${chainCollapsed ? '' : ' open'}`}>›</span>
             <span className="chain-summary-text">{chainSummaryText}</span>
-            {chainCollapsed ? <span className="chain-summary-status">✓</span> : null}
+            {chainCollapsed ? <span className="chain-summary-status">{chainAllSuccessful ? '✓' : '!'}</span> : null}
           </button>
         )}
         {displayBlocks.map((block, i) => {
           if (chainCanCollapse && isChainBlock(block) && chainCollapsed) return null;
+          if (chainCanCollapse && chainCollapsed && block.type === 'text' && chainGroup?.hideTextWhenCollapsed) {
+            return null;
+          }
 
           const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
           if (isFinalTextBlock) {

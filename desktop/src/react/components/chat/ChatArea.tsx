@@ -69,6 +69,7 @@ const SCROLL_THRESHOLD = 300;
 type ChainGroupMeta = {
   key: string;
   isOwner: boolean;
+  hideTextWhenCollapsed: boolean;
   totalThinking: number;
   totalTools: number;
   allCompleted: boolean;
@@ -81,6 +82,10 @@ function isChainBlock(block: ContentBlock): boolean {
 
 function isAssistantMessageItem(item: ChatListItem | undefined): item is Extract<ChatListItem, { type: 'message' }> {
   return !!item && item.type === 'message' && item.data.role === 'assistant';
+}
+
+function hasTextBlock(msg: ChatMessage): boolean {
+  return (msg.blocks || []).some((block) => block.type === 'text');
 }
 
 function getMessageChainStats(msg: ChatMessage): {
@@ -152,10 +157,12 @@ function buildChainGroupMeta(path: string, items: ChatListItem[]): Record<number
     let totalTools = 0;
     let allCompleted = true;
     let allSuccessful = true;
+    let finalTextIndex = -1;
 
     for (let j = runStart; j <= runEnd; j++) {
       const runItem = items[j];
       if (!isAssistantMessageItem(runItem)) continue;
+      if (hasTextBlock(runItem.data)) finalTextIndex = j;
       const stats = getMessageChainStats(runItem.data);
       if (!stats.hasChain) continue;
       memberIndices.push(j);
@@ -172,6 +179,7 @@ function buildChainGroupMeta(path: string, items: ChatListItem[]): Record<number
         map[idx] = {
           key,
           isOwner: idx === ownerIndex,
+          hideTextWhenCollapsed: finalTextIndex >= 0 && idx !== finalTextIndex,
           totalThinking,
           totalTools,
           allCompleted,
@@ -188,7 +196,6 @@ function buildChainGroupMeta(path: string, items: ChatListItem[]): Record<number
 
 const Panel = memo(function Panel({ path, active }: { path: string; active: boolean }) {
   const items = useStore(s => s.chatSessions[path]?.items || []);
-  const isStreaming = useStore(s => s.isStreaming);
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
@@ -206,7 +213,9 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       const next: Record<string, boolean> = {};
       const nextEligible: Record<string, boolean> = {};
       for (const [key, meta] of unique) {
-        const eligible = meta.allCompleted && meta.allSuccessful && !isStreaming;
+        // 折叠稳定性：执行链完成（thinking 封口 + tools done）即可折叠，
+        // 不再要求“全部成功”，避免失败分支永不自动折叠。
+        const eligible = meta.allCompleted;
         const wasEligible = !!chainEligibleByKeyRef.current[key];
         nextEligible[key] = eligible;
 
@@ -220,7 +229,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       chainEligibleByKeyRef.current = nextEligible;
       return next;
     });
-  }, [chainMetaByIndex, isStreaming]);
+  }, [chainMetaByIndex]);
 
   // 判断是否在底部
   const checkAtBottom = () => {
@@ -362,9 +371,13 @@ const ItemView = memo(function ItemView({
   if (msg.role === 'user') {
     return <UserMessage message={msg} showAvatar={showAvatar} />;
   }
-  if (chainMeta && chainCollapsed) {
-    const stats = getMessageChainStats(msg);
-    if (stats.onlyChainBlocks && !chainMeta.isOwner) return null;
+  if (chainMeta && chainCollapsed && !chainMeta.isOwner) {
+    const hasVisibleBlocks = (msg.blocks || []).some((block) => {
+      if (isChainBlock(block)) return false;
+      if (block.type === 'text' && chainMeta.hideTextWhenCollapsed) return false;
+      return true;
+    });
+    if (!hasVisibleBlocks) return null;
   }
   return (
     <AssistantMessage
@@ -372,6 +385,7 @@ const ItemView = memo(function ItemView({
       showAvatar={showAvatar}
       chainGroup={chainMeta ? {
         isOwner: chainMeta.isOwner,
+        hideTextWhenCollapsed: chainMeta.hideTextWhenCollapsed,
         totalThinking: chainMeta.totalThinking,
         totalTools: chainMeta.totalTools,
         allCompleted: chainMeta.allCompleted,
