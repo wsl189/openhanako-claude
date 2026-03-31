@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "Hanako - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -49,6 +49,7 @@
     "chokidar": "^5.0.0",
     "clawhub": "^0.8.0",
     "codemirror": "^6.0.2",
+    "croner": "^10.0.1",
     "docx-preview": "^0.3.7",
     "duck-duck-scrape": "^2.2.7",
     "exceljs": "^4.4.0",

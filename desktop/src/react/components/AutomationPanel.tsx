@@ -17,6 +17,13 @@ interface CronJob {
   agentName?: string;
 }
 
+interface PromptModalJob {
+  id: string;
+  agentId?: string;
+  label: string;
+  prompt: string;
+}
+
 function normalizeDefaultModelValue(raw: unknown): string {
   const value = String(raw ?? '').trim();
   if (!value) return '';
@@ -30,9 +37,14 @@ function normalizeDefaultModelValue(raw: unknown): string {
 export function AutomationPanel() {
   const activePanel = useStore(s => s.activePanel);
   const agents = useStore(s => s.agents);
+  const addToast = useStore(s => s.addToast);
 
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [promptModalOpen, setPromptModalOpen] = useState(false);
+  const [promptModalJob, setPromptModalJob] = useState<PromptModalJob | null>(null);
+  const [promptDraft, setPromptDraft] = useState('');
+  const [promptSaving, setPromptSaving] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -93,10 +105,63 @@ export function AutomationPanel() {
         body: JSON.stringify({ action: 'update', id: jobId, ...fields, ...(agentId ? { agentId } : {}) }),
       });
       await loadData();
+      return true;
     } catch (err) {
       console.error('[automation] update failed:', err);
+      return false;
     }
   }, [loadData]);
+
+  const openPromptModal = useCallback((job: CronJob) => {
+    const labelText = job.label || job.prompt?.slice(0, 40) || job.id;
+    setPromptSaving(false);
+    setPromptModalJob({
+      id: job.id,
+      agentId: job.agentId,
+      label: labelText,
+      prompt: String(job.prompt ?? ''),
+    });
+    setPromptDraft(String(job.prompt ?? ''));
+    setPromptModalOpen(true);
+  }, []);
+
+  const closePromptModal = useCallback(async () => {
+    setPromptModalOpen(false);
+
+    if (!promptModalJob) return;
+    if (promptDraft === promptModalJob.prompt) return;
+
+    setPromptSaving(true);
+    const ok = await Promise.race<boolean>([
+      updateJob(promptModalJob.id, { prompt: promptDraft }, promptModalJob.agentId),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000)),
+    ]);
+    setPromptSaving(false);
+    if (!ok) {
+      addToast((window.t ?? ((p: string) => p))('automation.promptSaveFailed'), 'error', 3000);
+    }
+  }, [addToast, promptDraft, promptModalJob, updateJob]);
+
+  useEffect(() => {
+    if (!promptModalOpen) return;
+    const onKeyDown = (evt: KeyboardEvent) => {
+      if (evt.key === 'Escape') {
+        evt.preventDefault();
+        void closePromptModal();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [closePromptModal, promptModalOpen]);
+
+  useEffect(() => {
+    if (activePanel === 'automation') return;
+    if (!promptModalOpen && !promptModalJob) return;
+    setPromptModalOpen(false);
+    setPromptSaving(false);
+    setPromptModalJob(null);
+    setPromptDraft('');
+  }, [activePanel, promptModalJob, promptModalOpen]);
 
   if (activePanel !== 'automation') return null;
 
@@ -126,10 +191,39 @@ export function AutomationPanel() {
                   onToggle={toggleJob}
                   onRemove={removeJob}
                   onUpdate={updateJob}
+                  onEditPrompt={openPromptModal}
                 />
               ))
             )}
           </div>
+        </div>
+      </div>
+      <div
+        className={`automation-prompt-overlay${promptModalOpen ? ' visible' : ''}`}
+        onClick={(e) => { if (e.target === e.currentTarget) void closePromptModal(); }}
+      >
+        <div className="automation-prompt-card">
+          <button
+            className="automation-prompt-close-btn"
+            type="button"
+            onClick={() => void closePromptModal()}
+            aria-label={(window.t ?? ((p: string) => p))('automation.promptClose')}
+            title={(window.t ?? ((p: string) => p))('automation.promptClose')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+          <h3 className="automation-prompt-title">{(window.t ?? ((p: string) => p))('automation.promptTitle')}</h3>
+          <div className="automation-prompt-label">{promptModalJob?.label || ''}</div>
+          <textarea
+            className="settings-input automation-prompt-input"
+            value={promptDraft}
+            onChange={(e) => setPromptDraft(e.target.value)}
+            placeholder={(window.t ?? ((p: string) => p))('automation.promptPlaceholder')}
+          />
+          <div className="automation-prompt-hint">{(window.t ?? ((p: string) => p))('automation.promptHint')}</div>
         </div>
       </div>
     </div>
@@ -147,13 +241,15 @@ function AutomationItem({
   onToggle,
   onRemove,
   onUpdate,
+  onEditPrompt,
 }: {
   job: CronJob;
   agents: Array<{ id: string; name: string; yuan: string }>;
   favorites: string[];
   onToggle: (id: string, agentId?: string) => void;
   onRemove: (id: string, agentId?: string) => void;
-  onUpdate: (id: string, fields: Record<string, unknown>, agentId?: string) => void;
+  onUpdate: (id: string, fields: Record<string, unknown>, agentId?: string) => Promise<boolean>;
+  onEditPrompt: (job: CronJob) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -176,7 +272,7 @@ function AutomationItem({
   const commitEdit = useCallback(() => {
     const newText = editValue.trim();
     if (newText && newText !== labelText) {
-      onUpdate(job.id, { label: newText }, job.agentId);
+      void onUpdate(job.id, { label: newText }, job.agentId);
     }
     setEditing(false);
   }, [editValue, labelText, job.id, job.agentId, onUpdate]);
@@ -219,13 +315,23 @@ function AutomationItem({
             <span className="auto-item-executor-name">{ownerName}</span>
           </div>
           <span className="auto-item-schedule">{cronToHuman(job.schedule, job.type)}</span>
-          <span className="auto-item-model-wrap">
-            <SelectWidget
-              options={modelSelectOptions}
-              value={normalizedModelValue}
-              onChange={(modelId) => onUpdate(job.id, { model: modelId }, job.agentId)}
-              placeholder={(window.t ?? ((p: string) => p))('automation.defaultModel')}
-            />
+          <span className="auto-item-model-actions">
+            <span className="auto-item-model-wrap">
+              <SelectWidget
+                options={modelSelectOptions}
+                value={normalizedModelValue}
+                onChange={(modelId) => void onUpdate(job.id, { model: modelId }, job.agentId)}
+                placeholder={(window.t ?? ((p: string) => p))('automation.defaultModel')}
+              />
+            </span>
+            <button
+              className="auto-item-prompt-btn"
+              type="button"
+              onClick={() => onEditPrompt(job)}
+              title={(window.t ?? ((p: string) => p))('automation.promptBtn')}
+            >
+              {(window.t ?? ((p: string) => p))('automation.promptBtn')}
+            </button>
           </span>
         </div>
         <div className="auto-item-bottomline">

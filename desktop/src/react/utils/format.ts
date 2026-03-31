@@ -67,6 +67,44 @@ export function formatSessionDate(isoStr: string): string {
 
 export function cronToHuman(schedule: number | string, type?: string): string {
   const t = window.t ?? ((p: string) => p);
+  const dayNames: string[] = (t as any)('cron.dayNames') || ['日', '一', '二', '三', '四', '五', '六'];
+  const weekPrefix = t('cron.weekPrefix');
+  const renderDay = (idx: number): string => `${weekPrefix}${(Array.isArray(dayNames) ? dayNames : [])[idx] || String(idx)}`;
+  const parseDowIndex = (raw: string): number | null => {
+    const v = String(raw || '').trim().toUpperCase();
+    if (!v) return null;
+    const map: Record<string, number> = {
+      SUN: 0, MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6,
+    };
+    if (Object.prototype.hasOwnProperty.call(map, v)) return map[v];
+    if (!/^\d+$/.test(v)) return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    if (n === 7) return 0;
+    if (n >= 0 && n <= 6) return n;
+    return null;
+  };
+  const formatDowExpr = (expr: string): string => {
+    const raw = String(expr || '').trim();
+    if (!raw) return raw;
+    const upperRaw = raw.toUpperCase();
+    if (upperRaw === '1-5' || upperRaw === 'MON-FRI') return t('cron.workdays');
+    return raw.split(',').map((seg) => {
+      const token = seg.trim();
+      if (!token) return token;
+      const range = token.match(/^([A-Za-z]{3}|\d{1,2})-([A-Za-z]{3}|\d{1,2})$/);
+      if (range) {
+        const start = parseDowIndex(range[1]);
+        const end = parseDowIndex(range[2]);
+        if (start !== null && end !== null) return `${renderDay(start)}-${renderDay(end)}`;
+        return token;
+      }
+      const idx = parseDowIndex(token);
+      if (idx !== null) return renderDay(idx);
+      return token;
+    }).join('/');
+  };
+  const pad2 = (n: number): string => String(Math.max(0, Math.min(59, n))).padStart(2, '0');
   const toEveryMinutes = (raw: number): number => {
     if (!Number.isFinite(raw) || raw <= 0) return 1;
     // 兼容旧数据：5 这类值按“分钟数”理解
@@ -129,6 +167,19 @@ export function cronToHuman(schedule: number | string, type?: string): string {
   const parts = s.split(' ');
   if (parts.length !== 5) return s;
   const [min, hour, , , dow] = parts;
+
+  const minuteStep = min.match(/^\*\/(\d+)$/);
+  const hourRange = hour.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (minuteStep && hourRange) {
+    const n = Math.max(1, parseInt(minuteStep[1], 10));
+    const startHour = Math.max(0, Math.min(23, Number(hourRange[1])));
+    const endHour = Math.max(0, Math.min(23, Number(hourRange[2])));
+    const span = `${pad2(startHour)}:00-${pad2(endHour)}:59`;
+    const freq = t('cron.everyMinutes', { n });
+    const dayStr = dow === '*' ? '' : formatDowExpr(dow);
+    return dayStr ? `${dayStr} ${span} ${freq}` : `${span} ${freq}`;
+  }
+
   if (min === '*' && hour === '*' && dow === '*') {
     return t('cron.everyMinutes', { n: 1 });
   }
@@ -143,11 +194,14 @@ export function cronToHuman(schedule: number | string, type?: string): string {
   if (dow === '*' && hour !== '*' && min !== '*') {
     return t('cron.dailyAt', { hour, min: min.padStart(2, '0') });
   }
-  const dayNames: string[] = (t as any)('cron.dayNames') || ['日', '一', '二', '三', '四', '五', '六'];
-  const weekPrefix = t('cron.weekPrefix');
-  if (dow !== '*' && hour !== '*') {
-    const dayStr = dow.split(',').map(d => `${weekPrefix}${(Array.isArray(dayNames) ? dayNames : [])[+d] || d}`).join('/');
+  if (dow !== '*' && hour !== '*' && /^\d+$/.test(hour) && /^\d+$/.test(min)) {
+    const dayStr = formatDowExpr(dow);
     return t('cron.weeklyAt', { days: dayStr, hour, min: min.padStart(2, '0') });
+  }
+
+  if (dow !== '*') {
+    const dayStr = formatDowExpr(dow);
+    if (dayStr !== dow) return `${dayStr} ${hour} ${min}`;
   }
   return s;
 }

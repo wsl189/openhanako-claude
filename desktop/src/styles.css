@@ -1243,9 +1243,17 @@ html[data-platform="linux"] .tb-toggle-right {
     flex-shrink: 0;
 }
 
+.auto-item-model-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
 .auto-item-model-wrap .sdw {
-    width: 160px;
-    max-width: 160px;
+    width: 6em;
+    max-width: 6em;
 }
 
 .auto-item-model-wrap .sdw-trigger {
@@ -1259,6 +1267,24 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .auto-item-model-wrap .sdw-option {
     font-size: 0.7rem;
+}
+
+.auto-item-prompt-btn {
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 3px 8px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-light);
+    cursor: pointer;
+    transition: all 0.15s var(--ease-out);
+    white-space: nowrap;
+}
+
+.auto-item-prompt-btn:hover {
+    filter: brightness(0.98);
+    transform: translateY(-1px);
 }
 
 .auto-item-actions {
@@ -6909,6 +6935,82 @@ body.resizing .jian-sidebar-inner {
 }
 
 .channel-announcement-hint {
+    margin-top: var(--space-sm);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+/* 任务计划提示词编辑浮层 */
+.automation-prompt-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 111;
+    pointer-events: auto;
+}
+
+.automation-prompt-overlay.visible {
+    display: flex;
+}
+
+.automation-prompt-card {
+    position: relative;
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    width: 520px;
+    max-width: 92vw;
+    box-shadow: 0 12px 48px var(--shadow);
+    animation: dropdown-in 0.2s var(--ease-out);
+    pointer-events: auto;
+}
+
+.automation-prompt-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0 28px var(--space-xs) 0;
+    color: var(--text);
+}
+
+.automation-prompt-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: var(--space-sm);
+    line-height: 1.4;
+}
+
+.automation-prompt-close-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s var(--ease-out);
+}
+
+.automation-prompt-close-btn:hover {
+    background: var(--overlay-light);
+    color: var(--text);
+}
+
+.automation-prompt-input {
+    min-height: 220px;
+    resize: vertical;
+    line-height: 1.55;
+}
+
+.automation-prompt-hint {
     margin-top: var(--space-sm);
     font-size: 0.72rem;
     color: var(--text-muted);
