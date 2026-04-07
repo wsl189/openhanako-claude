@@ -418,6 +418,11 @@ export class ChannelRouter {
   async _executeReply(agentId, channelName, msgText, { signal, forceReply = false, latestUserMessage = null, channelMemoryEnabled = true } = {}) {
     const isZh = getLocale().startsWith("zh");
     const roleContext = this._buildChannelRoleContext(agentId, channelName);
+    const memoryToolHint = channelMemoryEnabled
+      ? (isZh
+        ? "当前频道已开启“参考记忆”。需要补充过往信息时，可调用 search_memory 工具检索后再回答。"
+        : "Channel memory is enabled. If you need prior context, call search_memory and answer based on those results.")
+      : null;
     const latestUserFocus = (() => {
       if (!latestUserMessage) {
         return isZh
@@ -438,16 +443,18 @@ export class ChannelRouter {
           "先处理最新用户消息；若用户发了新任务，不要继续重复回答更早的问题。",
           "禁止输出延后承诺：不要说“我现在去查/稍等/马上回来/待会给你结果”等未来时态。",
           "如果消息要求你检索（如搜/查/search/look up），必须在本轮内直接调用工具完成检索并给出结果。",
+          memoryToolHint,
           "若确实无法完成检索，也要在本轮明确说明阻碍原因和所需补充信息，不要给空承诺。",
-        ].join("\n")
+        ].filter(Boolean).join("\n")
       : [
           "You are in channel-reply mode: this round has one speaking turn. Output only the visible message you want to post.",
           "Messages are ordered oldest-to-newest; the last content is the latest.",
           "Handle the latest user message first. If the user issued a new task, do not keep re-answering older questions.",
           "No deferred promises: do not say things like \"I'll search now\", \"wait\", \"I'll come back with results\".",
           "If the message asks you to search/look up, you must do the search in this same round and provide results.",
+          memoryToolHint,
           "If you truly cannot complete the search, explicitly state the blocker and what information is needed, without future-tense promises.",
-        ].join("\n"));
+        ].filter(Boolean).join("\n"));
     const text = await runAgentSession(
       agentId,
       [
@@ -457,10 +464,12 @@ export class ChannelRouter {
               + `你只有这一轮回复机会。请在这一轮里结合频道上下文，直接给出你要发到群聊的回复内容。`
               + `如果你希望其他成员参与，不要用 @ 触发；请调用 ask_agent(agent=xxx 或 agents=[...], task, channel="${channelName}")，让对方直接在本群回复。`
               + `如果本轮要检索，请先检索再回答，不要只说“我去查一下”。`
+              + (channelMemoryEnabled ? `如果需要补充过往信息，可调用 search_memory 工具检索相关记忆。` : ``)
             : `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}\n\n`
               + `You only have one reply round. In this same round, rely on channel context and directly output the message you want to post in the group chat.`
               + `If another member is needed, do not trigger via @mention; call ask_agent(agent=... or agents=[...], task, channel="${channelName}") so they post directly in this channel.`
-              + `If search is needed, search first and answer now; do not only say you'll do it later.`,
+              + `If search is needed, search first and answer now; do not only say you'll do it later.`
+              + (channelMemoryEnabled ? ` If prior context is needed, you may call search_memory.` : ``),
           capture: true,
         },
       ],
