@@ -130,7 +130,7 @@ export class SkillManager {
     this._reloadDeps = { resourceLoader, agents, onReloaded };
     if (this._watcher) return;
 
-    const watchPaths = [this.skillsDir, this.agentsDir].filter(Boolean);
+    const watchPaths = this._buildWatchPaths();
     if (watchPaths.length === 0) return;
 
     try {
@@ -240,5 +240,16 @@ export class SkillManager {
     const base = path.basename(p);
     // 注意：不能按完整路径匹配 "/."，否则会误伤 ~/.hanako/ 下的正常目录监听。
     return base.startsWith(".") || /[~#]$/.test(base);
+  }
+
+  _buildWatchPaths() {
+    const out = [];
+    if (this.skillsDir) {
+      out.push(this.skillsDir);
+    }
+    if (this.agentsDir) {
+      out.push(path.join(this.agentsDir, "*/skills"));
+    }
+    return out;
   }
 }

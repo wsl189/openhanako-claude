@@ -17,4 +17,11 @@ describe("SkillManager watch ignore filter", () => {
     expect(mgr._shouldIgnoreWatchPath("/Users/test/.hanako/skills/my-skill/SKILL.md~")).toBe(true);
     expect(mgr._shouldIgnoreWatchPath("/Users/test/.hanako/skills/my-skill/#SKILL.md#")).toBe(true);
   });
+
+  it("only watches global skills and per-agent skills directories", () => {
+    expect(mgr._buildWatchPaths()).toEqual([
+      "/Users/test/.hanako/skills",
+      "/Users/test/.hanako/agents/*/skills",
+    ]);
+  });
 });
