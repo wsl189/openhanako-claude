@@ -46,6 +46,8 @@
     "disabled": "频道功能已关闭",
     "toggleLabel": "频道功能开关",
     "members": "成员",
+    "memoryOn": "本频道参考记忆",
+    "memoryOff": "本频道不参考记忆",
     "mentionAll": "全体成员",
     "announcementBtn": "群公告",
     "announcementTitle": "编辑群公告",
@@ -1572,9 +1574,11 @@
     },
     "askAgent": {
       "label": "跨 Agent 调用",
-      "description": "派任务给另一个 agent，立即拿到结果。对方会当场处理并回复，你可以直接把结果告诉用户。\n适用场景：让对方 review 代码、翻译一段文字、从对方的专业视角分析问题等需要即时反馈的任务。\n对方以自己的人格和模型回复，有只读工具（读文件、搜索、web fetch），不能写文件或调用其他 agent。",
+      "description": "派任务给一个或多个 agent，立即拿到结果。对方会当场处理并回复，你可以直接把结果告诉用户。\n适用场景：让对方 review 代码、翻译一段文字、从对方的专业视角分析问题等需要即时反馈的任务。\n对方以自己的人格和模型回复，有只读工具（读文件、搜索、web fetch），不能写文件或调用其他 agent。\n在频道模式下可传 channel，让被调用方以自己的身份直接在该频道发言；传多个 agent 时会并行执行。",
       "agentDesc": "目标 agent 的 ID",
-      "taskDesc": "任务描述（对方看到的完整 prompt）"
+      "agentsDesc": "可选：多个目标 agent ID（数组）。填写后并行调用",
+      "taskDesc": "任务描述（对方看到的完整 prompt）",
+      "channelDesc": "可选：频道 ID。传入后，被调用方会直接在该频道发言"
     },
     "dm": {
       "label": "私信",

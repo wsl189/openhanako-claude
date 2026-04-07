@@ -107,6 +107,18 @@ export class PreferencesManager {
     this.savePreferences(prefs);
   }
 
+  /** 读取频道模式“是否参考记忆”偏好（默认 true） */
+  getChannelMemoryEnabled() {
+    return this.getPreferences().channel_memory_enabled !== false;
+  }
+
+  /** 保存频道模式“是否参考记忆”偏好 */
+  setChannelMemoryEnabled(enabled) {
+    const prefs = this.getPreferences();
+    prefs.channel_memory_enabled = enabled !== false;
+    this.savePreferences(prefs);
+  }
+
   /** 读取外部技能扫描路径 */
   getExternalSkillPaths() {
     return this.getPreferences().external_skill_paths || [];

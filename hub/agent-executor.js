@@ -27,6 +27,43 @@ const IMAGE_MIME_BY_EXT = {
   ".ico": "image/x-icon",
 };
 
+function isReasoningLikeType(type) {
+  const normalized = String(type || "").toLowerCase();
+  if (!normalized || normalized === "text") return false;
+  return /(reason|think|analysis|commentary|summary)/.test(normalized);
+}
+
+function pickBlockText(block) {
+  if (typeof block === "string") return block;
+  if (!block || typeof block !== "object") return "";
+  if (typeof block.text === "string") return block.text;
+  if (typeof block.content === "string") return block.content;
+  if (typeof block.reasoning === "string") return block.reasoning;
+  if (typeof block.thinking === "string") return block.thinking;
+  if (typeof block.output_text === "string") return block.output_text;
+  return "";
+}
+
+function extractVisibleText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    let text = "";
+    for (const block of content) {
+      const part = pickBlockText(block);
+      if (!part) continue;
+      if (isReasoningLikeType(block?.type)) continue;
+      text += part;
+    }
+    return text;
+  }
+  if (!content || typeof content !== "object") return "";
+  if (typeof content.output_text === "string") return content.output_text;
+  const part = pickBlockText(content);
+  if (!part) return "";
+  if (isReasoningLikeType(content.type)) return "";
+  return part;
+}
+
 function isImagePath(filePath = "") {
   const ext = path.extname(String(filePath || "")).toLowerCase();
   return !!IMAGE_MIME_BY_EXT[ext];
@@ -183,12 +220,23 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
 
   // 5. 文本捕获
   let capturedText = "";
+  let capturedSnapshotText = "";
   let isCapturing = false;
   const unsub = session.subscribe((event) => {
     if (!isCapturing) return;
     if (event.type === "message_update") {
       const sub = event.assistantMessageEvent;
-      if (sub?.type === "text_delta") capturedText += sub.delta || "";
+      if (!sub) return;
+      if (sub.type === "text_delta") {
+        capturedText += sub.delta || "";
+      }
+      if (sub.type === "text_delta" || sub.type === "text_end" || sub.type === "done") {
+        const snapshot =
+          extractVisibleText(sub.partial?.content)
+          || extractVisibleText(sub.content)
+          || extractVisibleText(event.message?.content);
+        if (snapshot) capturedSnapshotText = snapshot;
+      }
     }
   });
 
@@ -206,7 +254,10 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
     for (const round of rounds) {
       throwIfAborted();
       isCapturing = !!round.capture;
-      if (round.capture) capturedText = "";
+      if (round.capture) {
+        capturedText = "";
+        capturedSnapshotText = "";
+      }
       const inlineImages = extractInlineImages ? readImagesFromText(round.text, 10) : [];
       const explicitImages = Array.isArray(round.images) ? round.images : [];
       const roundImages = [...explicitImages, ...inlineImages];
@@ -219,6 +270,10 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
 
       const promptOpts = roundImages.length ? { images: roundImages } : undefined;
       await session.prompt(round.text, promptOpts);
+      if (round.capture && capturedSnapshotText) {
+        // 优先使用最后一次 assistant 快照，避免把工具阶段中间输出拼接进最终回复。
+        capturedText = capturedSnapshotText;
+      }
       // 关键：有些 provider 在 abort 后可能仍返回一次已生成片段。
       // 这里强制按“已中止=丢弃本轮结果”处理，避免泄露中间/半截输出。
       throwIfAborted();

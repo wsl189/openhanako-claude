@@ -1684,7 +1684,7 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--accent);
 }
 
-/* 记忆开关按钮（welcome 页面） */
+/* 记忆开关按钮（welcome / channel header） */
 .memory-toggle-btn {
     display: inline-flex;
     align-items: center;
@@ -12499,17 +12499,44 @@ a.about-link:hover {
     display: flex;
     align-items: baseline;
     gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.channel-header-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
 }
 
 .channel-header-name {
     font-size: 0.95rem;
     font-weight: 600;
     color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .channel-header-members {
     font-size: 0.72rem;
     color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.channel-memory-toggle {
+    margin-top: 0;
+    padding: 0.3rem 0.58rem;
+    flex-shrink: 0;
+}
+
+.channel-memory-toggle:disabled {
+    opacity: 0.55;
+    cursor: default;
 }
 
 /* ── IM 风格消息 ── */
@@ -13108,6 +13135,12 @@ a.about-link:hover {
     .channel-readonly-notice {
         padding-left: var(--space-md);
         padding-right: var(--space-md);
+    }
+    .channel-memory-toggle span {
+        display: none;
+    }
+    .channel-memory-toggle {
+        padding: 0.28rem;
     }
 }
 

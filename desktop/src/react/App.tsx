@@ -26,6 +26,7 @@ import {
   ChannelList,
   ChannelMessages,
   ChannelMembers,
+  ChannelMemoryToggle,
   ChannelInput,
   ChannelReadonly,
   ChannelCreate,
@@ -553,9 +554,12 @@ function App() {
 
           <div className="channel-view" id="channelView">
             <div className={`channel-header${currentChannel ? '' : ' hidden'}`} id="channelHeader">
-              <div className="channel-header-info">
-                <span className="channel-header-name" id="channelHeaderName"></span>
-                <span className="channel-header-members" id="channelHeaderMembers"></span>
+              <div className="channel-header-main">
+                <div className="channel-header-info">
+                  <span className="channel-header-name" id="channelHeaderName"></span>
+                  <span className="channel-header-members" id="channelHeaderMembers"></span>
+                </div>
+                <ChannelMemoryToggle />
               </div>
             </div>
             <div className="channel-messages" id="channelMessages">

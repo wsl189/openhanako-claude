@@ -357,6 +357,34 @@ function ChannelHeaderSync() {
   return null;
 }
 
+export function ChannelMemoryToggle() {
+  const { t } = useI18n();
+  const currentChannel = useStore((s) => s.currentChannel);
+  const channelIsDM = useStore((s) => s.channelIsDM);
+  const channelMemoryEnabled = useStore((s) => s.channelMemoryEnabled);
+  const channelMemoryLoading = useStore((s) => s.channelMemoryLoading);
+  const toggleCurrentChannelMemory = useStore((s) => s.toggleCurrentChannelMemory);
+
+  if (!currentChannel || channelIsDM) return null;
+
+  return (
+    <button
+      className={'memory-toggle-btn channel-memory-toggle' + (channelMemoryEnabled ? ' active' : '')}
+      onClick={() => { void toggleCurrentChannelMemory(); }}
+      disabled={channelMemoryLoading}
+      aria-pressed={channelMemoryEnabled}
+      title={t(channelMemoryEnabled ? 'channel.memoryOn' : 'channel.memoryOff')}
+    >
+      <svg className="memory-toggle-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 8a4 4 0 1 0 0 8" />
+        <path d="M12 2v2M12 20v2" />
+      </svg>
+      <span>{t(channelMemoryEnabled ? 'channel.memoryOn' : 'channel.memoryOff')}</span>
+    </button>
+  );
+}
+
 // ══════════════════════════════════════════════════════
 // ChannelList — 频道列表
 // ══════════════════════════════════════════════════════

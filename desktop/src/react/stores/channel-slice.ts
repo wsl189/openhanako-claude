@@ -13,6 +13,8 @@ export interface ChannelSlice {
   channelHeaderMembersText: string;
   channelInfoName: string;
   channelAnnouncement: string;
+  channelMemoryEnabled: boolean;
+  channelMemoryLoading: boolean;
   channelPreviewInfoName: string;
   channelPreviewMembers: string[];
   channelPreviewAnnouncement: string;
@@ -23,9 +25,12 @@ export interface ChannelSlice {
   setChannelMessages: (messages: ChannelMessage[]) => void;
   setChannelTotalUnread: (count: number) => void;
   setChannelAnnouncement: (announcement: string) => void;
+  setChannelMemoryEnabled: (enabled: boolean) => void;
+  setChannelMemoryLoading: (loading: boolean) => void;
   loadChannels: () => Promise<void>;
   loadChannelPreview: (channelId: string) => Promise<void>;
   openChannel: (channelId: string, isDM?: boolean) => Promise<void>;
+  toggleCurrentChannelMemory: () => Promise<void>;
   saveChannelAnnouncement: (announcement: string) => Promise<boolean>;
   sendChannelMessage: (text: string) => Promise<void>;
   resetChannelContext: () => Promise<void>;
@@ -52,6 +57,8 @@ export const createChannelSlice = (
   channelHeaderMembersText: '',
   channelInfoName: '',
   channelAnnouncement: '',
+  channelMemoryEnabled: true,
+  channelMemoryLoading: false,
   channelPreviewInfoName: '',
   channelPreviewMembers: [],
   channelPreviewAnnouncement: '',
@@ -62,6 +69,8 @@ export const createChannelSlice = (
   setChannelMessages: (messages) => set({ channelMessages: messages }),
   setChannelTotalUnread: (count) => set({ channelTotalUnread: count }),
   setChannelAnnouncement: (announcement) => set({ channelAnnouncement: announcement }),
+  setChannelMemoryEnabled: (enabled) => set({ channelMemoryEnabled: enabled }),
+  setChannelMemoryLoading: (loading) => set({ channelMemoryLoading: loading }),
 
   loadChannels: async () => {
     const s = get!();
@@ -143,6 +152,7 @@ export const createChannelSlice = (
     set({
       currentChannel: channelId,
       ...(isThisDM ? {} : { channelWelcomeSelectedId: channelId }),
+      channelMemoryLoading: false,
     });
 
     try {
@@ -159,6 +169,8 @@ export const createChannelSlice = (
           channelIsDM: true,
           channelInfoName: data.peerName || peerId,
           channelAnnouncement: '',
+          channelMemoryEnabled: true,
+          channelMemoryLoading: false,
         });
       } else {
         const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}`);
@@ -174,6 +186,8 @@ export const createChannelSlice = (
           channelIsDM: false,
           channelInfoName: data.name || channelId,
           channelAnnouncement: String(data.announcement || ''),
+          channelMemoryEnabled: data.memoryEnabled !== false,
+          channelMemoryLoading: false,
           channelPreviewInfoName: data.name || channelId,
           channelPreviewMembers: members,
           channelPreviewAnnouncement: String(data.announcement || ''),
@@ -200,6 +214,37 @@ export const createChannelSlice = (
       }
     } catch (err) {
       console.error('[channels] open failed:', err);
+    }
+  },
+
+  toggleCurrentChannelMemory: async () => {
+    const s = get!();
+    if (!s.currentChannel || s.channelIsDM || s.channelMemoryLoading) return;
+
+    const channelId = s.currentChannel;
+    const next = !s.channelMemoryEnabled;
+    set({ channelMemoryEnabled: next, channelMemoryLoading: true });
+    try {
+      const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}/memory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data?.error) throw new Error(String(data.error));
+      if (get!().currentChannel === channelId) {
+        set({ channelMemoryEnabled: data?.enabled !== false });
+      }
+    } catch (err) {
+      console.error('[channels] toggle memory failed:', err);
+      if (get!().currentChannel === channelId) {
+        set({ channelMemoryEnabled: !next });
+      }
+    } finally {
+      if (get!().currentChannel === channelId) {
+        set({ channelMemoryLoading: false });
+      }
     }
   },
 

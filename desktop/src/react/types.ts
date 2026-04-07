@@ -41,6 +41,7 @@ export interface Channel {
   lastSender: string;
   lastTimestamp: string;
   newMessageCount: number;
+  memoryEnabled?: boolean;
   isDM?: boolean;
   peerId?: string;
   peerName?: string;

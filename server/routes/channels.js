@@ -7,6 +7,8 @@
  * GET    /api/channels              — 列出所有频道 + 用户 bookmark + 未读数
  * POST   /api/channels              — 创建新频道
  * GET    /api/channels/:id          — 获取频道消息 + 成员列表
+ * GET    /api/channels/:id/memory   — 获取频道“参考记忆”开关
+ * POST   /api/channels/:id/memory   — 更新频道“参考记忆”开关
  * POST   /api/channels/:id/announcement — 更新频道公告
  * POST   /api/channels/:id/messages — 用户发送群聊消息
  * POST   /api/channels/:id/new      — 开启新对话（重置上下文，保留历史）
@@ -28,6 +30,8 @@ import {
   updateBookmark,
   addBookmarkEntry,
   getChannelMeta,
+  getChannelMemoryEnabled,
+  setChannelMemoryEnabled,
   getChannelAnnouncementFromMeta,
   setChannelAnnouncement,
   isContextResetMessage,
@@ -143,6 +147,57 @@ export default async function channelsRoute(app, { engine, hub }) {
       for (const [k, v] of bookmarks) bookmarksObj[k] = v;
 
       return { channels, bookmarks: bookmarksObj };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // ── 频道模式记忆开关 ──
+  app.get("/api/channels/memory", async () => {
+    return { enabled: engine.getChannelMemoryEnabled?.() !== false };
+  });
+
+  app.post("/api/channels/memory", async (req, reply) => {
+    try {
+      const enabled = req.body?.enabled !== false;
+      engine.setChannelMemoryEnabled?.(enabled);
+      return { ok: true, enabled: engine.getChannelMemoryEnabled?.() !== false };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // ── 单频道记忆开关 ──
+  app.get("/api/channels/:name/memory", async (req, reply) => {
+    try {
+      const { name } = req.params;
+      const filePath = safeChannelPath(name);
+      if (!filePath) { reply.code(400); return { error: "Invalid channel id" }; }
+      if (!fs.existsSync(filePath)) {
+        reply.code(404);
+        return { error: "Channel not found" };
+      }
+      return { enabled: getChannelMemoryEnabled(filePath) };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  app.post("/api/channels/:name/memory", async (req, reply) => {
+    try {
+      const { name } = req.params;
+      const filePath = safeChannelPath(name);
+      if (!filePath) { reply.code(400); return { error: "Invalid channel id" }; }
+      if (!fs.existsSync(filePath)) {
+        reply.code(404);
+        return { error: "Channel not found" };
+      }
+      const enabled = req.body?.enabled !== false;
+      setChannelMemoryEnabled(filePath, enabled);
+      return { ok: true, enabled: getChannelMemoryEnabled(filePath) };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
@@ -284,6 +339,7 @@ export default async function channelsRoute(app, { engine, hub }) {
         name: meta.name || name,
         description: meta.description || "",
         announcement: getChannelAnnouncementFromMeta(meta),
+        memoryEnabled: getChannelMemoryEnabled(filePath),
         messages: apiMessages,
         members,
       };

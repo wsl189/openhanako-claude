@@ -20,10 +20,10 @@ import {
   appendMessage,
   formatMessagesForLLM,
   getChannelMeta,
+  getChannelMemoryEnabledFromMeta,
   getChannelAnnouncementFromMeta,
   normalizeChannelMembersToAgentIds,
 } from "../lib/channels/channel-store.js";
-import { collectMentionedAgentIds } from "../lib/channels/channel-mentions.js";
 import { loadConfig } from "../lib/memory/config-loader.js";
 import { compileToday, assemble } from "../lib/memory/compile.js";
 import { callProviderText } from "../lib/llm/provider-client.js";
@@ -124,8 +124,7 @@ export class ChannelRouter {
   /**
    * 注入频道 post 回调到所有 agent
    * agent 用 channel tool 发消息后：
-   * - 无 @：不触发
-   * - 有 @：仅触发被 @ 的 agent
+   * - 仅广播新消息事件，不再由 agent 发言中的 @ 触发其他 agent
    * 使用异步非抢占调度，避免打断当前回复生成。
    */
   setupPostHandler() {
@@ -197,7 +196,8 @@ export class ChannelRouter {
         "- 消息按时间从旧到新排列，越靠后的消息越新。",
         "- 回复优先级：优先处理最新一条用户消息；除非用户明确要求，不要重复回答更早的问题。",
         "- 如果记忆里出现与上述身份锚点冲突的信息，按本锚点为准，忽略冲突记忆。",
-        "- 如果你想让其他成员处理任务，请直接在消息里 @该成员并说清任务，不要说“我没办法让他回复”。",
+        "- 如果你需要其他成员完成任务，优先使用 ask_agent 工具发起，并传入 channel=#当前频道，让对方直接在群里回复。",
+        "- 不要为了打招呼或寒暄去 @ 其他成员。只有用户明确 @ 某成员时，才由系统强制触发该成员回复。",
         "- 你只代表自己发言，不要把自己当作用户，也不要把其他 agent 当作用户。",
       ].filter(Boolean).join("\n");
 
@@ -227,7 +227,8 @@ export class ChannelRouter {
       "- Messages are ordered from older to newer; later messages are more recent.",
       "- Reply priority: handle the latest user message first; do not re-answer older questions unless explicitly asked.",
       "- If memory conflicts with this identity anchor, follow this anchor and ignore the conflicting memory.",
-      "- If you need another member to act, directly @mention that member with a concrete task. Do not claim you cannot trigger them.",
+      "- If you need another member to handle a task, use ask_agent and pass channel=#current-channel so that member replies in-channel directly.",
+      "- Do not @mention other members for greetings/small talk. Only user @mentions are treated as mandatory triggers.",
       "- Speak only as yourself. Do not treat yourself as the user, and do not treat other agents as the user.",
     ].filter(Boolean).join("\n");
 
@@ -253,6 +254,9 @@ export class ChannelRouter {
    */
   async _executeCheck(agentId, channelName, newMessages, _allChannelUpdates, { signal, forceReply = false } = {}) {
     const engine = this._engine;
+    const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
+    const channelMeta = getChannelMeta(channelFile);
+    const channelMemoryEnabled = getChannelMemoryEnabledFromMeta(channelMeta);
     this._emitChannelAgentActivity(channelName, agentId, true);
     try {
       const msgText = formatMessagesForLLM(newMessages);
@@ -283,7 +287,7 @@ export class ChannelRouter {
       const memoryMd = readFile(path.join(agentDir, "memory", "memory.md"));
       const userMd = readFile(path.join(engine.userDir, "user.md"));
       const isZh = getLocale().startsWith("zh");
-      const memoryContext = memoryMd?.trim()
+      const memoryContext = channelMemoryEnabled && memoryMd?.trim()
         ? (isZh ? `\n\n你的记忆：\n${memoryMd}` : `\n\nYour memory:\n${memoryMd}`)
         : "";
       const userContext = userMd?.trim()
@@ -365,6 +369,7 @@ export class ChannelRouter {
           signal,
           forceReply: isMentioned,
           latestUserMessage,
+          channelMemoryEnabled,
         });
 
         if (!replyText) {
@@ -375,7 +380,7 @@ export class ChannelRouter {
         // 写入频道文件
         const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
         const { timestamp: replyTimestamp } = appendMessage(channelFile, agentId, replyText);
-        // 自动 triage 回复不再触发二次 @ 级联，避免同一条 @ 消息回环重放。
+        // agent 发言统一只广播，不再触发基于 @ 的二次调度。
         this._handleAgentPost(channelName, agentId, replyText, { source: "auto_reply" });
 
         console.log(`\x1b[90m[channel] ${agentId} replied #${channelName} (${replyText.length} chars)\x1b[0m`);
@@ -410,7 +415,7 @@ export class ChannelRouter {
   /**
    * 单轮 Agent Session 生成频道回复
    */
-  async _executeReply(agentId, channelName, msgText, { signal, forceReply = false, latestUserMessage = null } = {}) {
+  async _executeReply(agentId, channelName, msgText, { signal, forceReply = false, latestUserMessage = null, channelMemoryEnabled = true } = {}) {
     const isZh = getLocale().startsWith("zh");
     const roleContext = this._buildChannelRoleContext(agentId, channelName);
     const latestUserFocus = (() => {
@@ -449,12 +454,12 @@ export class ChannelRouter {
         {
           text: isZh
             ? `${latestUserFocus}\n\n#${channelName} 频道的最近消息（按时间从旧到新）：\n\n${msgText}\n\n`
-              + `你只有这一轮回复机会。请在这一轮里结合上下文，必要时用 search_memory 检索记忆，然后直接给出你要发到群聊的回复内容。`
-              + `如果你希望其他成员参与，直接在回复里 @对方并给出明确任务。`
+              + `你只有这一轮回复机会。请在这一轮里结合频道上下文，直接给出你要发到群聊的回复内容。`
+              + `如果你希望其他成员参与，不要用 @ 触发；请调用 ask_agent(agent=xxx 或 agents=[...], task, channel="${channelName}")，让对方直接在本群回复。`
               + `如果本轮要检索，请先检索再回答，不要只说“我去查一下”。`
             : `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}\n\n`
-              + `You only have one reply round. In this same round, use context and call search_memory when needed, then directly output the message you want to post in the group chat.`
-              + `If you need another member to join, directly @mention them with a clear task.`
+              + `You only have one reply round. In this same round, rely on channel context and directly output the message you want to post in the group chat.`
+              + `If another member is needed, do not trigger via @mention; call ask_agent(agent=... or agents=[...], task, channel="${channelName}") so they post directly in this channel.`
               + `If search is needed, search first and answer now; do not only say you'll do it later.`,
           capture: true,
         },
@@ -462,6 +467,7 @@ export class ChannelRouter {
       {
         engine: this._engine,
         signal,
+        noMemory: !channelMemoryEnabled,
         sessionSuffix: "channel-temp",
         extractInlineImages: true,
         systemAppend: sessionRoleAppend,
@@ -469,33 +475,44 @@ export class ChannelRouter {
     );
 
     if (!text?.trim()) {
-      if (forceReply) {
-        // 被 @ 时首轮空输出：再重试一次，要求直接回答问题，避免只回“我在”。
-        const retryText = await runAgentSession(
-          agentId,
-          [
-            {
-              text: isZh
+      // 首轮空输出：统一再重试一次，要求给出“可见频道消息”。
+      const retryText = await runAgentSession(
+        agentId,
+        [
+          {
+            text: isZh
+              ? forceReply
                 ? `你刚才没有输出可见回复。现在请直接回答用户刚才的问题，不要只确认收到 @，不要输出空白。`
                   + `如果需要检索，本轮立刻检索并给结果，禁止“我现在去查/稍等”这类延后承诺。`
                   + `务必先处理“本轮主任务（最新用户消息）”，不要重复回答更早问题。`
                   + `\n\n${latestUserFocus}\n\n#${channelName} 最近消息（按时间从旧到新）：\n\n${msgText}`
-                : `You produced no visible reply. Now directly answer the user's latest question. Do not only acknowledge the @, and do not output blank text. `
+                : `你刚才没有输出可见回复。现在必须输出一条你自己的频道消息，禁止空白。`
+                  + `如果你刚调用 ask_agent 分配了任务，请简要同步你已分配给谁，并提示查看对应成员回复。`
+                  + `务必先处理“本轮主任务（最新用户消息）”，不要重复回答更早问题。`
+                  + `\n\n${latestUserFocus}\n\n#${channelName} 最近消息（按时间从旧到新）：\n\n${msgText}`
+              : forceReply
+                ? `You produced no visible reply. Now directly answer the user's latest question. Do not only acknowledge the @, and do not output blank text. `
                   + `If search is needed, do it now and provide results; do not promise to do it later. `
                   + `You must prioritize the primary task (latest user message) and avoid re-answering older questions.\n\n`
+                  + `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}`
+                : `You produced no visible reply. You must output one visible channel message now; no blank output. `
+                  + `If you just delegated via ask_agent, briefly state who was assigned and ask the user to check those members' replies. `
+                  + `Prioritize the primary task (latest user message) and avoid re-answering older questions.\n\n`
                   + `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}`,
-              capture: true,
-            },
-          ],
+            capture: true,
+          },
+        ],
           {
             engine: this._engine,
             signal,
+            noMemory: !channelMemoryEnabled,
             sessionSuffix: "channel-temp",
             extractInlineImages: true,
             systemAppend: sessionRoleAppend,
           },
-        );
-        if (retryText?.trim()) return retryText.trim();
+      );
+      if (retryText?.trim()) return retryText.trim();
+      if (forceReply) {
         return isZh ? "我看到你的问题了，刚才生成失败了，请再发一次，我会直接回答。" : "I saw your question, but generation failed just now. Please send it again and I'll answer directly.";
       }
       debugLog()?.log("channel", `${agentId}/#${channelName}: chose not to reply`);
@@ -506,43 +523,16 @@ export class ChannelRouter {
   }
 
   /**
-   * 在频道上下文中提取被 @ 的 agent（可排除发送者自己）
-   * @param {string} channelName
-   * @param {string} text
-   * @param {{ excludeAgentIds?: string[] }} [opts]
-   * @returns {string[]}
-   */
-  _collectMentionedAgentsInChannel(channelName, text, { excludeAgentIds = [] } = {}) {
-    const channelFile = path.join(this._engine.channelsDir, `${channelName}.md`);
-    const meta = getChannelMeta(channelFile);
-    const channelMembers = Array.isArray(meta.members) ? meta.members : [];
-    const allAgents = this._engine.listAgents?.() || [];
-
-    const excluded = new Set((excludeAgentIds || []).filter(Boolean));
-    return collectMentionedAgentIds(String(text || ""), allAgents, channelMembers)
-      .filter(id => !excluded.has(id));
-  }
-
-  /**
-   * 统一处理“agent 在频道发言后”的实时广播 + @ 触发逻辑
+   * 统一处理“agent 在频道发言后”的实时广播
    * @param {string} channelName
    * @param {string} senderId
-   * @param {string} content
+   * @param {string} _content
    * @param {{ source?: "tool" | "auto_reply" }} [opts]
    */
-  _handleAgentPost(channelName, senderId, content = "", { source = "tool" } = {}) {
+  _handleAgentPost(channelName, senderId, _content = "", { source = "tool" } = {}) {
     if (!channelName || !senderId) return;
     this._hub.eventBus.emit({ type: "channel_new_message", channelName, sender: senderId }, null);
-
-    const mentionedAgents = this._collectMentionedAgentsInChannel(channelName, content, { excludeAgentIds: [senderId] });
-    if (!mentionedAgents.length) {
-      debugLog()?.log("channel", `agent ${senderId} posted to #${channelName}, no @mentions → no dispatch`);
-      return;
-    }
-    debugLog()?.log("channel", `agent ${senderId} posted to #${channelName}, direct dispatch for mentioned: ${mentionedAgents.join(",")} (source=${source})`);
-    this.triggerImmediate(channelName, { source: "agent", mentionedAgents })?.catch(err =>
-      console.error(`[channel] agent post dispatch 失败: ${err.message}`)
-    );
+    debugLog()?.log("channel", `agent ${senderId} posted to #${channelName}, mention dispatch disabled (source=${source})`);
   }
 
   /**

@@ -292,6 +292,8 @@ export class HanaEngine {
   async setModel(id) { return this._configCoord.setModel(id); }
   getThinkingLevel() { return this._configCoord.getThinkingLevel(); }
   setThinkingLevel(l) { return this._configCoord.setThinkingLevel(l); }
+  getChannelMemoryEnabled() { return this._prefs.getChannelMemoryEnabled(); }
+  setChannelMemoryEnabled(v) { return this._prefs.setChannelMemoryEnabled(v); }
   getUserName() { return this._configCoord.getUserName(); }
   setUserName(name) { return this._configCoord.setUserName(name); }
   getSandbox(agentId = null) {

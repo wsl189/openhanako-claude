@@ -89,4 +89,78 @@ describe("runAgentSession sandboxed builtin tools", () => {
     expect(createArgs.tools).toEqual([wrappedBuiltin]);
     expect(createArgs.customTools).toEqual([wrappedCustom, wrappedBuiltin]);
   });
+
+  it("prefers last assistant snapshot text over concatenated intermediate deltas", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-exec-test-"));
+    const agentDir = path.join(tempRoot, "alpha");
+    fs.mkdirSync(agentDir, { recursive: true });
+
+    let onEvent = null;
+    const fakeSession = {
+      prompt: vi.fn(async () => {
+        onEvent?.({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "text_delta",
+            delta: "让我先获取数据。",
+            partial: { content: [{ type: "text", text: "让我先获取数据。" }] },
+          },
+          message: { content: [{ type: "text", text: "让我先获取数据。" }] },
+        });
+        onEvent?.({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "done",
+            partial: { content: [{ type: "text", text: "最终结论：今天建议观望。" }] },
+          },
+          message: { content: [{ type: "text", text: "最终结论：今天建议观望。" }] },
+        });
+      }),
+      subscribe: vi.fn((cb) => {
+        onEvent = cb;
+        return () => {};
+      }),
+      sessionManager: {
+        getSessionFile: () => null,
+      },
+    };
+    createAgentSessionMock.mockResolvedValue({ session: fakeSession });
+
+    const agent = {
+      agentDir,
+      tools: [],
+      personality: "personality",
+      systemPrompt: "system",
+      config: { desk: { home_folder: "/workspace" } },
+    };
+    const ctx = {
+      resourceLoader: {},
+      authStorage: { id: "auth" },
+      modelRegistry: { id: "registry" },
+      buildTools: vi.fn(() => ({
+        tools: [],
+        customTools: [],
+      })),
+      resolveModel: vi.fn(() => ({ id: "test-model", contextWindow: 200_000 })),
+      getSkillsForAgent: vi.fn(() => []),
+    };
+    const engine = {
+      getAgent: vi.fn(() => agent),
+      createSessionContext: vi.fn(() => ctx),
+      getHomeFolder: vi.fn(() => "/workspace"),
+      setSessionPendingImages: vi.fn(),
+      clearSessionPendingImages: vi.fn(),
+    };
+
+    try {
+      const text = await runAgentSession(
+        "alpha",
+        [{ text: "hello", capture: true }],
+        { engine },
+      );
+      expect(text).toBe("最终结论：今天建议观望。");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
