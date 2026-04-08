@@ -398,6 +398,13 @@ export function ChannelList() {
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
   const openChannel = useStore((s) => s.openChannel);
+  const [manageMembersChannel, setManageMembersChannel] = useState<Channel | null>(null);
+  const openManageMembersModal = useCallback((channel: Channel) => {
+    setManageMembersChannel(channel);
+  }, []);
+  const closeManageMembersModal = useCallback(() => {
+    setManageMembersChannel(null);
+  }, []);
 
   if (channels.length === 0) {
     return <div className="session-empty">{t('channel.empty')}</div>;
@@ -425,6 +432,7 @@ export function ChannelList() {
               userAvatarUrl={userAvatarUrl}
               currentAgentId={currentAgentId}
               onOpen={openChannel}
+              onManageMembers={openManageMembersModal}
             />
           ))}
         </>
@@ -443,10 +451,15 @@ export function ChannelList() {
               userAvatarUrl={userAvatarUrl}
               currentAgentId={currentAgentId}
               onOpen={openChannel}
+              onManageMembers={openManageMembersModal}
             />
           ))}
         </>
       )}
+      <ChannelManageMembersModal
+        channel={manageMembersChannel}
+        onClose={closeManageMembersModal}
+      />
     </>
   );
 }
@@ -462,9 +475,20 @@ interface ChannelItemProps {
   userAvatarUrl: string | null;
   currentAgentId: string | null;
   onOpen: (id: string, isDM?: boolean) => void;
+  onManageMembers: (channel: Channel) => void;
 }
 
-function ChannelItem({ channel, isDM, isActive, agents, userName, userAvatarUrl, currentAgentId, onOpen }: ChannelItemProps) {
+function ChannelItem({
+  channel,
+  isDM,
+  isActive,
+  agents,
+  userName,
+  userAvatarUrl,
+  currentAgentId,
+  onOpen,
+  onManageMembers,
+}: ChannelItemProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [avatarError, setAvatarError] = useState(false);
   const addToast = useStore((s) => s.addToast);
@@ -537,6 +561,11 @@ function ChannelItem({ channel, isDM, isActive, agents, userName, userAvatarUrl,
   const groupAvatarUrl = !isDM ? hanaUrl(`/api/channels/${encodeURIComponent(channel.id)}/avatar?t=${_avatarTs}`) : null;
 
   const ctxMenuItems: ContextMenuItem[] = ctxMenu ? [
+    {
+      label: (window as any).t('channel.manageMembers'),
+      action: () => onManageMembers(channel),
+    },
+    { divider: true },
     {
       label: (window as any).t('channel.deleteChannel'),
       danger: true,
@@ -638,6 +667,157 @@ function DmIcon({ channel, selfInfo, agents, userName, userAvatarUrl, currentAge
       </div>
       <div className="channel-dm-avatar">
         <MemberAvatar info={peerInfo} />
+      </div>
+    </div>
+  );
+}
+
+function ChannelManageMembersModal({ channel, onClose }: {
+  channel: Channel | null;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const agents = useStore((s) => s.agents);
+  const loadChannels = useStore((s) => s.loadChannels);
+  const openChannel = useStore((s) => s.openChannel);
+  const currentChannel = useStore((s) => s.currentChannel);
+  const addToast = useStore((s) => s.addToast);
+  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [membersError, setMembersError] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!channel) return;
+    setSelectedMembers(Array.isArray(channel.members) ? channel.members : []);
+    setMembersError(false);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await hanaFetch(`/api/channels/${encodeURIComponent(channel.id)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const latestMembers = Array.isArray(data.members) ? data.members : [];
+        setSelectedMembers(latestMembers);
+      } catch {}
+    })();
+
+    return () => { cancelled = true; };
+  }, [channel]);
+
+  useEffect(() => {
+    if (!channel) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !saving) onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [channel, onClose, saving]);
+
+  const toggleMember = useCallback((agentId: string) => {
+    setSelectedMembers((prev) =>
+      prev.includes(agentId)
+        ? prev.filter((id) => id !== agentId)
+        : [...prev, agentId],
+    );
+    setMembersError(false);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (!channel || saving) return;
+    const members = [...new Set(
+      selectedMembers
+        .map((id) => String(id || '').trim())
+        .filter(Boolean),
+    )];
+    if (members.length < 1) {
+      setMembersError(true);
+      setTimeout(() => setMembersError(false), 1200);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await hanaFetch(`/api/channels/${encodeURIComponent(channel.id)}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ members }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) {
+        throw new Error(data?.error || `HTTP ${res.status}`);
+      }
+
+      await loadChannels();
+      if (currentChannel === channel.id) {
+        await openChannel(channel.id, false);
+      }
+      onClose();
+      addToast(t('settings.saved'), 'success', 1800);
+    } catch (err: any) {
+      addToast(`${t('settings.saveFailed')}: ${err?.message || String(err || '')}`, 'error', 2500);
+    } finally {
+      setSaving(false);
+    }
+  }, [addToast, channel, currentChannel, loadChannels, onClose, openChannel, saving, selectedMembers, t]);
+
+  if (!channel) return null;
+
+  return (
+    <div
+      className="agent-create-overlay visible"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !saving) onClose();
+      }}
+    >
+      <div className="agent-create-card channel-manage-members-card">
+        <h3 className="agent-create-title">{t('channel.manageMembersTitle')}</h3>
+        <div className="channel-manage-members-meta">
+          <span className="channel-manage-members-name">{channel.name || channel.id}</span>
+          <span className="channel-manage-members-count">{`${selectedMembers.length}${t('channel.membersCount')}`}</span>
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-field-label">{t('channel.createMembers')}</label>
+          <div
+            className="channel-create-members channel-manage-members-list"
+            style={membersError ? { outline: '1.5px solid var(--danger, #c44)' } : undefined}
+          >
+            {agents.map((agent) => {
+              const isSelected = selectedMembers.includes(agent.id);
+              return (
+                <button
+                  key={agent.id}
+                  type="button"
+                  className={`channel-create-member-chip${isSelected ? ' selected' : ''}`}
+                  onClick={() => toggleMember(agent.id)}
+                  disabled={saving}
+                >
+                  <AgentChipAvatar
+                    agentId={agent.id}
+                    agentName={agent.name}
+                    agentYuan={agent.yuan}
+                    hasAvatar={agent.hasAvatar}
+                  />
+                  <span>{agent.name || agent.id}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="channel-manage-members-hint">
+            {membersError ? t('channel.manageMembersMinOne') : t('channel.manageMembersHint')}
+          </div>
+        </div>
+
+        <div className="agent-create-actions">
+          <button className="agent-create-cancel" onClick={onClose} disabled={saving}>
+            {t('common.cancel')}
+          </button>
+          <button className="agent-create-confirm" onClick={() => { void handleSave(); }} disabled={saving}>
+            {saving ? '...' : t('settings.save')}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -7,6 +7,7 @@
  * GET    /api/channels              — 列出所有频道 + 用户 bookmark + 未读数
  * POST   /api/channels              — 创建新频道
  * GET    /api/channels/:id          — 获取频道消息 + 成员列表
+ * POST   /api/channels/:id/members  — 更新频道成员列表
  * GET    /api/channels/:id/memory   — 获取频道“参考记忆”开关
  * POST   /api/channels/:id/memory   — 更新频道“参考记忆”开关
  * POST   /api/channels/:id/announcement — 更新频道公告
@@ -29,6 +30,9 @@ import {
   readBookmarks,
   updateBookmark,
   addBookmarkEntry,
+  removeBookmarkEntry,
+  addChannelMember,
+  removeChannelMember,
   getChannelMeta,
   getChannelMemoryEnabled,
   setChannelMemoryEnabled,
@@ -343,6 +347,75 @@ export default async function channelsRoute(app, { engine, hub }) {
         messages: apiMessages,
         members,
       };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    }
+  });
+
+  // ── 更新频道成员列表 ──
+  app.post("/api/channels/:name/members", async (req, reply) => {
+    try {
+      const { name } = req.params;
+      const filePath = safeChannelPath(name);
+      if (!filePath) { reply.code(400); return { error: "Invalid channel id" }; }
+      if (!fs.existsSync(filePath)) {
+        reply.code(404);
+        return { error: "Channel not found" };
+      }
+
+      if (!Array.isArray(req.body?.members)) {
+        reply.code(400);
+        return { error: "members must be an array" };
+      }
+
+      const nextMembers = [...new Set(
+        req.body.members
+          .map((m) => String(m || "").trim())
+          .filter(Boolean),
+      )];
+      if (nextMembers.length < 1) {
+        reply.code(400);
+        return { error: "members must include at least 1 item" };
+      }
+
+      const meta = getChannelMeta(filePath);
+      const currentMembers = Array.isArray(meta.members)
+        ? meta.members.map((m) => String(m || "").trim()).filter(Boolean)
+        : [];
+      const currentSet = new Set(currentMembers);
+
+      const validAgentIds = new Set(
+        (engine.listAgents?.() || [])
+          .map((a) => String(a?.id || "").trim())
+          .filter(Boolean),
+      );
+      const invalidMembers = nextMembers.filter((id) => !validAgentIds.has(id) && !currentSet.has(id));
+      if (invalidMembers.length > 0) {
+        reply.code(400);
+        return { error: `invalid members: ${invalidMembers.join(",")}` };
+      }
+
+      const nextSet = new Set(nextMembers);
+      const toAdd = nextMembers.filter((id) => !currentSet.has(id));
+      const toRemove = currentMembers.filter((id) => !nextSet.has(id));
+
+      for (const memberId of toAdd) {
+        addChannelMember(filePath, memberId);
+        const memberDir = path.join(engine.agentsDir, memberId);
+        if (fs.existsSync(memberDir)) {
+          addBookmarkEntry(path.join(memberDir, "channels.md"), name);
+        }
+      }
+      for (const memberId of toRemove) {
+        removeChannelMember(filePath, memberId);
+        const memberDir = path.join(engine.agentsDir, memberId);
+        if (fs.existsSync(memberDir)) {
+          removeBookmarkEntry(path.join(memberDir, "channels.md"), name);
+        }
+      }
+
+      return { ok: true, members: nextMembers };
     } catch (err) {
       reply.code(500);
       return { error: err.message };

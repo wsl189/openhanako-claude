@@ -12959,6 +12959,46 @@ a.about-link:hover {
     line-height: 1.5;
 }
 
+.channel-manage-members-card {
+    width: 520px;
+    max-width: 92vw;
+}
+
+.channel-manage-members-meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin: -6px 0 12px;
+}
+
+.channel-manage-members-name {
+    font-size: 0.88rem;
+    color: var(--text);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.channel-manage-members-count {
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.channel-manage-members-list {
+    max-height: 230px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.channel-manage-members-hint {
+    margin-top: 8px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
 /* ========================================
    频道 — 右侧栏信息面板
    ======================================== */

@@ -168,8 +168,12 @@ export class Scheduler {
       const engine = this._engine;
       const isZh = getLocale().startsWith("zh");
       const agentPatrolTools = engine.getAgent(agentId)?.config?.desk?.patrol_tools;
+      const notifyTarget = (() => {
+        const v = String(job?.notifyTarget || "auto").toLowerCase();
+        return (v === "local" || v === "platform" || v === "auto") ? v : "auto";
+      })();
       const cronToolFilter = Array.isArray(agentPatrolTools)
-        ? [...new Set([...agentPatrolTools, "channel"])]
+        ? [...new Set([...agentPatrolTools, "channel", "notify"])]
         : null;
       const prompt = isZh
         ? [
@@ -177,6 +181,10 @@ export class Scheduler {
             "",
             "**注意：这是系统自动触发的定时任务，不是用户发来的。**",
             "**不要在执行过程中创建新的定时任务。**",
+            `**本任务通知策略：notifyTarget=${notifyTarget}。**`,
+            "**仅当你判断“需要提醒用户”时才调用 notify 工具；不需要提醒时不要调用 notify。**",
+            "**如果需要提醒，notify 的 target 必须使用上面的 notifyTarget。**",
+            "**如果 job.prompt 本身是一句提醒文案（例如“喝水时间到”），可直接把它作为提醒内容：title 用任务 label，body 用 job.prompt，然后调用 notify。**",
             "",
             job.prompt,
           ].join("\n")
@@ -185,6 +193,10 @@ export class Scheduler {
             "",
             "**Note: This is an automated cron job, NOT a user message.**",
             "**Do not create new cron jobs during execution.**",
+            `**Notification policy for this job: notifyTarget=${notifyTarget}.**`,
+            "**Call notify only when you determine the user should be alerted; do not call notify if no alert is needed.**",
+            "**If you do notify, the notify target must match the notifyTarget above.**",
+            "**If job.prompt is itself reminder copy (for example, \"Time to drink water\"), you may treat it as reminder content: use job label as title and job.prompt as body, then call notify.**",
             "",
             job.prompt,
           ].join("\n");
