@@ -388,21 +388,17 @@ export function BridgeTab() {
     setCardResults((prev) => ({ ...prev, [key]: undefined }));
 
     try {
-      await persistMultiBot(platform, normalizedDraft);
       const shouldTest = isNew || hasNewSecret;
       if (shouldTest) {
         const testRes = await runDraftTest(platform, normalizedDraft);
         setCardResults((prev) => ({ ...prev, [key]: testRes }));
-        await loadStatus();
-        if (testRes.tone === 'ok') {
-          closeCard();
-          showToast(t('settings.saved'), 'success');
-        }
-      } else {
-        await loadStatus();
-        closeCard();
-        showToast(t('settings.saved'), 'success');
+        if (testRes.tone !== 'ok') return;
       }
+
+      await persistMultiBot(platform, normalizedDraft);
+      await loadStatus();
+      closeCard();
+      showToast(t('settings.saved'), 'success');
     } catch (err: any) {
       const fail = { tone: 'fail' as CardResultTone, text: t('settings.saveFailed') + ': ' + err.message };
       setCardResults((prev) => ({ ...prev, [key]: fail }));
