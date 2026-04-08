@@ -237,6 +237,13 @@ export class BridgeSessionManager {
         (tool) => !BRIDGE_BLOCKED_TOOL_NAMES.has(tool?.name),
       );
 
+      // 每条外部消息到来前刷新一次 system prompt，确保动态时间等信息是最新。
+      try {
+        agent.refreshSystemPrompt?.();
+      } catch (err) {
+        debugLog()?.error("bridge-session", `refresh system prompt failed: ${err.message}`);
+      }
+
       const model = this._resolveBridgeModel(mm, agent);
       const runtimeModel = applyRuntimeModelOverrides(
         model,

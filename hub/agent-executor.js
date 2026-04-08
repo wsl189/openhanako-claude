@@ -27,6 +27,23 @@ const IMAGE_MIME_BY_EXT = {
   ".ico": "image/x-icon",
 };
 
+function buildRealtimeDateTimeContext(isZh = false) {
+  const now = new Date();
+  const dateTime = now.toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  });
+  return isZh
+    ? `Current date and time: ${dateTime}\n你的一天从凌晨 4:00 开始。4:00 之前的对话属于前一天。`
+    : `Current date and time: ${dateTime}\nYour day starts at 4:00 AM. Conversations before 4:00 AM belong to the previous day.`;
+}
+
 function isReasoningLikeType(type) {
   const normalized = String(type || "").toLowerCase();
   if (!normalized || normalized === "text") return false;
@@ -162,15 +179,24 @@ export async function runAgentSession(agentId, rounds, { engine, signal, session
     throw new Error(t("error.agentExecNotInit", { id: agentId }));
   }
   const agentDir = agent.agentDir;
+  const isZh = String(agent?.config?.locale || "").startsWith("zh");
 
   // 2. 临时 ResourceLoader
   const ctx = engine.createSessionContext();
   const tempResourceLoader = Object.create(ctx.resourceLoader);
 
-  // noMemory 模式：只用 personality（identity + ishiki），不注入记忆/用户档案等
+  // 每轮临时会话都刷新一次 system prompt，确保动态时间等信息为最新。
+  if (!noMemory) {
+    try { agent.refreshSystemPrompt?.(); } catch {}
+  }
+
+  // noMemory 模式：只用 personality（identity + ishiki），不注入记忆/用户档案等。
+  // 但仍补充实时日期时间上下文，避免“无记忆模式”丢失时间感知。
   const basePrompt = noMemory ? agent.personality : agent.systemPrompt;
+  const realtimeTimeAppend = noMemory ? buildRealtimeDateTimeContext(isZh) : "";
+  const mergedSystemAppend = [systemAppend, realtimeTimeAppend].filter(Boolean).join("\n\n");
   tempResourceLoader.getSystemPrompt = () =>
-    systemAppend ? `${basePrompt}\n\n${systemAppend}` : basePrompt;
+    mergedSystemAppend ? `${basePrompt}\n\n${mergedSystemAppend}` : basePrompt;
   tempResourceLoader.getSkills = () => ctx.getSkillsForAgent(agent);
 
   // 3. 临时 session

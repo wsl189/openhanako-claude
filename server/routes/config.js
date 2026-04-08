@@ -555,6 +555,11 @@ export default async function configRoute(app, { engine }) {
         fact: e.fact || e.content || "",
         tags: e.tags || [],
         time: e.time || e.date || null,
+        timeliness: e.timeliness || "persistent",
+        state_key: e.state_key || null,
+        ttl_days: e.ttl_days ?? null,
+        valid_from: e.valid_from || null,
+        valid_to: e.valid_to || null,
         session_id: e.session_id || "imported",
       }));
 

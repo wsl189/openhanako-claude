@@ -30,6 +30,27 @@ interface Buffer {
   messageAppended: boolean;
 }
 
+export function mergeDelta(acc: string, rawDelta: unknown): string {
+  const delta = typeof rawDelta === 'string' ? rawDelta : '';
+  if (!delta) return acc;
+  if (!acc) return delta;
+
+  // 完全重复 chunk：忽略
+  if (acc.endsWith(delta)) return acc;
+  // 累积式 delta（provider 返回“到当前为止的完整内容”）
+  if (delta.startsWith(acc)) return delta;
+
+  // 后缀/前缀重叠拼接，避免重复片段
+  const max = Math.min(acc.length, delta.length);
+  for (let k = max; k > 0; k--) {
+    if (acc.slice(-k) === delta.slice(0, k)) {
+      return acc + delta.slice(k);
+    }
+  }
+
+  return acc + delta;
+}
+
 type CronConfirmStatus = 'pending' | 'approved' | 'rejected';
 type CronConfirmBlock = Extract<ContentBlock, { type: 'cron_confirm' }>;
 
@@ -241,7 +262,7 @@ class StreamBufferManager {
         break;
 
       case 'thinking_delta':
-        buf.thinkingAcc += msg.delta || '';
+        buf.thinkingAcc = mergeDelta(buf.thinkingAcc, msg.delta);
         // thinking 内容不频繁 flush，等 end 或下一个 text_delta
         break;
 

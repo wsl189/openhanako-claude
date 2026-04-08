@@ -153,6 +153,7 @@ export default async function chatRoute(app, { engine, hub }) {
         thinkTagParser: new ThinkTagParser(),
         xingParser: new XingParser(),
         isThinking: false,
+        thinkingHadDelta: false,
         hasOutput: false,
         hasToolCall: false,
         userAborted: false,
@@ -288,13 +289,15 @@ export default async function chatRoute(app, { engine, hub }) {
     if (event.type === "message_update") {
       if (!ss) return;
       const sub = event.assistantMessageEvent?.type;
-      const emitThinkingFallback = (rawThinking) => {
+      const emitThinkingFallback = (rawThinking, { onlyIfNoDelta = false } = {}) => {
         const thinking = typeof rawThinking === "string" ? rawThinking : "";
         if (!thinking.trim()) return false;
+        if (onlyIfNoDelta && ss.thinkingHadDelta) return false;
         if (!ss.isThinking) {
           ss.isThinking = true;
           emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
         }
+        ss.thinkingHadDelta = true;
         emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: thinking });
         ss.isThinking = false;
         emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
@@ -312,9 +315,11 @@ export default async function chatRoute(app, { engine, hub }) {
         ss.thinkTagParser.feed(chunk, (tEvt) => {
           switch (tEvt.type) {
             case "think_start":
+              ss.thinkingHadDelta = false;
               emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
               break;
             case "think_text":
+              if (tEvt.data) ss.thinkingHadDelta = true;
               emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
               break;
             case "think_end":
@@ -351,7 +356,7 @@ export default async function chatRoute(app, { engine, hub }) {
         // 某些 provider 只在 text_end 提供完整 content，不会持续发 text_delta。
         if (!ss.hasOutput) {
           const { text, thinking } = extractContentParts(event.assistantMessageEvent.content);
-          emitThinkingFallback(thinking);
+          emitThinkingFallback(thinking, { onlyIfNoDelta: true });
           if (feedTextChunk(text)) {
             ss.hasOutput = true;
           }
@@ -360,7 +365,7 @@ export default async function chatRoute(app, { engine, hub }) {
         // 最终 done 事件里通常带 partial 快照，作为 text_end 缺失时的兜底。
         if (!ss.hasOutput) {
           const { text, thinking } = extractContentParts(event.assistantMessageEvent.partial?.content);
-          emitThinkingFallback(thinking);
+          emitThinkingFallback(thinking, { onlyIfNoDelta: true });
           if (feedTextChunk(text)) {
             ss.hasOutput = true;
           }
@@ -368,13 +373,16 @@ export default async function chatRoute(app, { engine, hub }) {
       } else if (sub === "thinking_start") {
         if (!ss.isThinking) {
           ss.isThinking = true;
+          ss.thinkingHadDelta = false;
           emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
         }
       } else if (sub === "thinking_delta") {
         if (!ss.isThinking) {
           ss.isThinking = true;
+          ss.thinkingHadDelta = false;
           emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
         }
+        if (event.assistantMessageEvent.delta) ss.thinkingHadDelta = true;
         emitStreamEvent(sessionPath, ss, {
           type: "thinking_delta",
           delta: event.assistantMessageEvent.delta || "",
@@ -385,6 +393,7 @@ export default async function chatRoute(app, { engine, hub }) {
           event.assistantMessageEvent.content
           || event.assistantMessageEvent.delta
           || "",
+          { onlyIfNoDelta: true },
         );
         if (ss.isThinking) {
           ss.isThinking = false;
@@ -655,6 +664,7 @@ export default async function chatRoute(app, { engine, hub }) {
       ss.hasOutput = false;
       ss.hasToolCall = false;
       ss.userAborted = false;
+      ss.thinkingHadDelta = false;
       ss.thinkTagParser.reset();
       ss.xingParser.reset();
 
@@ -868,6 +878,7 @@ export default async function chatRoute(app, { engine, hub }) {
           ss.thinkTagParser.reset();
           ss.xingParser.reset();
           ss.userAborted = false;
+          ss.thinkingHadDelta = false;
           ss.titleRequested = false;
           beginSessionStream(ss);
           broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath });

@@ -700,13 +700,30 @@ export class Agent {
         "- **Never let " + this.userName + " sense that \"memory\" exists as a thing.** Never use phrases like \"I remember,\" \"you mentioned before,\" or \"based on my memory.\" The only exception is when " + this.userName + " explicitly asks \"do you remember xxx.\"",
         "- **Memory can be outdated; the current conversation always takes priority.** When information conflicts, go with the conversation. Don't use old memories to correct " + this.userName + ".",
       ].join("\n");
+      const memoryTimelinessLegend = isZh ? [
+        "",
+        "## 记忆时效类型说明",
+        "",
+        "- `[YYYY-MM-DD HH:MM]`：该事实记录时间。时间越久，越需要结合当前对话确认。",
+        "- `(persistent)`：长期稳定事实（身份、长期偏好、长期背景），通常持续有效，直到出现明确新信息。",
+        "- `(stateful)`：当前状态事实（正在做什么/是否持有/当前安排等），可能变化。若时间较久或与当前对话冲突，优先当前对话。",
+        "- `(ephemeral)`：短期临时事实（临时安排、一次性状态），最容易过期。若不在近期上下文内，默认低置信度处理。",
+      ].join("\n") : [
+        "",
+        "## Memory Timeliness Legend",
+        "",
+        "- `[YYYY-MM-DD HH:MM]`: recorded time of the fact. The older it is, the more it should be re-validated against current dialogue.",
+        "- `(persistent)`: long-term stable facts (identity, durable preferences, background). Usually valid until explicit new evidence appears.",
+        "- `(stateful)`: current-state facts (what is currently happening/holding status/current plans). Can change; if old or conflicting, prefer current dialogue.",
+        "- `(ephemeral)`: short-lived temporary facts (temporary arrangements, one-off states). Most likely to expire; treat with low confidence unless recently reaffirmed.",
+      ].join("\n");
 
       if (pinnedMd.trim()) {
         parts.push(...section(
           isZh ? "# 置顶记忆" : "# Pinned Memories",
           isZh
-            ? "用户主动要求你记住的内容，始终保留。你可以读写这些记忆。\n" + memoryRule + "\n\n" + pinnedMd
-            : "Content the user explicitly asked you to remember. Always retained. You can read and write these memories.\n" + memoryRule + "\n\n" + pinnedMd
+            ? "用户主动要求你记住的内容，始终保留。你可以读写这些记忆。\n" + memoryRule + "\n" + memoryTimelinessLegend + "\n\n" + pinnedMd
+            : "Content the user explicitly asked you to remember. Always retained. You can read and write these memories.\n" + memoryRule + "\n" + memoryTimelinessLegend + "\n\n" + pinnedMd
         ));
       }
       const trimmedMemory = memory.trim();
@@ -714,8 +731,8 @@ export class Agent {
         parts.push(...section(
           isZh ? "# 记忆" : "# Memory",
           isZh
-            ? memoryRule.trimStart() + "\n\n以下这些是从过往对话积累的记忆。\n\n" + memory
-            : memoryRule.trimStart() + "\n\nThe following are memories accumulated from past conversations.\n\n" + memory
+            ? memoryRule.trimStart() + "\n" + memoryTimelinessLegend + "\n\n以下这些是从过往对话积累的记忆。\n\n" + memory
+            : memoryRule.trimStart() + "\n" + memoryTimelinessLegend + "\n\nThe following are memories accumulated from past conversations.\n\n" + memory
         ));
       }
     }
@@ -801,7 +818,7 @@ export class Agent {
     const now = new Date();
     const dateTime = now.toLocaleString("en-US", {
       weekday: "long", year: "numeric", month: "long", day: "numeric",
-      hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short",
     });
     parts.push(`\nCurrent date and time: ${dateTime}`);
     parts.push(isZh

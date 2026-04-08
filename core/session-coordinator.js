@@ -91,6 +91,22 @@ export class SessionCoordinator {
     return this._session?.sessionManager?.getSessionFile?.() ?? null;
   }
 
+  /**
+   * 在发起每轮对话前刷新一次 system prompt，并同步 AgentSession 的 _baseSystemPrompt 缓存。
+   * 这样可确保诸如“当前时间”等动态信息在每轮都更新。
+   */
+  _refreshSessionPrompt(agent, session, reason = "prompt") {
+    if (!agent || !session) return;
+    agent.refreshSystemPrompt?.();
+    if (session?.setActiveToolsByName && session?.getActiveToolNames) {
+      try {
+        session.setActiveToolsByName(session.getActiveToolNames());
+      } catch (err) {
+        log.warn(`${reason} prompt rebuild failed: ${err.message}`);
+      }
+    }
+  }
+
   // ── Session 创建 / 切换 ──
 
   async createSession(sessionMgr, cwd, memoryEnabled = true) {
@@ -135,16 +151,9 @@ export class SessionCoordinator {
     log.log(`session created (${elapsed}ms), model=${runtimeModel?.name || "?"}`);
     this._session = session;
     this._sessionStarted = false;
-    // 会话切到新 cwd 后，立即重建 system prompt，避免 cwd 文案滞后
-    creatingAgent.refreshSystemPrompt?.();
-    // AgentSession 维护独立的 _baseSystemPrompt 缓存，需要同步刷新。
-    if (session?.setActiveToolsByName && session?.getActiveToolNames) {
-      try {
-        session.setActiveToolsByName(session.getActiveToolNames());
-      } catch (err) {
-        log.warn(`createSession prompt rebuild failed: ${err.message}`);
-      }
-    }
+    // 会话切到新 cwd 后，立即重建 system prompt，避免 cwd 文案滞后。
+    // 同时刷新会话缓存，确保动态信息（如当前时间）可生效。
+    this._refreshSessionPrompt(creatingAgent, session, "createSession");
 
     // 事件转发
     const sessionPath = session.sessionManager?.getSessionFile?.();
@@ -245,15 +254,8 @@ export class SessionCoordinator {
       existing.lastTouchedAt = Date.now();
       const targetAgent = this._d.getAgentById(existing.agentId) || this._d.getAgent();
       targetAgent.setMemoryEnabled(memoryEnabled);
-      // 命中缓存会话时也要刷新，确保 prompt 中 cwd 与当前会话一致
-      targetAgent.refreshSystemPrompt?.();
-      if (existing.session?.setActiveToolsByName && existing.session?.getActiveToolNames) {
-        try {
-          existing.session.setActiveToolsByName(existing.session.getActiveToolNames());
-        } catch (err) {
-          log.warn(`switchSession prompt rebuild failed: ${err.message}`);
-        }
-      }
+      // 命中缓存会话时也要刷新，确保 prompt 中 cwd 与动态时间等信息与当前会话一致
+      this._refreshSessionPrompt(targetAgent, existing.session, "switchSession");
       return existing.session;
     }
 
@@ -275,10 +277,13 @@ export class SessionCoordinator {
     if (!this._session) throw new Error(t("error.noActiveSessionPrompt"));
     this._sessionStarted = true;
     const sp = this._session.sessionManager?.getSessionFile?.();
+    let promptAgent = this._d.getAgent();
     if (sp) {
       const entry = this._sessions.get(sp);
       if (entry) entry.lastTouchedAt = Date.now();
+      promptAgent = entry ? (this._d.getAgentById(entry.agentId) || promptAgent) : promptAgent;
     }
+    this._refreshSessionPrompt(promptAgent, this._session, "prompt");
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await this._session.prompt(text, promptOpts);
     if (sp) {
@@ -312,10 +317,11 @@ export class SessionCoordinator {
     if (!entry) throw new Error(t("error.sessionNotInCache", { path: sessionPath }));
     entry.lastTouchedAt = Date.now();
     if (sessionPath === this.currentSessionPath) this._sessionStarted = true;
+    const promptAgent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
+    this._refreshSessionPrompt(promptAgent, entry.session, "promptSession");
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await entry.session.prompt(text, promptOpts);
-    const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
-    agent?._memoryTicker?.notifyTurn(sessionPath);
+    promptAgent?._memoryTicker?.notifyTurn(sessionPath);
   }
 
   steerSession(sessionPath, text) {
