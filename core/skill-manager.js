@@ -139,7 +139,8 @@ export class SkillManager {
         ignored: (watchedPath) => this._shouldIgnoreWatchPath(watchedPath),
         persistent: true,
       });
-      this._watcher.on("all", () => {
+      this._watcher.on("all", (_event, changedPath) => {
+        if (!this._isWatchedSkillPath(changedPath)) return;
         if (this._reloadTimer) clearTimeout(this._reloadTimer);
         this._reloadTimer = setTimeout(() => this._autoReload(), 1000);
       });
@@ -248,8 +249,36 @@ export class SkillManager {
       out.push(this.skillsDir);
     }
     if (this.agentsDir) {
-      out.push(path.join(this.agentsDir, "*/skills"));
+      // 不依赖 glob（在某些 chokidar 版本/平台上不稳定），
+      // 直接监听 agentsDir，再通过 _isWatchedSkillPath 过滤到 skills 子树。
+      out.push(this.agentsDir);
     }
     return out;
+  }
+
+  _isWatchedSkillPath(watchedPath) {
+    const abs = path.resolve(String(watchedPath || ""));
+    if (!abs) return false;
+
+    if (this.skillsDir) {
+      const relSkills = path.relative(this.skillsDir, abs);
+      if (relSkills === "" || (!relSkills.startsWith("..") && !path.isAbsolute(relSkills))) {
+        return true;
+      }
+    }
+
+    if (this.agentsDir) {
+      const relAgents = path.relative(this.agentsDir, abs);
+      if (relAgents === "" || relAgents.startsWith("..") || path.isAbsolute(relAgents)) {
+        return false;
+      }
+      const parts = relAgents.split(path.sep).filter(Boolean);
+      // agents/<agentId>/skills[/...]
+      if (parts.length >= 2 && parts[1] === "skills") {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

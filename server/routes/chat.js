@@ -515,6 +515,8 @@ export default async function chatRoute(app, { engine, hub }) {
       broadcast({ type: "browser_bg_status", running: event.running, url: event.url });
     } else if (event.type === "cron_changed") {
       broadcast({ type: "cron_changed" });
+    } else if (event.type === "skills_changed") {
+      broadcast({ type: "skills_changed" });
     } else if (event.type === "cron_confirmation" && event.confirmId) {
       // 新的阻塞式 cron 确认（通过 emitEvent 触发）
       if (ss) {

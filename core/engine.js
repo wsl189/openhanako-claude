@@ -378,6 +378,7 @@ export class HanaEngine {
 
   _syncAgentSkills() { this._skills.syncAgentSkills(this.agent); }
   _syncAllAgentSkills() { for (const ag of this._agentMgr.agents.values()) this._skills.syncAgentSkills(ag); }
+  _notifySkillsChanged() { this._emitEvent({ type: "skills_changed" }, null); }
   getAllSkills(agentId) {
     const ag = agentId ? this._agentMgr.getAgent(agentId) : null;
     return this._skills.getAllSkills(ag || null);
@@ -394,6 +395,7 @@ export class HanaEngine {
     this._resourceLoader.getSystemPrompt = () => this.agent.systemPrompt;
     this._resourceLoader.getSkills = () => this._getSkillsForAgent(this.agent);
     this._syncAllAgentSkills();
+    this._notifySkillsChanged();
   }
 
   // ════════════════════════════
@@ -507,6 +509,7 @@ export class HanaEngine {
       this._resourceLoader.getSystemPrompt = () => this.agent.systemPrompt;
       this._resourceLoader.getSkills = () => this._getSkillsForAgent(this.agent);
       this._syncAllAgentSkills();
+      this._notifySkillsChanged();
     });
 
     // 7. Bridge 孤儿清理

@@ -207,6 +207,10 @@ export function handleServerMessage(msg: any): void {
       loadDeskFiles();
       break;
 
+    case 'skills_changed':
+      (window as any).__loadDeskSkills?.();
+      break;
+
     case 'cron_changed':
       (async () => {
         try {
