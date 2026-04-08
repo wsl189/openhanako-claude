@@ -957,6 +957,8 @@ export function ChannelMessages() {
   const isAtBottomRef = useRef(true);
   const prevMessagesLenRef = useRef(0);
   const forceStickRef = useRef(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [copiedMsgKey, setCopiedMsgKey] = useState<string | null>(null);
 
   const checkAtBottom = useCallback(() => {
     const el = document.getElementById('channelMessages');
@@ -968,6 +970,25 @@ export function ChannelMessages() {
     const el = document.getElementById('channelMessages');
     if (!el) return;
     el.scrollTop = el.scrollHeight;
+  }, []);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+  }, []);
+
+  const copyMessage = useCallback((msgKey: string, text: string) => {
+    const payload = String(text || '').trim();
+    if (!payload) return;
+    navigator.clipboard.writeText(payload).then(() => {
+      setCopiedMsgKey(msgKey);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        setCopiedMsgKey((prev) => (prev === msgKey ? null : prev));
+      }, 1500);
+    }).catch(() => {});
   }, []);
 
   // 监听用户滚动，维护“是否贴底”状态
@@ -1029,10 +1050,11 @@ export function ChannelMessages() {
   return (
     <div ref={contentRef} className="channel-messages-content">
       {messages.map((msg, idx) => {
+        const msgKey = `${msg.timestamp}-${idx}`;
         if (msg.isContextReset) {
           lastSender = null;
           return (
-            <div key={`${msg.timestamp}-${idx}`} className="channel-context-divider">
+            <div key={msgKey} className="channel-context-divider">
               <span>{t('channel.newConversationDivider')}</span>
             </div>
           );
@@ -1051,9 +1073,11 @@ export function ChannelMessages() {
           || senderNorm === '用户'
           || (!!userNameNorm && senderNorm === userNameNorm);
         const isSelf = senderInfo.isUser || isUserSenderAlias || isGroupUserFallback || (isDM && msg.sender === (currentAgentId || ''));
+        const canCopy = senderNorm !== 'system' && String(msg.body || '').trim().length > 0;
+        const copied = copiedMsgKey === msgKey;
         const el = (
           <div
-            key={`${msg.timestamp}-${idx}`}
+            key={msgKey}
             className={
               'channel-msg'
               + (isContinuation ? ' channel-msg-continuation' : '')
@@ -1070,10 +1094,36 @@ export function ChannelMessages() {
                   <span className="channel-msg-time">{formatChannelTime(msg.timestamp)}</span>
                 </div>
               )}
-              <div
-                className="channel-msg-text md-content"
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.body || '') }}
-              />
+              <div className="channel-msg-text-wrap">
+                <div
+                  className="channel-msg-text md-content"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.body || '') }}
+                />
+                {canCopy && (
+                  <button
+                    className={`channel-msg-copy-btn${copied ? ' copied' : ''}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      copyMessage(msgKey, msg.body || '');
+                    }}
+                    title={copied ? t('common.copied') : t('common.copyText')}
+                    aria-label={copied ? t('common.copied') : t('common.copyText')}
+                    type="button"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      {copied
+                        ? <polyline points="20 6 9 17 4 12" />
+                        : (
+                          <>
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                          </>
+                        )}
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         );
@@ -1170,6 +1220,7 @@ export function ChannelInput() {
   const userName = useStore((s) => s.userName);
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
+  const channelAgentActivity = useStore((s) => s.channelAgentActivity);
   const sendChannelMessage = useStore((s) => s.sendChannelMessage);
   const resetChannelContext = useStore((s) => s.resetChannelContext);
   const clearChannelMessages = useStore((s) => s.clearChannelMessages);
@@ -1241,6 +1292,32 @@ export function ChannelInput() {
     resizeTextarea();
   }, [inputValue, currentChannel, resizeTextarea]);
 
+  const hasContent = inputValue.trim().length > 0 || attachedFiles.length > 0;
+  const isChannelResponding = !!(
+    currentChannel
+    && Object.values(channelAgentActivity?.[currentChannel] || {}).some(Boolean)
+  );
+  const isStopMode = isChannelResponding && !hasContent;
+
+  const stopReplies = useCallback(async (clearInputAfter = false) => {
+    if (sending) return;
+    setSending(true);
+    try {
+      await stopChannelReplies();
+      if (clearInputAfter) {
+        setInputValue('');
+        setMentionActive(false);
+        setCommandActive(false);
+        clearAttachedFiles();
+      }
+    } catch (err) {
+      console.error('[channels] stop failed:', err);
+      addToast(t('channel.stopFailed'), 'error', 3000);
+    } finally {
+      setSending(false);
+    }
+  }, [sending, stopChannelReplies, clearAttachedFiles, addToast, t]);
+
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();
     const safeAttachedFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path));
@@ -1283,19 +1360,7 @@ export function ChannelInput() {
     }
 
     if (cmd === '/stop') {
-      setSending(true);
-      try {
-        await stopChannelReplies();
-        setInputValue('');
-        setMentionActive(false);
-        setCommandActive(false);
-        clearAttachedFiles();
-      } catch (err) {
-        console.error('[channels] /stop failed:', err);
-        addToast(t('channel.stopFailed'), 'error', 3000);
-      } finally {
-        setSending(false);
-      }
+      await stopReplies(true);
       return;
     }
 
@@ -1317,7 +1382,15 @@ export function ChannelInput() {
     } finally {
       setSending(false);
     }
-  }, [sending, inputValue, attachedFiles, sendChannelMessage, clearAttachedFiles, resetChannelContext, clearChannelMessages, stopChannelReplies, addToast, t]);
+  }, [sending, inputValue, attachedFiles, sendChannelMessage, clearAttachedFiles, resetChannelContext, clearChannelMessages, stopReplies, addToast, t]);
+
+  const handlePrimaryAction = useCallback(() => {
+    if (isStopMode) {
+      void stopReplies(false);
+      return;
+    }
+    void handleSend();
+  }, [isStopMode, stopReplies, handleSend]);
 
   const checkMention = useCallback(() => {
     if (!inputRef.current) return;
@@ -1480,7 +1553,7 @@ export function ChannelInput() {
         return;
       }
       e.preventDefault();
-      handleSend();
+      handlePrimaryAction();
       return;
     }
     if (mentionActive) {
@@ -1493,7 +1566,7 @@ export function ChannelInput() {
       if (e.key === 'ArrowUp') { e.preventDefault(); setCommandSelectedIdx((i) => (i - 1 + commandItems.length) % commandItems.length); }
       if (e.key === 'Escape') { e.preventDefault(); setCommandActive(false); }
     }
-  }, [mentionActive, mentionItems, mentionSelectedIdx, insertMention, commandActive, commandItems, commandSelectedIdx, insertCommand, handleSend]);
+  }, [mentionActive, mentionItems, mentionSelectedIdx, insertMention, commandActive, commandItems, commandSelectedIdx, insertCommand, handlePrimaryAction]);
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputValue(e.target.value);
@@ -1594,14 +1667,21 @@ export function ChannelInput() {
         onPaste={handlePaste}
       />
       <button
-        className="channel-send-btn"
-        disabled={(!inputValue.trim() && attachedFiles.length === 0) || sending}
-        onClick={handleSend}
+        className={`channel-send-btn${isStopMode ? ' is-stopping' : ''}`}
+        disabled={sending || (!isStopMode && !hasContent)}
+        onClick={handlePrimaryAction}
+        title={isStopMode ? t('chat.stop') : t('chat.send')}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13" />
-          <polygon points="22 2 15 22 11 13 2 9 22 2" />
-        </svg>
+        {isStopMode ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+        )}
       </button>
     </div>
   );

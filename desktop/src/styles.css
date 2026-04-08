@@ -12646,6 +12646,13 @@ a.about-link:hover {
     word-break: break-word;
 }
 
+.channel-msg-text-wrap {
+    position: relative;
+    display: inline-block;
+    max-width: 70%;
+    vertical-align: top;
+}
+
 .channel-msg-text p {
     margin: 0 0 0.3em;
 }
@@ -12661,8 +12668,8 @@ a.about-link:hover {
     background: var(--overlay-light);
     padding: 8px 12px;
     border-radius: 14px 14px 14px 2px;
-    display: inline-block;
-    max-width: 70%;
+    display: block;
+    max-width: none;
 }
 
 /* 右侧消息（用户 or 主 agent） */
@@ -12680,12 +12687,73 @@ a.about-link:hover {
     background: rgba(var(--accent-rgb), 0.1);
     padding: 8px 12px;
     border-radius: 14px 14px 2px 14px;
-    display: inline-block;
-    max-width: 70%;
+    display: block;
+    max-width: none;
 }
 
 .channel-msg-self .channel-msg-header {
     flex-direction: row-reverse;
+}
+
+.channel-msg-copy-btn {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--overlay-medium);
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+    transform: translateY(0);
+    z-index: 2;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+/* agent 回复：复制按钮在气泡右上角 */
+.channel-msg:not(.channel-msg-self) .channel-msg-copy-btn {
+    top: -8px;
+    right: -8px;
+    left: auto;
+}
+
+/* 用户输入：复制按钮固定在气泡左侧 */
+.channel-msg-self .channel-msg-copy-btn {
+    left: -30px;
+    right: auto;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.channel-msg:hover .channel-msg-copy-btn,
+.channel-msg:focus-within .channel-msg-copy-btn {
+    opacity: 0.9;
+    pointer-events: auto;
+}
+
+.channel-msg-copy-btn:hover {
+    opacity: 1 !important;
+    color: var(--text);
+    border-color: var(--accent);
+    transform: translateY(-1px);
+}
+
+.channel-msg-self .channel-msg-copy-btn:hover {
+    transform: translateY(calc(-50% - 1px));
+}
+
+.channel-msg-copy-btn.copied {
+    opacity: 1 !important;
+    pointer-events: auto;
+    color: var(--accent);
+    border-color: var(--accent);
 }
 
 /* ── 频道输入区 ── */
@@ -12808,6 +12876,7 @@ a.about-link:hover {
     width: 36px;
     height: 36px;
     align-self: flex-end;
+    box-sizing: border-box;
     border-radius: var(--radius-md);
     border: none;
     background: var(--accent);
@@ -12823,6 +12892,18 @@ a.about-link:hover {
 .channel-send-btn:disabled {
     opacity: 0.4;
     cursor: default;
+}
+
+.channel-send-btn.is-stopping {
+    opacity: 1;
+    background: transparent;
+    color: var(--coral);
+    border: 1px solid var(--coral);
+}
+
+.channel-send-btn.is-stopping:hover:not(:disabled) {
+    background: var(--coral);
+    color: white;
 }
 
 /* ── 只读 DM 提示 ── */
