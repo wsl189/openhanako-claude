@@ -17,9 +17,25 @@ import {
   resumeSessionStream,
 } from "../session-stream-store.js";
 
-/** tool_start 事件只广播这些 arg 字段，避免传输完整文件内容（同步维护：chat-render-shim.ts extractToolDetail） */
-const TOOL_ARG_SUMMARY_KEYS = ["file_path", "path", "command", "pattern", "url", "query", "key", "value", "action", "type", "schedule", "prompt", "label"];
+/** tool_start/tool_end 仅广播这些 arg 字段，避免传输完整文件内容（同步维护前端 extractToolDetail） */
+const TOOL_ARG_SUMMARY_KEYS = [
+  "file_path", "path", "command", "cmd", "pattern", "url", "query", "q",
+  "key", "value", "action", "type", "schedule", "prompt", "label", "cwd",
+  "location", "ticker", "team", "opponent", "target", "ref_id", "id", "session_id",
+  "task", "model", "max_turns", "permission_mode", "thinking", "timeout_sec", "continue", "dangerously_skip_permissions",
+  "search_query", "weather", "finance", "sports", "open", "click", "find", "image_query",
+  "tool_uses",
+];
 const DESK_MUTATING_TOOL_NAMES = new Set(["write", "edit", "bash", "generate_images"]);
+
+function compactToolArgs(rawArgs) {
+  if (!rawArgs || typeof rawArgs !== "object") return undefined;
+  const args = {};
+  for (const k of TOOL_ARG_SUMMARY_KEYS) {
+    if (rawArgs[k] !== undefined) args[k] = rawArgs[k];
+  }
+  return Object.keys(args).length ? args : undefined;
+}
 
 /**
  * 从 Pi SDK 的 content 块中提取纯文本
@@ -386,22 +402,19 @@ export default async function chatRoute(app, { engine, hub }) {
         ss.isThinking = false;
         emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
       }
-      // 只保留前端 extractToolDetail 需要的字段，避免广播完整文件内容
-      const rawArgs = event.args;
-      let args;
-      if (rawArgs && typeof rawArgs === "object") {
-        args = {};
-        for (const k of TOOL_ARG_SUMMARY_KEYS) { if (rawArgs[k] !== undefined) args[k] = rawArgs[k]; }
-      }
+      // 只保留前端展示需要的字段，避免广播完整文件内容
+      const args = compactToolArgs(event.args);
       emitStreamEvent(sessionPath, ss, { type: "tool_start", name: event.toolName || "", args });
     } else if (event.type === "tool_execution_end") {
       if (!ss) return;
       const details = event.result?.details;
       const hasDetailsError = typeof details?.error === "string" && details.error.trim().length > 0;
+      const args = compactToolArgs(event.args);
       emitStreamEvent(sessionPath, ss, {
         type: "tool_end",
         name: event.toolName || "",
         success: !event.isError && !hasDetailsError,
+        args,
         details,
       });
 

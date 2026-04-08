@@ -13,7 +13,14 @@ import { isToolCallBlock, getToolArgs } from "../../core/llm-utils.js";
  * content 可能是 string 或 [{type: "text", text: "..."}, {type: "thinking", thinking: "..."}, ...]
  * 返回 { text, thinking, toolUses }
  */
-const TOOL_ARG_SUMMARY_KEYS = ["file_path", "path", "command", "pattern", "url", "query", "key", "value", "action", "type", "schedule", "prompt", "label"];
+const TOOL_ARG_SUMMARY_KEYS = [
+  "file_path", "path", "command", "cmd", "pattern", "url", "query", "q",
+  "key", "value", "action", "type", "schedule", "prompt", "label", "cwd",
+  "location", "ticker", "team", "opponent", "target", "ref_id", "id", "session_id",
+  "task", "model", "max_turns", "permission_mode", "thinking", "timeout_sec", "continue", "dangerously_skip_permissions",
+  "search_query", "weather", "finance", "sports", "open", "click", "find", "image_query",
+  "tool_uses",
+];
 const SESSION_TITLES_FILE = "session-titles.json";
 const AUTO_WORKSPACE_TRACK_FILE = "auto-workspace-whitelist.json";
 const TRACK_STATE_ACTIVE = "active";

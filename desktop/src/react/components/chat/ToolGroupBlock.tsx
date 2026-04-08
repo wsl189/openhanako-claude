@@ -14,6 +14,14 @@ interface Props {
   agentName: string;
 }
 
+function humanizeToolName(name: string): string {
+  return String(name || '')
+    .replace(/^functions\./, '')
+    .replace(/^multi_tool_use\./, '')
+    .replace(/[._-]+/g, ' ')
+    .trim();
+}
+
 function getToolLabel(name: string, phase: string, agentName: string, args?: Record<string, unknown>): string {
   const t = (window as any).t;
   const vars = { name: agentName };
@@ -27,7 +35,17 @@ function getToolLabel(name: string, phase: string, agentName: string, args?: Rec
 
   const val = t?.(`tool.${name}.${phase}`, vars);
   if (val && val !== `tool.${name}.${phase}`) return val;
-  return t?.(`tool._fallback.${phase}`, vars) || name;
+
+  const toolName = humanizeToolName(name) || name;
+  const fallbackNamedKey = `tool._fallback.${phase}Named`;
+  const fallbackNamedVal = t?.(fallbackNamedKey, { ...vars, tool: toolName });
+  if (fallbackNamedVal && fallbackNamedVal !== fallbackNamedKey) return fallbackNamedVal;
+
+  const fallbackKey = `tool._fallback.${phase}`;
+  const fallbackVal = t?.(fallbackKey, vars);
+  if (fallbackVal && fallbackVal !== fallbackKey) return `${fallbackVal} (${toolName})`;
+
+  return toolName;
 }
 
 export const ToolGroupBlock = memo(function ToolGroupBlock({ tools, collapsed: initialCollapsed, agentName }: Props) {

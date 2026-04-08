@@ -97,6 +97,83 @@ export function truncateHead(s: string, max: number): string {
   return s.slice(0, max - 1) + '…';
 }
 
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
+
+function firstArrayField(value: unknown, field: string): string {
+  if (!Array.isArray(value)) return '';
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const text = asText((item as Record<string, unknown>)[field]);
+    if (text) return text;
+  }
+  return '';
+}
+
+function extractStructuredDetail(args: Record<string, unknown>): string {
+  const searchQ = firstArrayField(args.search_query, 'q');
+  if (searchQ) return truncateHead(searchQ, 40);
+
+  const imageQ = firstArrayField(args.image_query, 'q');
+  if (imageQ) return truncateHead(imageQ, 40);
+
+  const weatherLocation = firstArrayField(args.weather, 'location');
+  if (weatherLocation) return truncateHead(weatherLocation, 40);
+
+  const financeTicker = firstArrayField(args.finance, 'ticker');
+  if (financeTicker) return truncateHead(financeTicker, 40);
+
+  const sportsTeam = firstArrayField(args.sports, 'team');
+  if (sportsTeam) return truncateHead(sportsTeam, 40);
+
+  const openRef = firstArrayField(args.open, 'ref_id');
+  if (openRef) return truncateHead(openRef, 40);
+
+  const findPattern = firstArrayField(args.find, 'pattern');
+  if (findPattern) return truncateHead(findPattern, 40);
+
+  const clickRef = firstArrayField(args.click, 'ref_id');
+  const clickId = firstArrayField(args.click, 'id');
+  if (clickRef || clickId) return truncateHead([clickRef, clickId].filter(Boolean).join(' #'), 40);
+
+  return '';
+}
+
+function extractGenericDetail(args: Record<string, unknown>): string {
+  const structured = extractStructuredDetail(args);
+  if (structured) return structured;
+
+  const scalar = (key: string): string => asText(args[key]);
+  const pathLike = scalar('path') || scalar('file_path') || scalar('cwd');
+  if (pathLike) return truncatePath(pathLike);
+
+  const cmdLike = scalar('cmd') || scalar('command');
+  if (cmdLike) return truncateHead(cmdLike, 48);
+
+  const taskLike = scalar('task') || scalar('prompt');
+  if (taskLike) return truncateHead(taskLike, 48);
+
+  const queryLike = scalar('query') || scalar('q') || scalar('pattern');
+  if (queryLike) return truncateHead(queryLike, 40);
+
+  const urlLike = scalar('url');
+  if (urlLike) return truncateHead(extractHostname(urlLike), 40);
+
+  const targetLike = scalar('target') || scalar('ref_id');
+  if (targetLike) return truncateHead(targetLike, 40);
+
+  const locationLike = scalar('location') || scalar('ticker');
+  if (locationLike) return truncateHead(locationLike, 40);
+
+  const actionLike = scalar('action');
+  if (actionLike) return truncateHead(actionLike, 40);
+
+  return '';
+}
+
 export function extractToolDetail(name: string, args: Record<string, unknown> | undefined): string {
   if (!args) return '';
   switch (name) {
@@ -106,7 +183,8 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
     case 'edit-diff':
       return truncatePath((args.file_path || args.path || '') as string);
     case 'bash':
-      return truncateHead((args.command || '') as string, 40);
+    case 'exec_command':
+      return truncateHead(((args.command || args.cmd || '') as string), 40);
     case 'glob':
     case 'find':
       return (args.pattern || '') as string;
@@ -118,14 +196,17 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
     case 'web_fetch':
       return extractHostname((args.url || '') as string);
     case 'web_search':
-      return truncateHead((args.query || '') as string, 40);
+      return truncateHead(((args.query || args.q || '') as string), 40);
     case 'browser':
-      return extractHostname((args.url || '') as string);
+      return extractHostname((args.url || '') as string) || truncateHead((args.action || '') as string, 40);
     case 'search_memory':
       return truncateHead((args.query || '') as string, 40);
     case 'generate_images':
       return truncateHead((args.prompt || '') as string, 40);
+    case 'claude_core':
+      return truncateHead(((args.task || args.prompt || '') as string), 48)
+        || truncatePath((args.cwd || '') as string);
     default:
-      return '';
+      return extractGenericDetail(args);
   }
 }

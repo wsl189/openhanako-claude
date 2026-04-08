@@ -353,6 +353,11 @@
       "done": "💭 Memory search completed",
       "failed": "💭 Memory search failed"
     },
+    "claude_core": {
+      "running": "🧠 Calling Claude Core",
+      "done": "🧠 Claude Core completed",
+      "failed": "🧠 Claude Core failed"
+    },
     "bash": {
       "running": "💻 Running terminal command",
       "done": "💻 Command executed",
@@ -482,8 +487,11 @@
     },
     "_fallback": {
       "running": "🔧 Running action…",
+      "runningNamed": "🔧 Running action ({tool})",
       "done": "🔧 Action completed",
-      "failed": "🔧 Something went wrong"
+      "doneNamed": "🔧 Action completed ({tool})",
+      "failed": "🔧 Something went wrong",
+      "failedNamed": "🔧 Something went wrong ({tool})"
     }
   },
   "file_output": {
@@ -1335,6 +1343,17 @@
     "delegateMaxConcurrent": "{max} sub-tasks are already running, please wait before starting new ones.",
     "delegateFailed": "Sub-task execution failed: {msg}",
     "delegateNoOutput": "(Sub-task produced no output)",
+    "claudeCoreTaskRequired": "claude_core requires a task parameter.",
+    "claudeCoreCwdAbsolute": "claude_core cwd must be an absolute path.",
+    "claudeCoreCwdNotFound": "claude_core working directory not found: {cwd}",
+    "claudeCoreCwdNotDir": "claude_core cwd is not a directory: {cwd}",
+    "claudeCoreEntryNotFound": "claude-core entry file (dist/cli.js) was not found. Set HANAKO_CLAUDE_CORE_ENTRY or place claude-core next to openhanako.",
+    "claudeCoreFailed": "Claude Core execution failed (exit {code}): {msg}",
+    "claudeCoreRunError": "Claude Core invocation error: {msg}",
+    "claudeCoreTimeout": "Claude Core timed out ({sec}s).",
+    "claudeCoreAborted": "Claude Core execution was aborted.",
+    "claudeCoreNoOutput": "Claude Core returned no visible output.",
+    "claudeCoreOutputTruncated": "[Claude Core output truncated]",
     "installSkillDisabled": "Self-learning skills not enabled. Please enable \"Allow Agent to create/install skills\" in settings.",
     "installSkillGithubDisabled": "GitHub skill fetching not enabled. Please enable \"Allow fetching skills from GitHub\" in settings.",
     "installSkillInvalidGithubUrl": "Invalid GitHub URL: {url}",
@@ -1650,6 +1669,19 @@
       "description": "Delegate an independent sub-task to a background agent. The sub-task runs in an isolated context and only returns the final result, without consuming the current conversation's context.\nGood for:\n- Research tasks that require extensive searching and reading, summarized into a brief conclusion\n- Independent sub-problems that can run in parallel with your current work\n- Tasks that need simultaneous exploration in multiple directions (you can fire multiple delegate calls at once)\nNot for: Operations with side effects like modifying files or executing commands\n\nImportant: The task parameter must contain complete instructions and necessary background, as the sub-task cannot see the current conversation history.",
       "taskDesc": "Full instructions for the sub-task, including necessary background",
       "modelDesc": "Specify model (optional, defaults to utility model)"
+    },
+    "claudeCore": {
+      "label": "Claude Core",
+      "description": "Delegate complex coding tasks to your local claude-core CLI. Best for refactors, multi-step debugging, and cross-file implementation.\nProvide clear goals, constraints, and acceptance criteria. Use cwd to run in a specific directory when needed.",
+      "taskDesc": "Complete task description for Claude Core",
+      "cwdDesc": "Optional execution directory (absolute path). Defaults to current session cwd",
+      "modelDesc": "Optional model override for Claude Core",
+      "permissionModeDesc": "Optional permission mode (default: acceptEdits)",
+      "thinkingDesc": "Optional thinking mode (enabled/adaptive/disabled)",
+      "maxTurnsDesc": "Optional max agent turns",
+      "timeoutDesc": "Optional timeout in seconds (default 600)",
+      "continueDesc": "Optional: continue previous Claude Core session (maps to -c). If omitted, auto mode is used: related task tends to continue, new task tends to start fresh.",
+      "dangerouslySkipDesc": "Optional: bypass permission prompts (dangerous)"
     },
     "installSkill": {
       "label": "Install Skill",

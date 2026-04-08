@@ -55,6 +55,7 @@ const CUSTOM_TOOL_HINT_KEYS: Record<string, string> = {
   generate_images: 'toolDef.generateImages.label',
   update_settings: 'toolDef.updateSettings.label',
   delegate: 'toolDef.delegate.label',
+  claude_core: 'toolDef.claudeCore.label',
   install_skill: 'toolDef.installSkill.label',
 };
 const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
@@ -79,6 +80,7 @@ const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
   generate_images: 'toolDef.generateImages.description',
   update_settings: 'toolDef.updateSettings.description',
   delegate: 'toolDef.delegate.description',
+  claude_core: 'toolDef.claudeCore.description',
   install_skill: 'toolDef.installSkill.description',
 };
 

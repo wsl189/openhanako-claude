@@ -353,6 +353,11 @@
       "done": "💭 已完成记忆检索",
       "failed": "💭 记忆检索失败"
     },
+    "claude_core": {
+      "running": "🧠 正在调用 Claude Core",
+      "done": "🧠 Claude Core 执行完成",
+      "failed": "🧠 Claude Core 执行失败"
+    },
     "bash": {
       "running": "💻 正在执行终端命令",
       "done": "💻 已执行终端命令",
@@ -482,8 +487,11 @@
     },
     "_fallback": {
       "running": "🔧 正在执行操作…",
+      "runningNamed": "🔧 正在执行操作（{tool}）",
       "done": "🔧 已完成操作",
-      "failed": "🔧 操作失败"
+      "doneNamed": "🔧 已完成操作（{tool}）",
+      "failed": "🔧 操作失败",
+      "failedNamed": "🔧 操作失败（{tool}）"
     }
   },
   "file_output": {
@@ -1335,6 +1343,17 @@
     "delegateMaxConcurrent": "当前已有 {max} 个子任务在运行，请等待完成后再发起新任务。",
     "delegateFailed": "子任务执行失败: {msg}",
     "delegateNoOutput": "(子任务未产生输出)",
+    "claudeCoreTaskRequired": "claude_core 需要 task 参数。",
+    "claudeCoreCwdAbsolute": "claude_core 的 cwd 必须是绝对路径。",
+    "claudeCoreCwdNotFound": "claude_core 工作目录不存在：{cwd}",
+    "claudeCoreCwdNotDir": "claude_core 的 cwd 不是目录：{cwd}",
+    "claudeCoreEntryNotFound": "未找到 claude-core 入口文件（dist/cli.js）。请设置 HANAKO_CLAUDE_CORE_ENTRY，或将 claude-core 放在 openhanako 同级目录。",
+    "claudeCoreFailed": "Claude Core 执行失败（exit {code}）：{msg}",
+    "claudeCoreRunError": "Claude Core 调用出错：{msg}",
+    "claudeCoreTimeout": "Claude Core 执行超时（{sec}s）。",
+    "claudeCoreAborted": "Claude Core 执行已中止。",
+    "claudeCoreNoOutput": "Claude Core 未返回可见内容。",
+    "claudeCoreOutputTruncated": "[Claude Core 输出已截断]",
     "installSkillDisabled": "自学技能能力未启用。请在设置中开启「允许 Agent 自行创建/安装技能」。",
     "installSkillGithubDisabled": "GitHub 技能获取未启用。请在设置中开启「允许从 GitHub 获取技能」。",
     "installSkillInvalidGithubUrl": "无效的 GitHub URL：{url}",
@@ -1650,6 +1669,19 @@
       "description": "将独立的子任务委派给后台 agent 执行。子任务在隔离的上下文中运行，只返回最终结果，不占用当前对话的上下文。\n适用场景：\n- 需要大量搜索、阅读后总结为简短结论的调研任务\n- 可以和当前思路并行的独立子问题\n- 需要在多个方向同时探索的任务（可同时发起多个 delegate 调用）\n不适用：需要修改文件、执行命令等有副作用的操作\n\n重要：task 参数要写清楚完整的指令和必要背景，子任务看不到当前对话历史。",
       "taskDesc": "子任务的完整指令，包含必要的背景信息",
       "modelDesc": "指定模型（可选，默认使用 utility 模型）"
+    },
+    "claudeCore": {
+      "label": "Claude Core",
+      "description": "把复杂编程任务交给本地 claude-core CLI 处理，适用于重构、多步骤调试、跨文件实现等高复杂度任务。\n使用前请把任务目标、约束和验收标准写清楚；如需在特定目录执行可传 cwd。",
+      "taskDesc": "要交给 Claude Core 的完整任务描述",
+      "cwdDesc": "可选：执行目录（绝对路径），默认使用当前会话工作目录",
+      "modelDesc": "可选：指定 Claude Core 使用的模型",
+      "permissionModeDesc": "可选：权限模式（默认 acceptEdits）",
+      "thinkingDesc": "可选：思考模式（enabled/adaptive/disabled）",
+      "maxTurnsDesc": "可选：最大 agent 回合数",
+      "timeoutDesc": "可选：超时时间（秒，默认 600）",
+      "continueDesc": "可选：是否继续上一次 Claude Core 会话（映射 -c）。不传时会自动判断：同会话同任务倾向续跑，新任务倾向新开。",
+      "dangerouslySkipDesc": "可选：是否跳过权限确认（危险）"
     },
     "installSkill": {
       "label": "安装技能",

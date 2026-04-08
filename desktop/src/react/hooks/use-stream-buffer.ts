@@ -308,7 +308,13 @@ class StreamBufferManager {
             const toolIdx = tg.tools.findIndex(t => t.name === msg.name && !t.done);
             if (toolIdx >= 0) {
               const tools = [...tg.tools];
-              tools[toolIdx] = { ...tools[toolIdx], done: true, success: !!msg.success };
+              const mergedArgs = (() => {
+                const currentArgs = tools[toolIdx].args;
+                if (!msg.args || typeof msg.args !== 'object') return currentArgs;
+                if (!currentArgs || typeof currentArgs !== 'object') return msg.args;
+                return { ...currentArgs, ...msg.args };
+              })();
+              tools[toolIdx] = { ...tools[toolIdx], args: mergedArgs, done: true, success: !!msg.success };
               const allDone = tools.every(t => t.done);
               blocks[i] = { ...tg, tools, collapsed: allDone && tools.length > 1 };
               updatedTool = true;

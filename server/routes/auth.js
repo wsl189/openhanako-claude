@@ -10,228 +10,305 @@
  *   2. POST /api/auth/oauth/callback → 提交授权码（授权码流程）
  *   3. GET  /api/auth/oauth/poll/:id → 轮询登录状态（设备码流程）
  */
-import crypto from "crypto";
+import { OAuthFlowManager } from "../../core/oauth-flow-manager.js";
+import { withRetry } from "../../lib/retry.js";
 
-export default async function authRoute(app, { engine }) {
+/** 依赖注入工厂 - 方便测试和降低耦合 */
+export function createAuthHandler({ getHanakoHome, authStorage, preferences, syncModelsAndRefresh }) {
+  const flowManager = new OAuthFlowManager(getHanakoHome());
 
-  /** 进行中的 OAuth 流程 */
+  /**
+   * 登录后同步模型（带重试）
+   */
+  async function postLoginSync() {
+    try {
+      await withRetry(() => syncModelsAndRefresh(), {
+        maxRetries: 2,
+        baseDelay: 500,
+        timeout: 15_000,
+        shouldRetry: (err) => {
+          // 网络错误可重试，业务错误不重试
+          const code = err?.code;
+          return code === "ECONNRESET" || code === "ETIMEDOUT" || code === "ENOTFOUND";
+        },
+      });
+    } catch (err) {
+      console.error("[auth] post-login model sync failed:", err.message);
+    }
+  }
+
+  /** @type {Map<string, { resolveCode: Function, rejectCode: Function, loginPromise: Promise<any>, result: any }>} */
   const pendingFlows = new Map();
 
-  /**
-   * 启动 OAuth 登录
-   * body: { provider }
-   * → { sessionId, url, instructions? }
-   *   instructions 存在时为设备码流程（值为 user_code）
-   */
-  app.post("/api/auth/oauth/start", async (req, reply) => {
-    const { provider } = req.body || {};
-    if (!provider) {
-      reply.code(400);
-      return { error: "provider is required" };
-    }
+  return {
+    flowManager,
+    pendingFlows,
 
-    const sessionId = crypto.randomUUID();
-
-    // onAuth 回调会把 URL 和 instructions 交给我们
-    let resolveUrl, rejectUrl;
-    const urlPromise = new Promise((resolve, reject) => {
-      resolveUrl = resolve;
-      rejectUrl = reject;
-    });
-
-    // onPrompt 回调等待用户粘贴授权码（仅授权码流程使用）
-    let resolveCode, rejectCode;
-    const codePromise = new Promise((resolve, reject) => {
-      resolveCode = resolve;
-      rejectCode = reject;
-    });
-
-    let authInstructions = null;
-    let usesCallbackServer = false;
-
-    // 检查 provider 是否使用本地回调服务器（如 OpenAI Codex）
-    const providerObj = engine.authStorage.getOAuthProviders().find(p => p.id === provider);
-    if (providerObj?.usesCallbackServer) usesCallbackServer = true;
-
-    // 启动 OAuth（不 await，loginPromise 会异步 resolve）
-    const loginPromise = engine.authStorage.login(provider, {
-      onAuth: (info) => {
-        // callback server 流程不需要给前端显示 instructions（那只是提示文本，不是 user_code）
-        // 只有设备码流程才需要（instructions 是 user_code）
-        if (usesCallbackServer) {
-          authInstructions = null;
-        } else {
-          authInstructions = info.instructions || null;
-        }
-        resolveUrl(info.url);
-      },
-      onPrompt: () => codePromise,
-    }).catch(err => {
-      rejectUrl(err);
-      throw err;
-    });
-
-    // 追踪 loginPromise 的结果（供 poll 端点使用）
-    const flow = { resolveCode, rejectCode, loginPromise, result: null };
-    loginPromise.then(() => {
-      flow.result = { ok: true };
-    }).catch(err => {
-      flow.result = { ok: false, error: err.message };
-    });
-
-    try {
-      const url = await urlPromise;
-      pendingFlows.set(sessionId, flow);
-
-      // 5 分钟超时
-      const timer = setTimeout(() => {
-        const f = pendingFlows.get(sessionId);
-        if (f) {
-          f.rejectCode(new Error("OAuth flow timed out"));
-          pendingFlows.delete(sessionId);
-        }
-      }, 5 * 60 * 1000);
-      timer.unref();
-
-      const resp = { sessionId, url };
-      if (authInstructions) resp.instructions = authInstructions;
-      if (usesCallbackServer) resp.polling = true;
-      return resp;
-    } catch (err) {
-      reply.code(500);
-      return { error: err.message };
-    }
-  });
-
-  /**
-   * 提交授权码（授权码流程）
-   * body: { sessionId, code }
-   */
-  app.post("/api/auth/oauth/callback", async (req, reply) => {
-    const { sessionId, code } = req.body || {};
-    const flow = pendingFlows.get(sessionId);
-    if (!flow) {
-      reply.code(400);
-      return { error: "No pending login flow" };
-    }
-
-    flow.resolveCode(code);
-
-    try {
-      await flow.loginPromise;
-      pendingFlows.delete(sessionId);
-
-      try {
-        await engine.syncModelsAndRefresh();
-      } catch (err) {
-        console.error("[auth] post-login model sync failed:", err.message);
+    /**
+     * 启动 OAuth 登录
+     * body: { provider }
+     * → { sessionId, url, instructions? }
+     */
+    async start(req, reply) {
+      const { provider } = req.body || {};
+      if (!provider) {
+        reply.code(400);
+        return { error: "provider is required" };
       }
 
+      // onAuth 回调收集 URL
+      let resolveUrl, rejectUrl;
+      const urlPromise = new Promise((resolve, reject) => {
+        resolveUrl = resolve;
+        rejectUrl = reject;
+      });
+
+      // onPrompt 回调等待用户粘贴授权码（仅授权码流程）
+      let resolveCode, rejectCode;
+      const codePromise = new Promise((resolve, reject) => {
+        resolveCode = resolve;
+        rejectCode = reject;
+      });
+
+      let authInstructions = null;
+      let usesCallbackServer = false;
+
+      // 检查 provider 是否使用本地回调服务器（如 OpenAI Codex）
+      const providerObj = authStorage.getOAuthProviders().find(p => p.id === provider);
+      if (providerObj?.usesCallbackServer) usesCallbackServer = true;
+
+      // 注册持久化流程
+      const { sessionId } = flowManager.register(provider);
+
+      // 启动 OAuth（不 await）
+      const loginPromise = authStorage.login(provider, {
+        onAuth: (info) => {
+          if (usesCallbackServer) {
+            authInstructions = null;
+          } else {
+            authInstructions = info.instructions || null;
+          }
+          resolveUrl(info.url);
+        },
+        onPrompt: () => codePromise,
+      }).catch(err => {
+        rejectUrl(err);
+        throw err;
+      });
+
+      // 追踪 loginPromise 结果
+      const flow = { resolveCode, rejectCode, loginPromise, result: null };
+      loginPromise.then(() => {
+        flow.result = { ok: true };
+      }).catch(err => {
+        flow.result = { ok: false, error: err.message };
+      });
+
+      try {
+        const url = await urlPromise;
+        pendingFlows.set(sessionId, flow);
+
+        // 5 分钟超时
+        const timer = setTimeout(() => {
+          const f = pendingFlows.get(sessionId);
+          if (f) {
+            f.rejectCode(new Error("OAuth flow timed out"));
+            pendingFlows.delete(sessionId);
+            flowManager.complete(sessionId, "OAuth flow timed out");
+          }
+        }, 5 * 60 * 1000);
+        timer.unref();
+
+        const resp = { sessionId, url };
+        if (authInstructions) resp.instructions = authInstructions;
+        if (usesCallbackServer) resp.polling = true;
+        return resp;
+      } catch (err) {
+        flowManager.remove(sessionId);
+        reply.code(500);
+        return { error: err.message };
+      }
+    },
+
+    /**
+     * 提交授权码（授权码流程）
+     * body: { sessionId, code }
+     */
+    async callback(req, reply) {
+      const { sessionId, code } = req.body || {};
+      const flow = pendingFlows.get(sessionId);
+      if (!flow) {
+        reply.code(400);
+        return { error: "No pending login flow" };
+      }
+
+      flow.resolveCode(code);
+
+      try {
+        await flow.loginPromise;
+        pendingFlows.delete(sessionId);
+        flowManager.complete(sessionId);
+        await postLoginSync();
+        return { ok: true };
+      } catch (err) {
+        pendingFlows.delete(sessionId);
+        flowManager.complete(sessionId, err.message);
+        reply.code(500);
+        return { error: err.message };
+      }
+    },
+
+    /**
+     * 轮询登录状态（设备码流程）
+     * → { status: "pending" | "done" | "error" | "timeout", error? }
+     */
+    async poll(req, reply) {
+      const { sessionId } = req.params;
+      const flowState = flowManager.getFlow(sessionId);
+
+      if (!flowState) {
+        reply.code(400);
+        return { status: "error", error: "No pending login flow" };
+      }
+
+      const flow = pendingFlows.get(sessionId);
+
+      if (flowState.status === "pending") {
+        // 流程仍在进行中
+        if (!flow?.result) {
+          return { status: "pending" };
+        }
+        // 流程已有结果（登录完成或失败）
+        pendingFlows.delete(sessionId);
+
+        if (flow.result.ok) {
+          flowManager.complete(sessionId);
+          await postLoginSync();
+          return { status: "done" };
+        }
+        flowManager.complete(sessionId, flow.result.error);
+        return { status: "error", error: flow.result.error };
+      }
+
+      // 已结束（done/error/timeout）
+      if (flow) pendingFlows.delete(sessionId);
+
+      if (flowState.status === "done") {
+        return { status: "done" };
+      }
+
+      if (flowState.status === "timeout") {
+        return { status: "timeout", error: flowState.error };
+      }
+
+      return { status: "error", error: flowState.error || "Unknown error" };
+    },
+
+    /**
+     * 查询 OAuth 提供商状态
+     * → { anthropic: { name, loggedIn }, minimax: { name, loggedIn }, ... }
+     */
+    status() {
+      const providers = authStorage.getOAuthProviders();
+      const status = {};
+      for (const p of providers) {
+        const cred = authStorage.get(p.id);
+        status[p.id] = {
+          name: p.name,
+          loggedIn: cred?.type === "oauth",
+        };
+      }
+      return status;
+    },
+
+    /**
+     * 登出
+     * body: { provider }
+     */
+    logout(req, reply) {
+      const { provider } = req.body || {};
+      if (!provider) {
+        reply.code(400);
+        return { error: "provider is required" };
+      }
+      authStorage.logout(provider);
       return { ok: true };
-    } catch (err) {
-      pendingFlows.delete(sessionId);
-      reply.code(500);
-      return { error: err.message };
-    }
-  });
+    },
 
-  /**
-   * 轮询登录状态（设备码流程）
-   * → { status: "pending" | "done" | "error", error? }
-   */
-  app.get("/api/auth/oauth/poll/:sessionId", async (req, reply) => {
-    const flow = pendingFlows.get(req.params.sessionId);
-    if (!flow) {
-      reply.code(400);
-      return { status: "error", error: "No pending login flow" };
-    }
+    // ── OAuth 自定义模型 ──
 
-    if (!flow.result) {
-      return { status: "pending" };
-    }
+    /** 获取某个 OAuth provider 的自定义模型列表 */
+    getCustomModels(req) {
+      const custom = preferences.getOAuthCustomModels();
+      return { models: custom[req.params.provider] || [] };
+    },
 
-    pendingFlows.delete(req.params.sessionId);
-
-    if (flow.result.ok) {
-      try {
-        await engine.syncModelsAndRefresh();
-      } catch (err) {
-        console.error("[auth] post-login model sync failed:", err.message);
+    /** 添加自定义模型到 OAuth provider */
+    async addCustomModel(req, reply) {
+      const { provider } = req.params;
+      const { modelId } = req.body || {};
+      if (!modelId || typeof modelId !== "string" || !modelId.trim()) {
+        reply.code(400);
+        return { error: "modelId is required" };
       }
-      return { status: "done" };
-    }
+      const id = modelId.trim();
+      const custom = preferences.getOAuthCustomModels();
+      const list = custom[provider] || [];
+      if (list.includes(id)) return { ok: true, models: list };
+      list.push(id);
+      preferences.setOAuthCustomModels(provider, list);
+      await withRetry(() => syncModelsAndRefresh(), {
+        maxRetries: 2,
+        timeout: 15_000,
+      });
+      return { ok: true, models: list };
+    },
 
-    return { status: "error", error: flow.result.error };
+    /** 删除 OAuth provider 的某个自定义模型 */
+    async deleteCustomModel(req, reply) {
+      const { provider, modelId } = req.params;
+      const custom = preferences.getOAuthCustomModels();
+      const list = (custom[provider] || []).filter(id => id !== modelId);
+      preferences.setOAuthCustomModels(provider, list);
+      await withRetry(() => syncModelsAndRefresh(), {
+        maxRetries: 2,
+        timeout: 15_000,
+      });
+      return { ok: true, models: list };
+    },
+  };
+}
+
+/**
+ * 注册 auth 路由
+ * @param {import('fastify').FastifyInstance} app
+ * @param {{ engine: any }} opts
+ */
+export default async function authRoute(app, { engine }) {
+  const handler = createAuthHandler({
+    getHanakoHome: () => engine._hanakoHome,
+    get authStorage() { return engine.authStorage; },
+    get preferences() { return engine.preferences; },
+    get syncModelsAndRefresh() { return () => engine.syncModelsAndRefresh(); },
   });
 
-  /**
-   * 查询 OAuth 状态
-   * → { anthropic: { name, loggedIn }, minimax: { name, loggedIn }, ... }
-   */
-  app.get("/api/auth/oauth/status", async () => {
-    const providers = engine.authStorage.getOAuthProviders();
-    const status = {};
-    for (const p of providers) {
-      const cred = engine.authStorage.get(p.id);
-      const modelCount = cred?.type === "oauth"
-        ? engine.availableModels.filter(m => m.provider === p.id).length
-        : 0;
-      status[p.id] = {
-        name: p.name,
-        loggedIn: cred?.type === "oauth",
-        modelCount,
-      };
-    }
-    return status;
-  });
+  app.post("/api/auth/oauth/start", async (req, reply) => handler.start(req, reply));
 
-  /**
-   * 登出
-   * body: { provider }
-   */
-  app.post("/api/auth/oauth/logout", async (req, reply) => {
-    const { provider } = req.body || {};
-    if (!provider) {
-      reply.code(400);
-      return { error: "provider is required" };
-    }
-    engine.authStorage.logout(provider);
-    return { ok: true };
-  });
+  app.post("/api/auth/oauth/callback", async (req, reply) => handler.callback(req, reply));
+
+  app.get("/api/auth/oauth/poll/:sessionId", async (req, reply) => handler.poll(req, reply));
+
+  app.get("/api/auth/oauth/status", async () => handler.status());
+
+  app.post("/api/auth/oauth/logout", async (req, reply) => handler.logout(req, reply));
 
   // ── OAuth 自定义模型 ──
 
-  /** 获取某个 OAuth provider 的自定义模型列表 */
-  app.get("/api/auth/oauth/:provider/custom-models", async (req) => {
-    const custom = engine.preferences.getOAuthCustomModels();
-    return { models: custom[req.params.provider] || [] };
-  });
+  app.get("/api/auth/oauth/:provider/custom-models", async (req) => handler.getCustomModels(req));
 
-  /** 添加自定义模型到 OAuth provider */
-  app.post("/api/auth/oauth/:provider/custom-models", async (req, reply) => {
-    const { provider } = req.params;
-    const { modelId } = req.body || {};
-    if (!modelId || typeof modelId !== "string" || !modelId.trim()) {
-      reply.code(400);
-      return { error: "modelId is required" };
-    }
-    const id = modelId.trim();
-    const custom = engine.preferences.getOAuthCustomModels();
-    const list = custom[provider] || [];
-    if (list.includes(id)) return { ok: true, models: list };
-    list.push(id);
-    engine.preferences.setOAuthCustomModels(provider, list);
-    await engine.refreshModels();
-    return { ok: true, models: list };
-  });
+  app.post("/api/auth/oauth/:provider/custom-models", async (req, reply) => handler.addCustomModel(req, reply));
 
-  /** 删除 OAuth provider 的某个自定义模型 */
-  app.delete("/api/auth/oauth/:provider/custom-models/:modelId", async (req, reply) => {
-    const { provider, modelId } = req.params;
-    const custom = engine.preferences.getOAuthCustomModels();
-    const list = (custom[provider] || []).filter(id => id !== modelId);
-    engine.preferences.setOAuthCustomModels(provider, list);
-    await engine.refreshModels();
-    return { ok: true, models: list };
-  });
+  app.delete("/api/auth/oauth/:provider/custom-models/:modelId", async (req, reply) =>
+    handler.deleteCustomModel(req, reply)
+  );
 }

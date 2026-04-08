@@ -27,6 +27,7 @@ import { createExperienceTools } from "../lib/tools/experience.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
 import { createUpdateSettingsTool } from "../lib/tools/update-settings-tool.js";
 import { createDelegateTool } from "../lib/tools/delegate-tool.js";
+import { createClaudeCoreTool } from "../lib/tools/claude-core-tool.js";
 import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
 import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
@@ -90,6 +91,7 @@ export class Agent {
     this._notifyTool = null;
     this._describeImagesTool = null;
     this._generateImagesTool = null;
+    this._claudeCoreTool = null;
   }
 
   // ════════════════════════════
@@ -370,6 +372,7 @@ export class Agent {
       resolveUtilityModel: () => this._memoryModel || this._utilityModel || null,
       readOnlyBuiltinTools: READ_ONLY_BUILTIN_TOOLS,
     });
+    this._claudeCoreTool = createClaudeCoreTool();
 
     // 12. 组装 system prompt
     log(`  [agent] 9. buildSystemPrompt...`);
@@ -446,6 +449,7 @@ export class Agent {
       this._notifyTool,
       this._updateSettingsTool,
       this._delegateTool,
+      this._claudeCoreTool,
     ].filter(Boolean);
   }
   get tools() {
@@ -470,6 +474,7 @@ export class Agent {
       this._notifyTool,
       this._updateSettingsTool,
       this._delegateTool,
+      this._claudeCoreTool,
     ].filter(Boolean);
   }
 
@@ -758,6 +763,12 @@ export class Agent {
       parts.push(isZh
         ? "当前无可用联网检索工具（search/browser）；需要联网信息时请明确说明能力受限。"
         : "No web lookup tools are available (search/browser). If internet data is required, clearly state this limitation.");
+    }
+
+    if (hasTool("claude_core")) {
+      parts.push(isZh
+        ? "当任务涉及复杂编程、重构、多步骤调试或长链路实现时，优先调用 claude_core 工具处理。调用时请把任务目标、约束条件、验收标准和必要上下文写进 task 参数。若你判断是同一任务链路可设置 continue=true（会映射到 -c 续跑）；若是新任务则设 continue=false。"
+        : "For complex coding, refactoring, multi-step debugging, or long implementation chains, prefer the claude_core tool. Include goals, constraints, acceptance criteria, and necessary context in the task parameter. If it is the same task thread, set continue=true (maps to -c); for a new task, set continue=false.");
     }
 
     if (hasTool("describe_images")) {
