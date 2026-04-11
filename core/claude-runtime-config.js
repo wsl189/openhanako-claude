@@ -113,6 +113,10 @@ export function buildClaudeRuntimeConfig({
   model,
   env = {},
 } = {}) {
+  const runtimeEnv = {
+    ...process.env,
+    ...(env || {}),
+  };
   const pathRules = normalizePathRules(toolProfile?.sandbox?.path_rules);
   const builtinEnabled = noTools
     ? []
@@ -144,7 +148,7 @@ export function buildClaudeRuntimeConfig({
     options: {
       cwd,
       model,
-      env,
+      env: runtimeEnv,
       mcpServers,
       additionalDirectories: buildAdditionalDirectories(cwd, workspace, pathRules),
       tools: builtinEnabled,

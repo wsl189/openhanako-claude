@@ -47,6 +47,14 @@ function buildRealtimeDateTimeContext(isZh = false) {
     : `Current date and time: ${dateTime}\nYour day starts at 4:00 AM. Conversations before 4:00 AM belong to the previous day.`;
 }
 
+function normalizeAnthropicBaseUrlForSdk(url = "") {
+  return String(url || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/(v1\/)?messages$/i, "")
+    .replace(/\/v1$/i, "");
+}
+
 function isReasoningLikeType(type) {
   const normalized = String(type || "").toLowerCase();
   if (!normalized || normalized === "text") return false;
@@ -193,8 +201,26 @@ export async function runAgentSession(agentId, rounds, {
     agentId,
   });
 
+  const modelRef = agent?.config?.models?.chat || engine.currentModel?.id || engine.currentModel?.name || null;
+  let resolvedModelWithCreds = null;
+  try {
+    if (modelRef && typeof engine.resolveModelWithCredentials === "function") {
+      resolvedModelWithCreds = engine.resolveModelWithCredentials(modelRef, agent.config) || null;
+    }
+  } catch {}
+
+  const runtimeEnv = {
+    ...process.env,
+  };
+  if (resolvedModelWithCreds) {
+    runtimeEnv.ANTHROPIC_BASE_URL = resolvedModelWithCreds.api === "anthropic-messages"
+      ? (normalizeAnthropicBaseUrlForSdk(resolvedModelWithCreds.base_url) || undefined)
+      : (resolvedModelWithCreds.base_url || undefined);
+    runtimeEnv.ANTHROPIC_API_KEY = resolvedModelWithCreds.api_key || undefined;
+  }
+
   const model = applyRuntimeModelOverrides(
-    engine.createSessionContext().resolveModel(agent.config),
+    resolvedModelWithCreds?.model || engine.createSessionContext().resolveModel(agent.config),
     agent?.config?.models?.overrides,
   );
 
@@ -212,6 +238,7 @@ export async function runAgentSession(agentId, rounds, {
     noMemory,
     systemAppend: mergedSystemAppend,
     model: model?.id || model?.name,
+    env: runtimeEnv,
     createToolContext: () => ({
       sessionManager: runtime?.sessionManager,
     }),
