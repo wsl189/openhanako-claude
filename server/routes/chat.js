@@ -834,11 +834,10 @@ export default async function chatRoute(app, { engine, hub }) {
       // 但最终 assistant 消息已写入 session（例如只给最终聚合文本）。
       // 这种情况下补发一次 text_delta，避免误报“模型未返回任何内容”。
       if (!ss.hasOutput) {
-        const session = engine.getSessionByPath(sessionPath);
-        const messages = Array.isArray(session?.messages) ? session.messages : [];
-        const lastAssistant = [...messages].reverse().find((m) => m?.role === "assistant");
+        // 仅回填“当前轮 assistant_snapshot”聚合内容，避免在 abort 场景下
+        // 误把历史最后一条 assistant 文本再补发一遍。
         const finalText = stripSdkDiagnosticLines(
-          extractText(ss.lastAssistantContent || lastAssistant?.content),
+          extractText(ss.lastAssistantContent),
         ).trim();
         if (finalText) {
           ss.hasOutput = true;
@@ -1084,6 +1083,7 @@ export default async function chatRoute(app, { engine, hub }) {
           ss.hadError = false;
           ss.structuredStream = shouldUseStructuredStreamForSession(engine, promptSessionPath);
           ss.lastAssistantSnapshotSig = "";
+          ss.lastAssistantContent = null;
           ss.titleRequested = false;
           beginSessionStream(ss);
           broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath });

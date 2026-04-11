@@ -306,6 +306,34 @@ function InputAreaInner() {
       reader.readAsDataURL(file);
       break; // 只处理第一张
     }
+
+    const plainText = e.clipboardData?.getData('text/plain') ?? '';
+    if (!plainText) return;
+
+    // 复制聊天区“用户消息”到输入框时，浏览器会附带尾部空行（通常是 \n\n）。
+    // 仅在来源明确是用户消息文本时去掉尾部空行，避免影响普通外部粘贴。
+    const htmlText = e.clipboardData?.getData('text/html') ?? '';
+    const fromUserMessage = htmlText.includes('user-msg-text');
+    if (!fromUserMessage) return;
+
+    const normalized = plainText
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n{2,}$/g, '');
+
+    if (normalized === plainText) return;
+
+    e.preventDefault();
+    const el = e.currentTarget as HTMLTextAreaElement;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? start;
+    const current = el.value ?? '';
+    const next = current.slice(0, start) + normalized + current.slice(end);
+    setInputText(next);
+
+    requestAnimationFrame(() => {
+      const cursor = start + normalized.length;
+      el.setSelectionRange(cursor, cursor);
+    });
   }, [addAttachedFile]);
 
   // ── Load thinking level on mount ──

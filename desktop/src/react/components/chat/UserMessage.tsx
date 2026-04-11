@@ -51,7 +51,7 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar }: Pr
         <UserAttachmentsView attachments={message.attachments} deskContext={message.deskContext} />
       )}
       <div className="message user">
-        {message.textHtml && <MarkdownContent html={message.textHtml} />}
+        {message.textHtml && <MarkdownContent html={message.textHtml} className="md-content user-msg-text" />}
       </div>
     </div>
   );
