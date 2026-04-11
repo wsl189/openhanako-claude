@@ -4643,6 +4643,16 @@ html[data-platform="darwin"] .sv-topbar-title {
     color: color-mix(in oklab, var(--text-muted) 84%, var(--text) 16%);
 }
 
+.tool-indicator .tool-desc .tool-diff-plus {
+    color: var(--green);
+    font-weight: 600;
+}
+
+.tool-indicator .tool-desc .tool-diff-minus {
+    color: var(--coral);
+    font-weight: 600;
+}
+
 .tool-indicator .tool-detail {
     flex: 1;
     min-width: 0;
@@ -4735,6 +4745,93 @@ html[data-platform="darwin"] .sv-topbar-title {
     word-break: break-word;
     max-height: 18rem;
     overflow: auto;
+}
+
+.tool-structured {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.tool-structured-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 0.71rem;
+    color: color-mix(in oklab, var(--text-muted) 88%, var(--text) 12%);
+}
+
+.tool-structured-flag {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--overlay-light) 82%, transparent);
+    padding: 0.05rem 0.38rem;
+    font-size: 0.66rem;
+    color: var(--text-muted);
+    background: color-mix(in oklab, var(--overlay-subtle) 70%, transparent);
+}
+
+.tool-structured-section {
+    display: grid;
+    gap: 0.24rem;
+}
+
+.tool-structured-section-title {
+    font-size: 0.67rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.tool-code-block {
+    border-radius: 8px;
+    border: 1px solid color-mix(in oklab, var(--overlay-light) 78%, transparent);
+    overflow: auto;
+}
+
+.tool-code-block.write {
+    background: color-mix(in oklab, var(--green) 8%, var(--overlay-subtle) 92%);
+}
+
+.tool-code-block.old {
+    background: color-mix(in oklab, var(--coral) 8%, var(--overlay-subtle) 92%);
+}
+
+.tool-code-block.new {
+    background: color-mix(in oklab, var(--green) 8%, var(--overlay-subtle) 92%);
+}
+
+.tool-code-line {
+    display: grid;
+    grid-template-columns: 1.1rem 1fr;
+    gap: 0.36rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    line-height: 1.42;
+    padding: 0.15rem 0.42rem;
+}
+
+.tool-code-prefix {
+    text-align: center;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.tool-code-block.old .tool-code-prefix {
+    color: color-mix(in oklab, var(--coral) 78%, var(--text-muted) 22%);
+}
+
+.tool-code-block.new .tool-code-prefix,
+.tool-code-block.write .tool-code-prefix {
+    color: color-mix(in oklab, var(--green) 78%, var(--text-muted) 22%);
+}
+
+.tool-code-content {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: color-mix(in oklab, var(--text) 92%, var(--text-muted) 8%);
 }
 
 /* 消息级执行链折叠摘要 */

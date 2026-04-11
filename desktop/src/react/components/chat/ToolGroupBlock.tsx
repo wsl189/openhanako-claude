@@ -15,6 +15,7 @@ interface Props {
 }
 
 const TOOL_PANEL_TEXT_MAX_LEN = 10_000;
+const TOOL_PREVIEW_EMPTY_LINE = '\u200B';
 
 function humanizeToolName(name: string): string {
   return String(name || '')
@@ -72,6 +73,21 @@ function buildToolActionLine(name: string, phase: 'running' | 'done' | 'failed',
     : `${phaseMap[phase]} ${toolName}`;
 }
 
+function renderActionLineWithDiffColors(text: string) {
+  const parts = String(text || '').split(/(\s[+-]\d+(?=\s|$))/g);
+  return parts.map((part, idx) => {
+    const m = part.match(/^(\s)([+-]\d+)$/);
+    if (!m) return part;
+    const cls = m[2].startsWith('+') ? 'tool-diff-plus' : 'tool-diff-minus';
+    return (
+      <span key={`diff-${idx}`}>
+        {m[1]}
+        <span className={cls}>{m[2]}</span>
+      </span>
+    );
+  });
+}
+
 function normalizePreviewText(raw: unknown, maxLen = TOOL_PANEL_TEXT_MAX_LEN): string {
   const text = String(raw ?? '')
     .replace(/\r/g, '')
@@ -111,8 +127,144 @@ function getCommandInput(args?: Record<string, unknown>): string {
   return '';
 }
 
-function getInputText(args?: Record<string, unknown>): string {
+function normalizeToolName(name: string): string {
+  return String(name || '').trim().toLowerCase();
+}
+
+type StructuredToolInput =
+  | { kind: 'none' }
+  | { kind: 'write'; filePath: string; content: string; lineCount: number }
+  | { kind: 'edit'; filePath: string; oldText: string; newText: string; replaceAll: boolean };
+
+function splitPreviewLines(text: string): string[] {
+  if (!text) return [TOOL_PREVIEW_EMPTY_LINE];
+  return text.split('\n').map((line) => line || TOOL_PREVIEW_EMPTY_LINE);
+}
+
+function buildStructuredToolInput(name: string, args?: Record<string, unknown>): StructuredToolInput {
+  if (!args || typeof args !== 'object') return { kind: 'none' };
+  const tool = normalizeToolName(name);
+  const filePath = normalizePreviewText(args.file_path ?? args.path ?? args.filePath);
+
+  if (tool === 'write') {
+    const content = normalizePreviewText(args.content);
+    if (!filePath && !content) return { kind: 'none' };
+    const lineCount = content ? content.split('\n').length : 0;
+    return { kind: 'write', filePath, content, lineCount };
+  }
+
+  if (tool === 'edit' || tool === 'edit-diff') {
+    const oldText = normalizePreviewText(args.old_string ?? args.old_text);
+    const newText = normalizePreviewText(args.new_string ?? args.new_text);
+    const replaceAll = args.replace_all === true;
+    if (!filePath && !oldText && !newText) return { kind: 'none' };
+    return { kind: 'edit', filePath, oldText, newText, replaceAll };
+  }
+
+  return { kind: 'none' };
+}
+
+function ToolCodeLines({ text, symbol, tone }: { text: string; symbol: string; tone: 'write' | 'old' | 'new' }) {
+  const lines = splitPreviewLines(text);
+  return (
+    <div className={`tool-code-block ${tone}`}>
+      {lines.map((line, idx) => (
+        <div className="tool-code-line" key={`${symbol}-${idx}`}>
+          <span className="tool-code-prefix">{symbol}</span>
+          <span className="tool-code-content">{line}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StructuredInputPanel({ input }: { input: StructuredToolInput }) {
+  if (input.kind === 'none') return null;
+  if (input.kind === 'write') {
+    return (
+      <div className="tool-structured">
+        {!!input.filePath && (
+          <div className="tool-structured-meta">
+            <span>file_path: {input.filePath}</span>
+            {input.lineCount > 0 && <span className="tool-structured-flag">{input.lineCount} lines</span>}
+          </div>
+        )}
+        <ToolCodeLines text={input.content} symbol="+" tone="write" />
+      </div>
+    );
+  }
+  return (
+    <div className="tool-structured">
+      {!!input.filePath && (
+        <div className="tool-structured-meta">
+          <span>file_path: {input.filePath}</span>
+          {input.replaceAll && <span className="tool-structured-flag">replace_all</span>}
+        </div>
+      )}
+      {!!input.oldText && (
+        <div className="tool-structured-section">
+          <div className="tool-structured-section-title">old_string</div>
+          <ToolCodeLines text={input.oldText} symbol="-" tone="old" />
+        </div>
+      )}
+      {!!input.newText && (
+        <div className="tool-structured-section">
+          <div className="tool-structured-section-title">new_string</div>
+          <ToolCodeLines text={input.newText} symbol="+" tone="new" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getWriteInputText(args?: Record<string, unknown>): string {
   if (!args || typeof args !== 'object') return '';
+  const filePath = normalizePreviewText(args.file_path ?? args.path ?? args.filePath);
+  const content = normalizePreviewText(args.content);
+  if (!filePath && !content) return '';
+  const parts: string[] = [];
+  if (filePath) parts.push(`file_path: ${filePath}`);
+  if (content) {
+    if (parts.length > 0) parts.push('');
+    parts.push(content);
+  }
+  return parts.join('\n');
+}
+
+function getEditInputText(args?: Record<string, unknown>): string {
+  if (!args || typeof args !== 'object') return '';
+  const filePath = normalizePreviewText(args.file_path ?? args.path ?? args.filePath);
+  const oldText = normalizePreviewText(args.old_string ?? args.old_text);
+  const newText = normalizePreviewText(args.new_string ?? args.new_text);
+  const replaceAll = args.replace_all === true;
+  if (!filePath && !oldText && !newText) return '';
+  const parts: string[] = [];
+  if (filePath) parts.push(`file_path: ${filePath}`);
+  if (replaceAll) parts.push('replace_all: true');
+  if (oldText) {
+    if (parts.length > 0) parts.push('');
+    parts.push('--- old_string ---');
+    parts.push(oldText);
+  }
+  if (newText) {
+    if (parts.length > 0) parts.push('');
+    parts.push('--- new_string ---');
+    parts.push(newText);
+  }
+  return parts.join('\n');
+}
+
+function getInputText(name: string, args?: Record<string, unknown>): string {
+  if (!args || typeof args !== 'object') return '';
+  const tool = normalizeToolName(name);
+  if (tool === 'write') {
+    const writeText = getWriteInputText(args);
+    if (writeText) return writeText;
+  }
+  if (tool === 'edit' || tool === 'edit-diff') {
+    const editText = getEditInputText(args);
+    if (editText) return editText;
+  }
   const command = getCommandInput(args);
   if (command) return command;
   return stringifyPreview(args);
@@ -163,10 +315,8 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
   const t = (window as any).t;
   const doneText = stripLeadingEmoji(t?.('tool._line.done') || '完成');
   const failedText = stripLeadingEmoji(t?.('tool._line.failed') || '失败');
-  const inputText = useMemo(() => getInputText(tool.args), [tool.args]);
   const outputText = useMemo(() => getOutputText(tool), [tool.resultText, tool.details]);
-  const detailsText = useMemo(() => getDetailsText(tool), [tool.details]);
-  const canExpand = !!(inputText || outputText || detailsText || tool.toolUseId);
+  const canExpand = !!outputText;
 
   // 如果 args 里有 tag 类型信息（如 agent 名）
   const tag = tool.args?.agentId as string | undefined;
@@ -185,7 +335,7 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
         title={label}
       >
         <span className="tool-leading">{phase === 'failed' ? '!' : (phase === 'done' ? '✓' : '›')}</span>
-        <span className="tool-desc">{actionLine}</span>
+        <span className="tool-desc">{renderActionLineWithDiffColors(actionLine)}</span>
         {tag && <span className="tool-tag">{tag}</span>}
         {tool.done ? (
           <span className={`tool-status ${tool.success ? 'done' : 'failed'}`}>
@@ -199,30 +349,7 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
 
       {expanded && canExpand && (
         <div className="tool-panel">
-          {!!tool.toolUseId && (
-            <div className="tool-panel-row">
-              <div className="tool-panel-label">Tool ID</div>
-              <pre className="tool-panel-pre">{tool.toolUseId}</pre>
-            </div>
-          )}
-          {!!inputText && (
-            <div className="tool-panel-row">
-              <div className="tool-panel-label">Input</div>
-              <pre className="tool-panel-pre">{inputText}</pre>
-            </div>
-          )}
-          {!!outputText && (
-            <div className="tool-panel-row">
-              <div className="tool-panel-label">Output</div>
-              <pre className="tool-panel-pre">{outputText}</pre>
-            </div>
-          )}
-          {!!detailsText && detailsText !== outputText && (
-            <div className="tool-panel-row">
-              <div className="tool-panel-label">Details</div>
-              <pre className="tool-panel-pre">{detailsText}</pre>
-            </div>
-          )}
+          <pre className="tool-panel-pre">{outputText}</pre>
         </div>
       )}
     </div>

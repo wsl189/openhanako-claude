@@ -37,4 +37,24 @@ describe('extractToolDetail', () => {
     });
     expect(detail).toContain('Refactor the API layer');
   });
+
+  it('shows write line-count detail for Write tool', () => {
+    const detail = extractToolDetail('Write', {
+      file_path: '/Users/tc/Desktop/blog.html',
+      content: '<h1>Hello</h1>\n<p>World</p>',
+    });
+    expect(detail).toContain('blog.html');
+    expect(detail).toContain('+2');
+  });
+
+  it('shows edit +/- line stats for Edit tool', () => {
+    const detail = extractToolDetail('Edit', {
+      file_path: '/Users/tc/Desktop/blog.html',
+      old_string: '<h1>Hello</h1>',
+      new_string: '<h1>Hello, Hanako</h1>\n<p>Updated</p>',
+    });
+    expect(detail).toContain('blog.html');
+    expect(detail).toContain('+2');
+    expect(detail).toContain('-1');
+  });
 });

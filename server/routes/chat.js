@@ -18,7 +18,7 @@ import {
   resumeSessionStream,
 } from "../session-stream-store.js";
 
-/** tool_start/tool_end 仅广播这些 arg 字段，避免传输完整文件内容（同步维护前端 extractToolDetail） */
+/** tool_start/tool_end 仅广播前端展示所需字段；文本参数会按长度裁剪（同步维护前端 extractToolDetail） */
 const TOOL_ARG_SUMMARY_KEYS = [
   "file_path", "path", "command", "cmd", "pattern", "url", "query", "q",
   "key", "value", "action", "type", "schedule", "prompt", "label", "cwd",
@@ -26,18 +26,63 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "task", "model", "max_turns", "permission_mode", "thinking", "timeout_sec", "continue", "dangerously_skip_permissions",
   "search_query", "weather", "finance", "sports", "open", "click", "find", "image_query",
   "tool_uses",
+  // 编辑/写入工具关键信息：让前端展开时能展示“实际写入/替换内容”
+  "content", "old_string", "new_string", "old_text", "new_text", "replace_all", "offset", "limit", "lineno",
 ];
 const DESK_MUTATING_TOOL_NAMES = new Set(["write", "edit", "bash", "generate_images"]);
 const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]\b/i;
 const TOOL_RESULT_TEXT_MAX_LEN = 12_000;
+const TOOL_ARG_DEFAULT_TEXT_MAX_LEN = 1_600;
+const TOOL_ARG_LONG_TEXT_MAX_LEN = 12_000;
+const TOOL_ARG_ARRAY_MAX_ITEMS = 12;
+const TOOL_ARG_OBJECT_MAX_KEYS = 40;
+const TOOL_ARG_LONG_TEXT_KEYS = new Set(["content", "old_string", "new_string", "old_text", "new_text"]);
 
 function compactToolArgs(rawArgs) {
   if (!rawArgs || typeof rawArgs !== "object") return undefined;
   const args = {};
   for (const k of TOOL_ARG_SUMMARY_KEYS) {
-    if (rawArgs[k] !== undefined) args[k] = rawArgs[k];
+    if (rawArgs[k] !== undefined) args[k] = compactToolArgValue(rawArgs[k], k, 0);
   }
   return Object.keys(args).length ? args : undefined;
+}
+
+function clipToolArgText(raw, maxLen) {
+  const text = String(raw ?? "").replace(/\r/g, "");
+  if (!text) return "";
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen - 1)}…`;
+}
+
+function compactToolArgValue(value, keyHint = "", depth = 0) {
+  if (typeof value === "string") {
+    const maxLen = TOOL_ARG_LONG_TEXT_KEYS.has(keyHint)
+      ? TOOL_ARG_LONG_TEXT_MAX_LEN
+      : TOOL_ARG_DEFAULT_TEXT_MAX_LEN;
+    return clipToolArgText(value, maxLen);
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value == null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const items = value.slice(0, TOOL_ARG_ARRAY_MAX_ITEMS).map((item) => compactToolArgValue(item, keyHint, depth + 1));
+    if (value.length > TOOL_ARG_ARRAY_MAX_ITEMS) {
+      items.push(`…(${value.length - TOOL_ARG_ARRAY_MAX_ITEMS} more items)`);
+    }
+    return items;
+  }
+  if (typeof value === "object") {
+    if (depth >= 2) return "[omitted nested object]";
+    const out = {};
+    const keys = Object.keys(value).slice(0, TOOL_ARG_OBJECT_MAX_KEYS);
+    for (const key of keys) {
+      out[key] = compactToolArgValue(value[key], key, depth + 1);
+    }
+    const omitted = Object.keys(value).length - keys.length;
+    if (omitted > 0) out.__omittedKeys = omitted;
+    return out;
+  }
+  return String(value);
 }
 
 function isSdkDiagnosticChunk(text) {
@@ -547,7 +592,7 @@ export default async function chatRoute(app, { engine, hub }) {
         ss.isThinking = false;
         emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
       }
-      // 只保留前端展示需要的字段，避免广播完整文件内容
+      // 只保留前端展示需要的字段；长文本会在 compactToolArgs 中裁剪
       const args = compactToolArgs(event.args);
       emitStreamEvent(sessionPath, ss, {
         type: "tool_start",

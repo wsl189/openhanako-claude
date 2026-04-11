@@ -176,12 +176,34 @@ function extractGenericDetail(args: Record<string, unknown>): string {
 
 export function extractToolDetail(name: string, args: Record<string, unknown> | undefined): string {
   if (!args) return '';
-  switch (name) {
+  const tool = String(name || '').toLowerCase();
+  switch (tool) {
     case 'read':
     case 'write':
     case 'edit':
     case 'edit-diff':
-      return truncatePath((args.file_path || args.path || '') as string);
+    {
+      const filePath = (args.file_path || args.path || args.filePath || '') as string;
+      const pathText = truncatePath(filePath);
+      if (tool === 'write') {
+        const content = typeof args.content === 'string' ? args.content : '';
+        const lineCount = content ? content.split('\n').length : 0;
+        return lineCount > 0 ? `${pathText} +${lineCount}` : pathText;
+      }
+      if (tool === 'edit' || tool === 'edit-diff') {
+        const oldText = (args.old_string || args.old_text || '') as string;
+        const newText = (args.new_string || args.new_text || '') as string;
+        const oldLines = oldText ? oldText.split('\n').length : 0;
+        const newLines = newText ? newText.split('\n').length : 0;
+        if (newLines > 0 || oldLines > 0) {
+          const stats = [newLines > 0 ? `+${newLines}` : '', oldLines > 0 ? `-${oldLines}` : '']
+            .filter(Boolean)
+            .join(' ');
+          return stats ? `${pathText} ${stats}` : pathText;
+        }
+      }
+      return pathText;
+    }
     case 'bash':
     case 'exec_command':
       return truncateHead(((args.command || args.cmd || '') as string), 40);

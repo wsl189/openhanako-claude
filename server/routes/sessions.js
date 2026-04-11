@@ -32,7 +32,14 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "task", "model", "max_turns", "permission_mode", "thinking", "timeout_sec", "continue", "dangerously_skip_permissions",
   "search_query", "weather", "finance", "sports", "open", "click", "find", "image_query",
   "tool_uses",
+  // 编辑/写入工具关键信息：让前端展开时能展示“实际写入/替换内容”
+  "content", "old_string", "new_string", "old_text", "new_text", "replace_all", "offset", "limit", "lineno",
 ];
+const TOOL_ARG_DEFAULT_TEXT_MAX_LEN = 1_600;
+const TOOL_ARG_LONG_TEXT_MAX_LEN = 12_000;
+const TOOL_ARG_ARRAY_MAX_ITEMS = 12;
+const TOOL_ARG_OBJECT_MAX_KEYS = 40;
+const TOOL_ARG_LONG_TEXT_KEYS = new Set(["content", "old_string", "new_string", "old_text", "new_text"]);
 const TOOL_RESULT_DETAIL_SUMMARY_KEYS = [
   "error", "summary", "message", "action", "status",
   "url", "count", "filePath", "label", "ext",
@@ -83,7 +90,7 @@ function extractTextContent(content, { stripThink = false } = {}) {
       const params = getToolArgs(block);
       if (params && typeof params === "object") {
         for (const k of TOOL_ARG_SUMMARY_KEYS) {
-          if (params[k] !== undefined) args[k] = params[k];
+          if (params[k] !== undefined) args[k] = compactToolArgValue(params[k], k, 0);
         }
       }
       return {
@@ -99,9 +106,47 @@ function compactToolArgsForHistory(rawArgs) {
   if (!rawArgs || typeof rawArgs !== "object") return undefined;
   const args = {};
   for (const k of TOOL_ARG_SUMMARY_KEYS) {
-    if (rawArgs[k] !== undefined) args[k] = rawArgs[k];
+    if (rawArgs[k] !== undefined) args[k] = compactToolArgValue(rawArgs[k], k, 0);
   }
   return Object.keys(args).length ? args : undefined;
+}
+
+function clipToolArgText(raw, maxLen) {
+  const text = String(raw ?? "").replace(/\r/g, "");
+  if (!text) return "";
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen - 1)}…`;
+}
+
+function compactToolArgValue(value, keyHint = "", depth = 0) {
+  if (typeof value === "string") {
+    const maxLen = TOOL_ARG_LONG_TEXT_KEYS.has(keyHint)
+      ? TOOL_ARG_LONG_TEXT_MAX_LEN
+      : TOOL_ARG_DEFAULT_TEXT_MAX_LEN;
+    return clipToolArgText(value, maxLen);
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value == null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const items = value.slice(0, TOOL_ARG_ARRAY_MAX_ITEMS).map((item) => compactToolArgValue(item, keyHint, depth + 1));
+    if (value.length > TOOL_ARG_ARRAY_MAX_ITEMS) {
+      items.push(`…(${value.length - TOOL_ARG_ARRAY_MAX_ITEMS} more items)`);
+    }
+    return items;
+  }
+  if (typeof value === "object") {
+    if (depth >= 2) return "[omitted nested object]";
+    const out = {};
+    const keys = Object.keys(value).slice(0, TOOL_ARG_OBJECT_MAX_KEYS);
+    for (const key of keys) {
+      out[key] = compactToolArgValue(value[key], key, depth + 1);
+    }
+    const omitted = Object.keys(value).length - keys.length;
+    if (omitted > 0) out.__omittedKeys = omitted;
+    return out;
+  }
+  return String(value);
 }
 
 function clipToolResultText(raw) {
