@@ -18,7 +18,18 @@ export interface HistoryApiResponse {
     role: string;
     content: string;
     thinking?: string;
-    toolCalls?: Array<{ name: string; args?: Record<string, unknown> }>;
+    toolCalls?: Array<{ name: string; toolUseId?: string; args?: Record<string, unknown> }>;
+    toolResults?: Array<{
+      name: string;
+      toolUseId?: string;
+      args?: Record<string, unknown>;
+      success?: boolean;
+    }>;
+    contentBlocks?: Array<
+      | { type: 'text'; text: string }
+      | { type: 'thinking'; thinking: string }
+      | { type: 'tool_use'; id: string; name: string; input?: Record<string, unknown> }
+    >;
   }>;
   fileOutputs?: Array<{
     afterIndex: number;
@@ -34,6 +45,75 @@ export interface HistoryApiResponse {
   }>;
   todos?: any[];
   hasMore?: boolean;
+}
+
+function isReasoningLikeType(type: unknown): boolean {
+  const normalized = String(type || '').toLowerCase();
+  if (!normalized || normalized === 'text') return false;
+  return /(reason|think|analysis|commentary|summary)/.test(normalized);
+}
+
+function buildAssistantBlocksFromStructuredContent(
+  contentBlocks: Array<any>,
+): {
+  thinking: string;
+  toolCalls: Array<{ name: string; toolUseId?: string; args?: Record<string, unknown> }>;
+  text: string;
+} {
+  let thinking = '';
+  let text = '';
+  const toolCalls: Array<{ name: string; toolUseId?: string; args?: Record<string, unknown> }> = [];
+
+  for (const block of contentBlocks) {
+    if (!block || typeof block !== 'object') continue;
+    if (block.type === 'thinking' && typeof block.thinking === 'string') {
+      thinking += block.thinking;
+      continue;
+    }
+    if (block.type === 'tool_use') {
+      toolCalls.push({
+        name: String(block.name || ''),
+        toolUseId: String(block.id || '') || undefined,
+        args: (block.input && typeof block.input === 'object') ? block.input : undefined,
+      });
+      continue;
+    }
+    const part = typeof block.text === 'string'
+      ? block.text
+      : (typeof block.thinking === 'string' ? block.thinking : '');
+    if (!part) continue;
+    if (isReasoningLikeType(block.type)) thinking += part;
+    else text += part;
+  }
+
+  return { thinking, toolCalls, text };
+}
+
+function findToolResultMatch(
+  toolResults: Array<{ name: string; toolUseId?: string; args?: Record<string, unknown>; success?: boolean }>,
+  used: Set<number>,
+  call: { name: string; toolUseId?: string; args?: Record<string, unknown> },
+): number {
+  if (call.toolUseId) {
+    const byId = toolResults.findIndex((result, idx) => (
+      !used.has(idx) && result.toolUseId === call.toolUseId
+    ));
+    if (byId >= 0) return byId;
+  }
+  return toolResults.findIndex((result, idx) => (
+    !used.has(idx) && result.name === call.name
+  ));
+}
+
+function appendAssistantTextBlocks(blocks: ContentBlock[], text: string): void {
+  if (!text) return;
+  const { xingBlocks, text: mainText } = parseXingFromContent(text);
+  if (mainText) {
+    blocks.push({ type: 'text', html: renderMarkdown(mainText) });
+  }
+  for (const xb of xingBlocks) {
+    blocks.push({ type: 'xing', title: xb.title, content: xb.content, sealed: true });
+  }
 }
 
 // ── 构建 ──
@@ -75,71 +155,183 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
       items.push({ type: 'message', data: msg });
     } else if (m.role === 'assistant') {
       const blocks: ContentBlock[] = [];
+      const structured = Array.isArray(m.contentBlocks)
+        ? buildAssistantBlocksFromStructuredContent(m.contentBlocks)
+        : { thinking: '', toolCalls: [], text: '' };
+      const mergedThinking = structured.thinking || m.thinking || '';
+      const mergedToolCalls = structured.toolCalls.length ? structured.toolCalls : (m.toolCalls || []);
+      const toolResults = Array.isArray(m.toolResults) ? m.toolResults : [];
+      const assistantContent = structured.text || String(m.content || '');
+      const structuredBlocks = Array.isArray(m.contentBlocks) ? m.contentBlocks : [];
 
-      // 1. Thinking
-      if (m.thinking) {
-        blocks.push({ type: 'thinking', content: m.thinking, sealed: true });
-      }
+      if (structuredBlocks.length > 0) {
+        let hasThinkingBlock = false;
+        const usedToolResults = new Set<number>();
+        let hasTextLikeBlock = false;
 
-      const assistantContent = String(m.content || '');
-
-      // 2. Tool calls
-      if (m.toolCalls?.length) {
-        // 分离确认类工具和普通工具
-        const normalTools = [];
-        for (const tc of m.toolCalls) {
-          if (tc.name === 'update_settings' && tc.args) {
-            const a = tc.args as Record<string, string>;
-            // 仅 apply 调用（或旧格式无 action）重建卡片，search 调用跳过
-            if (a.action === 'apply' || (!a.action && a.key && a.value)) {
-              blocks.push({
-                type: 'settings_confirm',
-                confirmId: '',
-                settingKey: a.key || '',
-                cardType: (a.key === 'sandbox' || a.key === 'memory.enabled' ? 'toggle' : 'list') as any,
-                currentValue: '',
-                proposedValue: a.value || '',
-                label: a.key || '',
-                status: 'confirmed',
-              } as any);
+        for (const sb of structuredBlocks) {
+          if (!sb || typeof sb !== 'object') continue;
+          if (sb.type === 'thinking' && typeof sb.thinking === 'string') {
+            hasThinkingBlock = true;
+            const prev = blocks[blocks.length - 1];
+            if (prev?.type === 'thinking') {
+              prev.content = `${prev.content}${sb.thinking}`;
+              prev.sealed = true;
             } else {
-              normalTools.push(tc);
+              blocks.push({ type: 'thinking', content: sb.thinking, sealed: true });
             }
-          } else if (tc.name === 'cron' && tc.args && (tc.args as any).action === 'add') {
-            // 重建 cron 确认卡片（已完成状态）
-            const a = tc.args as Record<string, any>;
-            blocks.push({
-              type: 'cron_confirm',
-              jobData: { type: a.type, schedule: a.schedule, prompt: a.prompt, label: a.label },
-              status: 'approved',
-            } as any);
-          } else {
-            normalTools.push(tc);
+            continue;
+          }
+
+          if (sb.type === 'tool_use') {
+            const call = {
+              name: String(sb.name || ''),
+              toolUseId: String(sb.id || '') || undefined,
+              args: (sb.input && typeof sb.input === 'object') ? sb.input : undefined,
+            };
+            const matchedIdx = findToolResultMatch(toolResults, usedToolResults, call);
+            const matched = matchedIdx >= 0 ? toolResults[matchedIdx] : null;
+            if (matchedIdx >= 0) usedToolResults.add(matchedIdx);
+            const toolEntry = {
+              name: call.name,
+              toolUseId: call.toolUseId || matched?.toolUseId,
+              args: call.args || matched?.args,
+              done: true,
+              success: matched ? matched.success !== false : true,
+            };
+            const prev = blocks[blocks.length - 1];
+            if (prev?.type === 'tool_group') {
+              prev.tools = [...prev.tools, toolEntry];
+              prev.collapsed = false;
+            } else {
+              blocks.push({
+                type: 'tool_group',
+                tools: [toolEntry],
+                collapsed: false,
+              });
+            }
+            continue;
+          }
+
+          if (sb.type === 'text' && typeof sb.text === 'string' && sb.text) {
+            hasTextLikeBlock = true;
+            appendAssistantTextBlocks(blocks, sb.text);
           }
         }
-        if (normalTools.length) {
-          blocks.push({
-            type: 'tool_group',
-            tools: normalTools.map(tc => ({
-              name: tc.name,
-              args: tc.args,
-              done: true,
-              success: true,
-            })),
-            collapsed: normalTools.length > 1,
-          });
+
+        for (let idx = 0; idx < toolResults.length; idx += 1) {
+          if (usedToolResults.has(idx)) continue;
+          const result = toolResults[idx];
+          if (!result?.name) continue;
+          const toolEntry = {
+            name: result.name,
+            toolUseId: result.toolUseId,
+            args: (result.args && typeof result.args === 'object') ? result.args : undefined,
+            done: true,
+            success: result.success !== false,
+          };
+          const prev = blocks[blocks.length - 1];
+          if (prev?.type === 'tool_group') {
+            prev.tools = [...prev.tools, toolEntry];
+            prev.collapsed = false;
+          } else {
+            blocks.push({
+              type: 'tool_group',
+              tools: [toolEntry],
+              collapsed: false,
+            });
+          }
         }
-      }
 
-      // 3. 主文本（去掉 xing 后的内容）
-      const { xingBlocks, text: mainText } = parseXingFromContent(assistantContent);
-      if (mainText) {
-        blocks.push({ type: 'text', html: renderMarkdown(mainText) });
-      }
+        if (!hasThinkingBlock && mergedThinking) {
+          blocks.unshift({ type: 'thinking', content: mergedThinking, sealed: true });
+        }
+        if (!hasTextLikeBlock && assistantContent) {
+          appendAssistantTextBlocks(blocks, assistantContent);
+        }
+      } else {
+        // 1. Thinking
+        if (mergedThinking) {
+          blocks.push({ type: 'thinking', content: mergedThinking, sealed: true });
+        }
 
-      // 4. Xing
-      for (const xb of xingBlocks) {
-        blocks.push({ type: 'xing', title: xb.title, content: xb.content, sealed: true });
+        // 2. Tool calls
+        if (mergedToolCalls?.length || toolResults.length) {
+          const callsForRender = mergedToolCalls.length
+            ? mergedToolCalls
+            : toolResults.map((result) => ({
+              name: String(result.name || ''),
+              toolUseId: String(result.toolUseId || '') || undefined,
+              args: (result.args && typeof result.args === 'object') ? result.args : undefined,
+            }));
+          const usedToolResults = new Set<number>();
+          // 分离确认类工具和普通工具
+          const normalTools = [];
+          for (const tc of callsForRender) {
+            const matchedIdx = findToolResultMatch(toolResults, usedToolResults, tc);
+            const matched = matchedIdx >= 0 ? toolResults[matchedIdx] : null;
+            if (matchedIdx >= 0) usedToolResults.add(matchedIdx);
+            const mergedArgs = tc.args || matched?.args;
+            const toolEntry = {
+              name: tc.name,
+              toolUseId: tc.toolUseId || matched?.toolUseId,
+              args: mergedArgs,
+              done: true,
+              success: matched ? matched.success !== false : true,
+            };
+            if (tc.name === 'update_settings' && tc.args) {
+              const a = tc.args as Record<string, string>;
+              // 仅 apply 调用（或旧格式无 action）重建卡片，search 调用跳过
+              if (a.action === 'apply' || (!a.action && a.key && a.value)) {
+                blocks.push({
+                  type: 'settings_confirm',
+                  confirmId: '',
+                  settingKey: a.key || '',
+                  cardType: (a.key === 'sandbox' || a.key === 'memory.enabled' ? 'toggle' : 'list') as any,
+                  currentValue: '',
+                  proposedValue: a.value || '',
+                  label: a.key || '',
+                  status: 'confirmed',
+                } as any);
+              } else {
+                normalTools.push(toolEntry);
+              }
+            } else if (tc.name === 'cron' && tc.args && (tc.args as any).action === 'add') {
+              // 重建 cron 确认卡片（已完成状态）
+              const a = tc.args as Record<string, any>;
+              blocks.push({
+                type: 'cron_confirm',
+                jobData: { type: a.type, schedule: a.schedule, prompt: a.prompt, label: a.label },
+                status: 'approved',
+              } as any);
+            } else {
+              normalTools.push(toolEntry);
+            }
+          }
+          for (let idx = 0; idx < toolResults.length; idx += 1) {
+            if (usedToolResults.has(idx)) continue;
+            const result = toolResults[idx];
+            if (!result?.name) continue;
+            normalTools.push({
+              name: result.name,
+              toolUseId: result.toolUseId,
+              args: (result.args && typeof result.args === 'object') ? result.args : undefined,
+              done: true,
+              success: result.success !== false,
+            });
+            usedToolResults.add(idx);
+          }
+          if (normalTools.length) {
+            blocks.push({
+              type: 'tool_group',
+              tools: normalTools,
+              collapsed: normalTools.length > 1 && normalTools.every((tool) => tool.done),
+            });
+          }
+        }
+
+        // 3. 主文本（去掉 xing 后的内容）
+        appendAssistantTextBlocks(blocks, assistantContent);
       }
 
       // 5. 跟在这条消息后面的 file outputs

@@ -7,7 +7,7 @@
 import fs from "fs";
 import path from "path";
 import chokidar from "chokidar";
-import { loadSkills } from "@mariozechner/pi-coding-agent";
+import { scanSkillsInPaths } from "./skill-loader.js";
 
 export class SkillManager {
   /**
@@ -186,13 +186,7 @@ export class SkillManager {
       const skillsDir = path.join(agent.agentDir, "skills");
       let loadedSkills = [];
       try {
-        const loaded = loadSkills({
-          cwd: process.cwd(),
-          agentDir: agent.agentDir,
-          includeDefaults: false,
-          skillPaths: [skillsDir],
-        });
-        loadedSkills = Array.isArray(loaded?.skills) ? loaded.skills : [];
+        loadedSkills = scanSkillsInPaths([skillsDir]);
       } catch {
         loadedSkills = [];
       }

@@ -38,11 +38,11 @@
     "postinstall": "npm run rebuild:electron"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.97",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language-data": "^6.5.2",
     "@fastify/websocket": "^11.0.0",
     "@larksuiteoapi/node-sdk": "^1.59.0",
-    "@mariozechner/pi-coding-agent": "^0.56.3",
     "@sinclair/typebox": "^0.34.0",
     "@traptitech/markdown-it-katex": "^3.6.0",
     "better-sqlite3": "^12.6.2",
@@ -62,6 +62,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "ws": "^8.18.0",
+    "zod": "^4.3.6",
     "zustand": "^5.0.11"
   },
   "overrides": {

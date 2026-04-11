@@ -2,8 +2,7 @@
  * chat-types.ts — 聊天消息数据模型
  *
  * 历史消息和流式消息共用同一套类型。
- * ContentBlock 按展示顺序排列（thinking → mood → tools → text → xing），
- * 不按流式到达顺序。
+ * ContentBlock 按展示顺序排列；流式阶段尽量保持与事件到达顺序一致。
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -12,6 +11,7 @@
 
 export interface ToolCall {
   name: string;
+  toolUseId?: string;
   args?: Record<string, unknown>;
   done: boolean;
   success: boolean;

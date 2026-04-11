@@ -9,12 +9,72 @@ import { formatSessionDate } from '../../utils/format';
 import kongBannerUrl from '../../../assets/kong-banner.jpg';
 
 const platform = (window as any).platform;
-const REQUIRED_BUILTINS = ['read', 'grep', 'find', 'ls'];
-const OPTIONAL_BUILTINS = ['write', 'edit', 'bash'];
+const REQUIRED_BUILTINS: string[] = [];
+const OPTIONAL_BUILTINS = [
+  'Task',
+  'AskUserQuestion',
+  'Bash',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'Edit',
+  'EnterPlanMode',
+  'EnterWorktree',
+  'ExitPlanMode',
+  'ExitWorktree',
+  'Glob',
+  'Grep',
+  'ListMcpResourcesTool',
+  'NotebookEdit',
+  'Read',
+  'ReadMcpResourceTool',
+  'RemoteTrigger',
+  'Skill',
+  'TaskOutput',
+  'TaskStop',
+  'TodoWrite',
+  'WebFetch',
+  'WebSearch',
+  'Write',
+];
 const ABS_PATH_RE = /^([A-Za-z]:[\\/]|\/)/;
 const AGENT_CARD_NAME_MAX_UNITS = 4;
 const HEARTBEAT_MINUTES_MIN = 1;
 const HEARTBEAT_MINUTES_MAX = 120;
+const BUILTIN_CLAUDE_DISPLAY_NAMES: Record<string, string> = {
+  Task: 'Task',
+  AskUserQuestion: 'AskUserQuestion',
+  Bash: 'Bash',
+  CronCreate: 'CronCreate',
+  CronDelete: 'CronDelete',
+  CronList: 'CronList',
+  Edit: 'Edit',
+  EnterPlanMode: 'EnterPlanMode',
+  EnterWorktree: 'EnterWorktree',
+  ExitPlanMode: 'ExitPlanMode',
+  ExitWorktree: 'ExitWorktree',
+  Glob: 'Glob',
+  Grep: 'Grep',
+  ListMcpResourcesTool: 'ListMcpResourcesTool',
+  NotebookEdit: 'NotebookEdit',
+  Read: 'Read',
+  ReadMcpResourceTool: 'ReadMcpResourceTool',
+  RemoteTrigger: 'RemoteTrigger',
+  Skill: 'Skill',
+  TaskOutput: 'TaskOutput',
+  TaskStop: 'TaskStop',
+  TodoWrite: 'TodoWrite',
+  WebFetch: 'WebFetch',
+  WebSearch: 'WebSearch',
+  Write: 'Write',
+  read: 'Read',
+  grep: 'Grep',
+  find: 'Glob',
+  ls: 'Glob',
+  write: 'Write',
+  edit: 'Edit',
+  bash: 'Bash',
+};
 const BUILTIN_TOOL_HINT_KEYS: Record<string, string> = {
   read: 'settings.agent.builtinReadLabel',
   grep: 'settings.agent.builtinGrepLabel',
@@ -83,6 +143,17 @@ const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
   claude_core: 'toolDef.claudeCore.description',
   install_skill: 'toolDef.installSkill.description',
 };
+
+function getBuiltinDisplayName(name: string): string {
+  return BUILTIN_CLAUDE_DISPLAY_NAMES[name] || name;
+}
+
+function normalizeBuiltinName(name: string): string {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  if (OPTIONAL_BUILTINS.includes(raw) || REQUIRED_BUILTINS.includes(raw)) return raw;
+  return BUILTIN_CLAUDE_DISPLAY_NAMES[raw] || raw;
+}
 
 interface ExpCategory { name: string; entries: string[]; }
 interface ArchivedSession {
@@ -218,7 +289,7 @@ export function AgentTab() {
       updateSandboxPathInput('');
       updateSandboxPathAccess('read_only');
       const cfgBuiltin = Array.isArray(settingsConfig.tools?.builtin_enabled)
-        ? settingsConfig.tools.builtin_enabled.map(String)
+        ? settingsConfig.tools.builtin_enabled.map((name: string) => normalizeBuiltinName(String(name)))
         : [...toolCatalog.builtinRequired, ...toolCatalog.builtinOptional];
       const nextBuiltin = Array.from(new Set([
         ...toolCatalog.builtinRequired,
@@ -262,17 +333,29 @@ export function AgentTab() {
 
   const getToolHint = (name: string, group: 'builtin' | 'custom') => {
     const descKey = group === 'builtin' ? BUILTIN_TOOL_DESC_KEYS[name] : CUSTOM_TOOL_DESC_KEYS[name];
+    const displayName = group === 'builtin' ? getBuiltinDisplayName(name) : name;
     if (descKey) {
       const resolvedDesc = t(descKey);
-      if (resolvedDesc !== descKey) return resolvedDesc;
+      if (resolvedDesc !== descKey) {
+        return group === 'builtin' && displayName !== name
+          ? `${displayName} · ${resolvedDesc}`
+          : resolvedDesc;
+      }
     }
     const labelKey = group === 'builtin' ? BUILTIN_TOOL_HINT_KEYS[name] : CUSTOM_TOOL_HINT_KEYS[name];
     if (labelKey) {
       const resolvedLabel = t(labelKey);
-      if (resolvedLabel !== labelKey) return resolvedLabel;
+      if (resolvedLabel !== labelKey) {
+        return group === 'builtin' && displayName !== name
+          ? `${displayName} · ${resolvedLabel}`
+          : resolvedLabel;
+      }
     }
     const fallback = t('settings.agent.toolDescFallback');
-    return fallback === 'settings.agent.toolDescFallback' ? name : fallback;
+    if (fallback === 'settings.agent.toolDescFallback') return displayName;
+    return group === 'builtin' && displayName !== name
+      ? `${displayName} · ${fallback}`
+      : fallback;
   };
 
   // 仅在“明确选中了其他助手”时，才显示删除等仅针对非当前助手的操作。
@@ -902,13 +985,14 @@ export function AgentTab() {
                 {[...toolCatalog.builtinRequired, ...toolCatalog.builtinOptional].map((name) => {
                   const enabled = builtinEnabled.includes(name) || toolCatalog.builtinRequired.includes(name);
                   const locked = toolCatalog.builtinRequired.includes(name);
+                  const displayName = getBuiltinDisplayName(name);
                   return (
                     <div
                       className="agent-tool-item"
                       key={name}
                     >
                       <div className="agent-tool-row">
-                        <code>{name}</code>
+                        <code>{displayName}</code>
                         <div
                           className="agent-tool-toggle-wrap"
                         >

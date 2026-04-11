@@ -84,41 +84,42 @@ function stopThinkingAnim() {
 
 // 订阅引擎事件 → CLI 渲染
 engine.subscribe((event) => {
-  if (event.type === "message_update") {
-    const sub = event.assistantMessageEvent?.type;
-    if (sub === "text_delta") {
-      stopThinkingAnim();
-      const delta = event.assistantMessageEvent.delta;
-      process.stdout.write(`${hanaColor}${delta}${resetColor}`);
-    } else if (sub === "thinking_delta") {
-      startThinkingAnim();
-    } else if (sub === "toolcall_start") {
-      stopThinkingAnim();
-      process.stdout.write(`\n\x1b[36m⚙ 调用工具...\x1b[0m`);
-    } else if (sub === "toolcall_end") {
-      const tool = event.assistantMessageEvent.toolCall;
-      const argKeys = tool?.input && typeof tool.input === "object" ? Object.keys(tool.input) : [];
-      console.log(`\x1b[36m ✓ ${tool?.name || "unknown"}(${argKeys.length ? `keys=${argKeys.join(",")}` : ""})\x1b[0m`);
-    } else if (sub === "error") {
-      console.error("\n\x1b[31m[模型返回错误]\x1b[0m", event.assistantMessageEvent.error);
-    }
-  } else if (event.type === "tool_execution_start") {
-    const name = event.toolCall?.name || "";
+  if (event.type === "text_delta") {
+    stopThinkingAnim();
+    process.stdout.write(`${hanaColor}${event.delta || ""}${resetColor}`);
+  } else if (event.type === "thinking_start" || event.type === "thinking_delta") {
+    startThinkingAnim();
+  } else if (event.type === "thinking_end") {
+    stopThinkingAnim();
+  } else if (event.type === "tool_start") {
+    const name = event.name || "";
     process.stdout.write(`\x1b[33m⏳ 执行 ${name}...\x1b[0m`);
-  } else if (event.type === "tool_execution_update") {
-    if (event.output) {
-      process.stdout.write(`\x1b[90m${event.output}\x1b[0m`);
-    }
-  } else if (event.type === "tool_execution_end") {
-    const name = event.toolCall?.name || "";
-    const ok = event.toolResults?.[0]?.isError ? "✗" : "✓";
+  } else if (event.type === "tool_end") {
+    const name = event.name || "";
+    const ok = event.success === false ? "✗" : "✓";
     console.log(` \x1b[33m${ok} ${name} 完成\x1b[0m`);
+  } else if (event.type === "error") {
+    console.error("\n\x1b[31m[模型返回错误]\x1b[0m", event.message);
   }
 });
 
-// ── 启动 session ──
-let session = await engine.createSession();
-console.log("✿ 记忆系统已激活\n");
+// ── 启动 session（优先恢复当前 agent 最近会话） ──
+let session = null;
+try {
+  const sessions = await engine.listSessions();
+  const latest = sessions.find((s) => s.agentId === engine.currentAgentId && s.path);
+  if (latest?.path) {
+    session = await engine.switchSession(latest.path);
+    const msgCount = engine.messages?.length ?? 0;
+    console.log(`✿ 已恢复最近对话（${msgCount} 条消息）\n`);
+  } else {
+    session = await engine.createSession();
+    console.log("✿ 记忆系统已激活\n");
+  }
+} catch {
+  session = await engine.createSession();
+  console.log("✿ 记忆系统已激活\n");
+}
 
 // ── CLI 交互 ──
 readline.emitKeypressEvents(process.stdin);

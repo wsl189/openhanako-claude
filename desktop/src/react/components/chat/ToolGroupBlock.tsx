@@ -2,7 +2,7 @@
  * ToolGroupBlock — 工具调用组，含展开/折叠
  */
 
-import { memo, useState, useCallback } from 'react';
+import { memo } from 'react';
 import { extractToolDetail } from '../../utils/message-parser';
 import type { ToolCall } from '../../stores/chat-types';
 
@@ -10,7 +10,6 @@ import type { ToolCall } from '../../stores/chat-types';
 
 interface Props {
   tools: ToolCall[];
-  collapsed: boolean;
   agentName: string;
 }
 
@@ -19,6 +18,13 @@ function humanizeToolName(name: string): string {
     .replace(/^functions\./, '')
     .replace(/^multi_tool_use\./, '')
     .replace(/[._-]+/g, ' ')
+    .replace(/\b\w/g, (m) => m.toUpperCase())
+    .trim();
+}
+
+function stripLeadingEmoji(input: string): string {
+  return String(input || '')
+    .replace(/^[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D\s]+/u, '')
     .trim();
 }
 
@@ -48,45 +54,27 @@ function getToolLabel(name: string, phase: string, agentName: string, args?: Rec
   return toolName;
 }
 
-export const ToolGroupBlock = memo(function ToolGroupBlock({ tools, collapsed: initialCollapsed, agentName }: Props) {
-  const [collapsed, setCollapsed] = useState(initialCollapsed);
-  const toggle = useCallback(() => setCollapsed(v => !v), []);
+function buildToolActionLine(name: string, phase: 'running' | 'done' | 'failed', detail: string): string {
+  const toolName = humanizeToolName(name) || name || 'Tool';
+  const t = (window as any).t;
 
-  const allDone = tools.every(t => t.done);
-  const failCount = tools.filter(t => t.done && !t.success).length;
-  const isSingle = tools.length === 1;
+  const phaseMap: Record<typeof phase, string> = {
+    running: stripLeadingEmoji(t?.('tool._line.running') || '执行'),
+    done: stripLeadingEmoji(t?.('tool._line.done') || '已执行'),
+    failed: stripLeadingEmoji(t?.('tool._line.failed') || '执行失败'),
+  };
 
-  // 摘要标题
-  const _t = (window as any).t ?? ((p: string) => p);
-  let summaryText = '';
-  if (allDone) {
-    if (failCount > 0) {
-      summaryText = _t('toolGroup.countWithFail', { total: tools.length, fail: failCount });
-    } else {
-      summaryText = _t('toolGroup.count', { n: tools.length });
-    }
-  } else {
-    const running = tools.filter(t => !t.done).length;
-    summaryText = _t('toolGroup.running', { n: running });
-  }
+  return detail
+    ? `${phaseMap[phase]} ${toolName} · ${detail}`
+    : `${phaseMap[phase]} ${toolName}`;
+}
 
+export const ToolGroupBlock = memo(function ToolGroupBlock({ tools, agentName }: Props) {
   return (
-    <div className={`tool-group${isSingle ? ' single' : ''}`}>
-      {!isSingle && (
-        <div
-          className={`tool-group-summary${allDone ? ' clickable' : ''}`}
-          onClick={allDone ? toggle : undefined}
-        >
-          <span className="tool-group-title">{summaryText}</span>
-          {allDone && <span className="tool-group-arrow">{collapsed ? '›' : '‹'}</span>}
-          {!allDone && (
-            <span className="tool-dots"><span /><span /><span /></span>
-          )}
-        </div>
-      )}
-      <div className={`tool-group-content${collapsed && !isSingle ? ' collapsed' : ''}`}>
+    <div className="tool-group proma-like">
+      <div className="tool-group-content">
         {tools.map((tool, i) => (
-          <ToolIndicator key={`${tool.name}-${i}`} tool={tool} agentName={agentName} />
+          <ToolIndicator key={tool.toolUseId || `${tool.name}-${i}`} tool={tool} agentName={agentName} />
         ))}
       </div>
     </div>
@@ -97,20 +85,24 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({ tools, collapsed: i
 
 const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: ToolCall; agentName: string }) {
   const detail = extractToolDetail(tool.name, tool.args);
-  const phase = tool.done ? (tool.success ? 'done' : 'failed') : 'running';
+  const phase = (tool.done ? (tool.success ? 'done' : 'failed') : 'running') as 'running' | 'done' | 'failed';
   const label = getToolLabel(tool.name, phase, agentName, tool.args);
+  const actionLine = buildToolActionLine(tool.name, phase, detail);
+  const t = (window as any).t;
+  const doneText = stripLeadingEmoji(t?.('tool._line.done') || '完成');
+  const failedText = stripLeadingEmoji(t?.('tool._line.failed') || '失败');
 
   // 如果 args 里有 tag 类型信息（如 agent 名）
   const tag = tool.args?.agentId as string | undefined;
 
   return (
-    <div className="tool-indicator" data-tool={tool.name} data-done={String(tool.done)}>
-      <span className="tool-desc">{label}</span>
-      {detail && <span className="tool-detail">{detail}</span>}
+    <div className={`tool-indicator ${phase}`} data-phase={phase} data-tool={tool.name} data-done={String(tool.done)}>
+      <span className="tool-leading">{phase === 'failed' ? '!' : (phase === 'done' ? '✓' : '›')}</span>
+      <span className="tool-desc" title={label}>{actionLine}</span>
       {tag && <span className="tool-tag">{tag}</span>}
       {tool.done ? (
-        <span className={`tool-status ${tool.success ? 'done' : 'failed'}`}>
-          {tool.success ? '✓' : '✗'}
+        <span className={`tool-status ${tool.success ? 'done' : 'failed'}`} title={label}>
+          {tool.success ? doneText : failedText}
         </span>
       ) : (
         <span className="tool-dots"><span /><span /><span /></span>

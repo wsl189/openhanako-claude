@@ -1,7 +1,7 @@
 /**
  * WebSocket 聊天路由
  *
- * 桥接 Pi SDK streaming 事件 → WebSocket 消息
+ * 桥接 Claude/Hanako streaming 事件 → WebSocket 消息
  * 支持多 session 并发：后台 session 静默运行，只转发当前活跃 session 的事件
  */
 import { XingParser, ThinkTagParser } from "../../core/events.js";
@@ -9,6 +9,7 @@ import { wsSend, wsParse } from "../ws-protocol.js";
 import { debugLog } from "../../lib/debug-log.js";
 import { t } from "../i18n.js";
 import { BrowserManager } from "../../lib/browser/browser-manager.js";
+import { stripSdkDiagnosticLines } from "../../lib/text/assistant-visible-text.js";
 import {
   createSessionStreamState,
   beginSessionStream,
@@ -27,6 +28,7 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "tool_uses",
 ];
 const DESK_MUTATING_TOOL_NAMES = new Set(["write", "edit", "bash", "generate_images"]);
+const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]\b/i;
 
 function compactToolArgs(rawArgs) {
   if (!rawArgs || typeof rawArgs !== "object") return undefined;
@@ -37,8 +39,12 @@ function compactToolArgs(rawArgs) {
   return Object.keys(args).length ? args : undefined;
 }
 
+function isSdkDiagnosticChunk(text) {
+  return EDE_DIAGNOSTIC_RE.test(String(text || "").trim());
+}
+
 /**
- * 从 Pi SDK 的 content 块中提取纯文本
+ * 从内容块中提取纯文本
  */
 function isReasoningLikeType(type) {
   const normalized = String(type || "").toLowerCase();
@@ -95,6 +101,76 @@ function extractTitleSourceText(content) {
     .trim();
 }
 
+function clipSnapshotText(text, maxLen = 12000) {
+  const value = String(text || "");
+  if (value.length <= maxLen) return value;
+  return value.slice(0, maxLen);
+}
+
+function compactAssistantSnapshotContent(content) {
+  if (!Array.isArray(content)) return [];
+  const out = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    if (block.type === "text" && typeof block.text === "string") {
+      out.push({ type: "text", text: clipSnapshotText(block.text) });
+      continue;
+    }
+    if (block.type === "thinking" && typeof block.thinking === "string") {
+      out.push({ type: "thinking", thinking: clipSnapshotText(block.thinking) });
+      continue;
+    }
+    if (block.type === "tool_use" && block.id) {
+      out.push({
+        type: "tool_use",
+        id: block.id,
+        name: block.name || "",
+        input: compactToolArgs(block.input),
+      });
+      continue;
+    }
+    if (
+      typeof block.type === "string"
+      && /(reason|think|analysis|commentary|summary)/i.test(block.type)
+      && typeof block.text === "string"
+    ) {
+      out.push({ type: block.type, text: clipSnapshotText(block.text) });
+    }
+  }
+  return out;
+}
+
+function compactSdkMessage(message) {
+  if (!message || typeof message !== "object") return null;
+  const role = String(message.role || "").trim();
+  const content = Array.isArray(message.content) ? message.content : [];
+  if (!role || !content.length) return null;
+
+  if (role === "assistant") {
+    return {
+      role,
+      content: compactAssistantSnapshotContent(content),
+    };
+  }
+
+  if (role === "user") {
+    const toolResults = content
+      .filter((block) => block?.type === "tool_result" && block.tool_use_id)
+      .map((block) => ({
+        type: "tool_result",
+        tool_use_id: block.tool_use_id,
+        is_error: block.is_error === true,
+      }));
+    if (!toolResults.length) return null;
+    return {
+      role,
+      content: toolResults,
+    };
+  }
+
+  return null;
+}
+
 function isLikelyZh(text) {
   return /[\u4e00-\u9fff]/.test(String(text || ""));
 }
@@ -107,6 +183,15 @@ function hasFileOutputs(toolName, details) {
     if (!item || typeof item !== "object") return false;
     return typeof item.filePath === "string" && item.filePath.trim().length > 0;
   });
+}
+
+function shouldUseStructuredStreamForSession(engine, sessionPath) {
+  const session = sessionPath ? engine.getSessionByPath(sessionPath) : engine.session;
+  if (!session || typeof session !== "object") return false;
+  // SessionCoordinator 会为新 runtime 显式打标，优先使用该标记；
+  // Provider runtime 历史上使用 eventProtocol=hanako，也视为结构化事件流。
+  if (session.hanakoStructuredStream === true) return true;
+  return session.eventProtocol === "hanako";
 }
 
 export default async function chatRoute(app, { engine, hub }) {
@@ -152,12 +237,16 @@ export default async function chatRoute(app, { engine, hub }) {
       sessionState.set(sessionPath, {
         thinkTagParser: new ThinkTagParser(),
         xingParser: new XingParser(),
+        structuredStream: false,
+        lastAssistantSnapshotSig: "",
         isThinking: false,
         thinkingHadDelta: false,
         hasOutput: false,
         hasToolCall: false,
+        hadError: false,
         userAborted: false,
         titleRequested: false,
+        lastAssistantContent: null,
         ...createSessionStreamState(),
       });
     }
@@ -177,14 +266,21 @@ export default async function chatRoute(app, { engine, hub }) {
     return session?.getContextUsage?.() || null;
   }
 
+  async function refreshUsageBySessionPath(sessionPath, fallbackUsage = null) {
+    const session = sessionPath ? engine.getSessionByPath(sessionPath) : engine.session;
+    if (!session) return null;
+    await session.refreshContextUsage?.(fallbackUsage);
+    return session.getContextUsage?.() || null;
+  }
+
   async function getUsageWithRetry(sessionPath, beforeTokens = null) {
-    let usage = getUsageBySessionPath(sessionPath);
+    let usage = await refreshUsageBySessionPath(sessionPath);
     for (let i = 0; i < 4; i++) {
       const hasNumbers = usage?.tokens != null && usage?.contextWindow != null;
       const looksUpdated = beforeTokens == null || usage?.tokens == null || usage.tokens < beforeTokens;
       if (hasNumbers && looksUpdated) return usage;
       await new Promise(resolve => setTimeout(resolve, 250));
-      usage = getUsageBySessionPath(sessionPath);
+      usage = await refreshUsageBySessionPath(sessionPath);
     }
     return usage;
   }
@@ -196,8 +292,8 @@ export default async function chatRoute(app, { engine, hub }) {
     let attempts = 0;
     let lastSig = null;
 
-    const tick = () => {
-      const usage = getUsageBySessionPath(sessionPath);
+    const tick = async () => {
+      const usage = await refreshUsageBySessionPath(sessionPath);
       const hasNumbers = usage?.tokens != null && usage?.contextWindow != null;
       if (hasNumbers) {
         const sig = `${usage.tokens}|${usage.contextWindow}|${usage.percent ?? ""}`;
@@ -286,26 +382,71 @@ export default async function chatRoute(app, { engine, hub }) {
     const isActive = sessionPath === engine.currentSessionPath;
     const ss = sessionPath ? getState(sessionPath) : null;
 
-    if (event.type === "message_update") {
+    if (event.type === "sdk_message") {
       if (!ss) return;
-      const sub = event.assistantMessageEvent?.type;
-      const emitThinkingFallback = (rawThinking, { onlyIfNoDelta = false } = {}) => {
-        const thinking = typeof rawThinking === "string" ? rawThinking : "";
-        if (!thinking.trim()) return false;
-        if (onlyIfNoDelta && ss.thinkingHadDelta) return false;
-        if (!ss.isThinking) {
-          ss.isThinking = true;
-          emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
+      const compactedMessage = compactSdkMessage(event.message);
+      if (!compactedMessage) return;
+      if (compactedMessage.role === "assistant") {
+        ss.structuredStream = true;
+      }
+      emitStreamEvent(sessionPath, ss, {
+        type: "sdk_message",
+        message: compactedMessage,
+      });
+    } else if (event.type === "assistant_snapshot") {
+      if (!ss) return;
+      ss.lastAssistantContent = event.content || null;
+      ss.structuredStream = true;
+      const compacted = compactAssistantSnapshotContent(event.content || []);
+      const nextSig = JSON.stringify(compacted);
+      if (nextSig !== ss.lastAssistantSnapshotSig) {
+        ss.lastAssistantSnapshotSig = nextSig;
+        emitStreamEvent(sessionPath, ss, {
+          type: "assistant_snapshot",
+          content: compacted,
+        });
+      }
+    } else if (event.type === "text_delta" || event.type === "thinking_start" || event.type === "thinking_delta" || event.type === "thinking_end") {
+      if (!ss) return;
+      if (ss.structuredStream) {
+        if (event.type === "text_delta") {
+          const chunk = stripSdkDiagnosticLines(typeof event.delta === "string" ? event.delta : "");
+          if (!chunk || isSdkDiagnosticChunk(chunk)) return;
+          if (ss.isThinking) {
+            ss.isThinking = false;
+            emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+          }
+          emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: chunk });
+          ss.hasOutput = true;
+        } else if (event.type === "thinking_start") {
+          if (!ss.isThinking) {
+            ss.isThinking = true;
+            ss.thinkingHadDelta = false;
+            emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
+          }
+        } else if (event.type === "thinking_delta") {
+          if (!ss.isThinking) {
+            ss.isThinking = true;
+            ss.thinkingHadDelta = false;
+            emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
+          }
+          if (event.delta) ss.thinkingHadDelta = true;
+          emitStreamEvent(sessionPath, ss, {
+            type: "thinking_delta",
+            delta: event.delta || "",
+          });
+        } else if (event.type === "thinking_end") {
+          if (ss.isThinking) {
+            ss.isThinking = false;
+            emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+          }
         }
-        ss.thinkingHadDelta = true;
-        emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: thinking });
-        ss.isThinking = false;
-        emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
-        return true;
-      };
+        return;
+      }
       const feedTextChunk = (rawChunk) => {
-        const chunk = typeof rawChunk === "string" ? rawChunk : "";
+        const chunk = stripSdkDiagnosticLines(typeof rawChunk === "string" ? rawChunk : "");
         if (!chunk) return false;
+        if (isSdkDiagnosticChunk(chunk)) return false;
         if (ss.isThinking) {
           ss.isThinking = false;
           emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
@@ -348,63 +489,34 @@ export default async function chatRoute(app, { engine, hub }) {
         return true;
       };
 
-      if (sub === "text_delta") {
-        if (feedTextChunk(event.assistantMessageEvent.delta)) {
+      if (event.type === "text_delta") {
+        if (feedTextChunk(event.delta)) {
           ss.hasOutput = true;
         }
-      } else if (sub === "text_end") {
-        // 某些 provider 只在 text_end 提供完整 content，不会持续发 text_delta。
-        if (!ss.hasOutput) {
-          const { text, thinking } = extractContentParts(event.assistantMessageEvent.content);
-          emitThinkingFallback(thinking, { onlyIfNoDelta: true });
-          if (feedTextChunk(text)) {
-            ss.hasOutput = true;
-          }
-        }
-      } else if (sub === "done") {
-        // 最终 done 事件里通常带 partial 快照，作为 text_end 缺失时的兜底。
-        if (!ss.hasOutput) {
-          const { text, thinking } = extractContentParts(event.assistantMessageEvent.partial?.content);
-          emitThinkingFallback(thinking, { onlyIfNoDelta: true });
-          if (feedTextChunk(text)) {
-            ss.hasOutput = true;
-          }
-        }
-      } else if (sub === "thinking_start") {
+      } else if (event.type === "thinking_start") {
         if (!ss.isThinking) {
           ss.isThinking = true;
           ss.thinkingHadDelta = false;
           emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
         }
-      } else if (sub === "thinking_delta") {
+      } else if (event.type === "thinking_delta") {
         if (!ss.isThinking) {
           ss.isThinking = true;
           ss.thinkingHadDelta = false;
           emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
         }
-        if (event.assistantMessageEvent.delta) ss.thinkingHadDelta = true;
+        if (event.delta) ss.thinkingHadDelta = true;
         emitStreamEvent(sessionPath, ss, {
           type: "thinking_delta",
-          delta: event.assistantMessageEvent.delta || "",
+          delta: event.delta || "",
         });
-      } else if (sub === "thinking_end") {
-        // 兼容只在 thinking_end 带完整内容、不发 thinking_delta 的 provider。
-        emitThinkingFallback(
-          event.assistantMessageEvent.content
-          || event.assistantMessageEvent.delta
-          || "",
-          { onlyIfNoDelta: true },
-        );
+      } else if (event.type === "thinking_end") {
         if (ss.isThinking) {
           ss.isThinking = false;
           emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
         }
-      } else if (sub === "toolcall_start") {
-        // 不在这里关闭 thinking 状态
-      } else if (sub === "error") {
-        if (isActive) broadcast({ type: "error", message: event.assistantMessageEvent.error || "Unknown error" });
       }
-    } else if (event.type === "tool_execution_start") {
+    } else if (event.type === "tool_start") {
       if (!ss) return;
       ss.hasToolCall = true;
       if (ss.isThinking) {
@@ -413,25 +525,31 @@ export default async function chatRoute(app, { engine, hub }) {
       }
       // 只保留前端展示需要的字段，避免广播完整文件内容
       const args = compactToolArgs(event.args);
-      emitStreamEvent(sessionPath, ss, { type: "tool_start", name: event.toolName || "", args });
-    } else if (event.type === "tool_execution_end") {
+      emitStreamEvent(sessionPath, ss, {
+        type: "tool_start",
+        name: event.name || "",
+        toolCallId: event.toolCallId || null,
+        args,
+      });
+    } else if (event.type === "tool_end") {
       if (!ss) return;
-      const details = event.result?.details;
+      const details = event.details;
       const hasDetailsError = typeof details?.error === "string" && details.error.trim().length > 0;
       const args = compactToolArgs(event.args);
       emitStreamEvent(sessionPath, ss, {
         type: "tool_end",
-        name: event.toolName || "",
-        success: !event.isError && !hasDetailsError,
+        name: event.name || "",
+        toolCallId: event.toolCallId || null,
+        success: event.success !== false && !hasDetailsError,
         args,
         details,
       });
 
-      if (event.toolName === "present_files") {
-        const details = event.result?.details || {};
-        const files = details.files || [];
-        if (files.length === 0 && details.filePath) {
-          files.push({ filePath: details.filePath, label: details.label, ext: details.ext || "" });
+      if (event.name === "present_files") {
+        const toolDetails = event.details || {};
+        const files = toolDetails.files || [];
+        if (files.length === 0 && toolDetails.filePath) {
+          files.push({ filePath: toolDetails.filePath, label: toolDetails.label, ext: toolDetails.ext || "" });
         }
         for (const f of files) {
           emitStreamEvent(sessionPath, ss, {
@@ -443,8 +561,8 @@ export default async function chatRoute(app, { engine, hub }) {
         }
       }
 
-      if (event.toolName === "create_artifact") {
-        const d = event.result?.details || {};
+      if (event.name === "create_artifact") {
+        const d = event.details || {};
         emitStreamEvent(sessionPath, ss, {
           type: "artifact",
           artifactId: d.artifactId,
@@ -455,10 +573,10 @@ export default async function chatRoute(app, { engine, hub }) {
         });
       }
 
-      if (event.toolName === "browser") {
-        const d = event.result?.details || {};
-        if (d.action === "screenshot" && event.result?.content) {
-          const imgBlock = event.result.content.find(c => c.type === "image");
+      if (event.name === "browser") {
+        const d = event.details || {};
+        if (d.action === "screenshot" && event.content) {
+          const imgBlock = event.content.find(c => c.type === "image");
           if (imgBlock?.source?.data) {
             emitStreamEvent(sessionPath, ss, {
               type: "browser_screenshot",
@@ -479,8 +597,8 @@ export default async function chatRoute(app, { engine, hub }) {
         else stopBrowserThumbPoll();
       }
 
-      if (event.toolName === "generate_images" && event.result?.content) {
-        const imageBlocks = event.result.content.filter(c => c?.type === "image" && c?.source?.data);
+      if (event.name === "generate_images" && event.content) {
+        const imageBlocks = event.content.filter(c => c?.type === "image" && c?.source?.data);
         for (const imgBlock of imageBlocks) {
           emitStreamEvent(sessionPath, ss, {
             type: "browser_screenshot",
@@ -490,14 +608,14 @@ export default async function chatRoute(app, { engine, hub }) {
         }
       }
 
-      if (event.toolName === "cron") {
-        const d = event.result?.details || {};
+      if (event.name === "cron") {
+        const d = event.details || {};
         if (d.action === "pending_add" && d.jobData) {
           emitStreamEvent(sessionPath, ss, { type: "cron_confirmation", jobData: d.jobData });
         }
       }
 
-      const toolName = String(event.toolName || "").toLowerCase();
+      const toolName = String(event.name || "").toLowerCase();
       const shouldRefreshDesk = isActive && (
         DESK_MUTATING_TOOL_NAMES.has(toolName)
         || hasFileOutputs(toolName, details)
@@ -505,6 +623,9 @@ export default async function chatRoute(app, { engine, hub }) {
       if (shouldRefreshDesk) {
         broadcast({ type: "desk_changed" });
       }
+    } else if (event.type === "error") {
+      if (ss) ss.hadError = true;
+      if (isActive) broadcast({ type: "error", message: event.message || "Unknown error" });
     } else if (event.type === "jian_update") {
       broadcast({ type: "jian_update", content: event.content });
     } else if (event.type === "desk_changed") {
@@ -600,50 +721,54 @@ export default async function chatRoute(app, { engine, hub }) {
         ss.isThinking = false;
         emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
       }
-      // flush 顺序：ThinkTag → Xing（和 feed 顺序一致）
-      const feedXingPipeline = (text) => {
-        ss.xingParser.feed(text, (xEvt) => {
-          switch (xEvt.type) {
-            case "text":
-              emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: xEvt.data });
-              break;
-            case "xing_start":
-              emitStreamEvent(sessionPath, ss, { type: "xing_start", title: xEvt.title });
-              break;
-            case "xing_text":
-              emitStreamEvent(sessionPath, ss, { type: "xing_text", delta: xEvt.data });
-              break;
-            case "xing_end":
-              emitStreamEvent(sessionPath, ss, { type: "xing_end" });
-              break;
+      if (!ss.structuredStream) {
+        // flush 顺序：ThinkTag → Xing（和 feed 顺序一致）
+        const feedXingPipeline = (text) => {
+          ss.xingParser.feed(text, (xEvt) => {
+            switch (xEvt.type) {
+              case "text":
+                emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: xEvt.data });
+                break;
+              case "xing_start":
+                emitStreamEvent(sessionPath, ss, { type: "xing_start", title: xEvt.title });
+                break;
+              case "xing_text":
+                emitStreamEvent(sessionPath, ss, { type: "xing_text", delta: xEvt.data });
+                break;
+              case "xing_end":
+                emitStreamEvent(sessionPath, ss, { type: "xing_end" });
+                break;
+            }
+          });
+        };
+        ss.thinkTagParser.flush((tEvt) => {
+          if (tEvt.type === "think_text") {
+            emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
+          } else if (tEvt.type === "think_end") {
+            emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+          } else if (tEvt.type === "text") {
+            feedXingPipeline(tEvt.data);
           }
         });
-      };
-      ss.thinkTagParser.flush((tEvt) => {
-        if (tEvt.type === "think_text") {
-          emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
-        } else if (tEvt.type === "think_end") {
-          emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
-        } else if (tEvt.type === "text") {
-          feedXingPipeline(tEvt.data);
-        }
-      });
-      ss.xingParser.flush((xEvt) => {
-        if (xEvt.type === "text") {
-          emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: xEvt.data });
-        } else if (xEvt.type === "xing_text") {
-          emitStreamEvent(sessionPath, ss, { type: "xing_text", delta: xEvt.data });
-        }
-      });
+        ss.xingParser.flush((xEvt) => {
+          if (xEvt.type === "text") {
+            emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: xEvt.data });
+          } else if (xEvt.type === "xing_text") {
+            emitStreamEvent(sessionPath, ss, { type: "xing_text", delta: xEvt.data });
+          }
+        });
+      }
 
       // 回填保护：某些 provider 可能在流事件里没有 text_delta，
       // 但最终 assistant 消息已写入 session（例如只给最终聚合文本）。
       // 这种情况下补发一次 text_delta，避免误报“模型未返回任何内容”。
-      if (!ss.hasOutput && !ss.hasToolCall) {
+      if (!ss.hasOutput) {
         const session = engine.getSessionByPath(sessionPath);
         const messages = Array.isArray(session?.messages) ? session.messages : [];
         const lastAssistant = [...messages].reverse().find((m) => m?.role === "assistant");
-        const finalText = extractText(lastAssistant?.content).trim();
+        const finalText = stripSdkDiagnosticLines(
+          extractText(ss.lastAssistantContent || lastAssistant?.content),
+        ).trim();
         if (finalText) {
           ss.hasOutput = true;
           if (isActive) {
@@ -654,7 +779,7 @@ export default async function chatRoute(app, { engine, hub }) {
 
       // 空回复检测：本轮没有文本输出也没有工具调用，提示用户检查配置。
       // 若是用户主动点击停止（abort），不应提示“模型未返回任何内容”。
-      if (!ss.hasOutput && !ss.hasToolCall && isActive && !ss.userAborted) {
+      if (!ss.hasOutput && isActive && !ss.userAborted && !ss.hadError) {
         broadcast({ type: "error", message: t("error.modelNoResponse") });
       }
 
@@ -665,8 +790,12 @@ export default async function chatRoute(app, { engine, hub }) {
       }
       ss.hasOutput = false;
       ss.hasToolCall = false;
+      ss.hadError = false;
       ss.userAborted = false;
       ss.thinkingHadDelta = false;
+      ss.structuredStream = false;
+      ss.lastAssistantSnapshotSig = "";
+      ss.lastAssistantContent = null;
       ss.thinkTagParser.reset();
       ss.xingParser.reset();
 
@@ -774,7 +903,7 @@ export default async function chatRoute(app, { engine, hub }) {
 
       if (msg.type === "context_usage") {
         const targetPath = msg.sessionPath || engine.currentSessionPath;
-        const usage = getUsageBySessionPath(targetPath);
+        const usage = await refreshUsageBySessionPath(targetPath);
         wsSend(ws, {
           type: "context_usage",
           sessionPath: targetPath || null,
@@ -881,6 +1010,9 @@ export default async function chatRoute(app, { engine, hub }) {
           ss.xingParser.reset();
           ss.userAborted = false;
           ss.thinkingHadDelta = false;
+          ss.hadError = false;
+          ss.structuredStream = shouldUseStructuredStreamForSession(engine, promptSessionPath);
+          ss.lastAssistantSnapshotSig = "";
           ss.titleRequested = false;
           beginSessionStream(ss);
           broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath });
@@ -889,7 +1021,7 @@ export default async function chatRoute(app, { engine, hub }) {
           await hub.send(promptText, { sessionPath: promptSessionPath, images: msg.images });
           broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
         } catch (err) {
-          if (!err.message?.includes("aborted")) {
+          if (!err.message?.includes("aborted") && !ss.hadError) {
             wsSend(ws, { type: "error", message: err.message });
           }
           broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });

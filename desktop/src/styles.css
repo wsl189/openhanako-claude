@@ -2103,6 +2103,27 @@ html[data-platform="linux"] .tb-toggle-right {
     padding-right: 2rem;
 }
 
+.assistant-final-reply.streaming .md-content.stream-live {
+    animation: stream-live-fade 0.18s ease-out;
+}
+
+@keyframes stream-live-fade {
+    from {
+        opacity: 0.72;
+        transform: translateY(1px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .assistant-final-reply.streaming .md-content.stream-live {
+        animation: none;
+    }
+}
+
 .assistant-final-reply .msg-copy-btn {
     position: absolute;
     top: 3px;
@@ -4450,27 +4471,25 @@ html[data-platform="darwin"] .sv-topbar-title {
    工具调用折叠组
    ======================================== */
 
-/* 折叠组容器 */
 .tool-group {
-    margin: var(--space-xs) 0;
-    border-left: 2px solid var(--accent);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    background: var(--tool-bg);
-    overflow: hidden;
-    width: fit-content;
+    margin: 0.2rem 0;
     max-width: 100%;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    overflow: visible;
 }
 
-/* 折叠组标题行 */
 .tool-group-summary {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.75rem;
-    font-size: 0.82rem;
+    gap: 0.45rem;
+    padding: 0.4rem 0.72rem 0.24rem;
+    font-size: 0.76rem;
     color: var(--tool-text);
-    line-height: 1.5;
+    line-height: 1.35;
     user-select: none;
+    letter-spacing: 0.02em;
 }
 
 .tool-group-summary.clickable {
@@ -4478,11 +4497,12 @@ html[data-platform="darwin"] .sv-topbar-title {
 }
 
 .tool-group-summary.clickable:hover {
-    background: var(--overlay-subtle);
+    background: color-mix(in oklab, var(--overlay-subtle) 75%, transparent);
 }
 
 .tool-group-title {
     flex: 1;
+    color: color-mix(in oklab, var(--tool-text) 78%, var(--text-muted) 22%);
 }
 
 .tool-group-arrow {
@@ -4492,16 +4512,14 @@ html[data-platform="darwin"] .sv-topbar-title {
     flex-shrink: 0;
 }
 
-/* 折叠组内容区域 */
 .tool-group-content {
-    padding: 0 0.75rem 0.3rem;
+    padding: 0;
 }
 
 .tool-group-content.collapsed {
     display: none;
 }
 
-/* 单条工具时隐藏标题行（不需要折叠） */
 .tool-group.single .tool-group-summary {
     display: none;
 }
@@ -4516,22 +4534,51 @@ html[data-platform="darwin"] .sv-topbar-title {
 .tool-indicator {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.78rem;
-    color: var(--tool-text);
+    gap: 0.38rem;
+    font-size: 0.82rem;
+    color: color-mix(in oklab, var(--text-muted) 88%, var(--text) 12%);
     padding: 0.2rem 0;
-    line-height: 1.5;
-    max-width: 400px;
+    line-height: 1.4;
+    border-bottom: 0;
+    max-width: 100%;
 }
 
-/* 单条模式下（group.single）保留原始样式 */
+.tool-indicator:last-child {
+    border-bottom: 0;
+}
+
 .tool-group.single .tool-indicator {
     font-size: 0.82rem;
-    padding: 0.4rem 0.75rem;
+    padding: 0.2rem 0;
+}
+
+.tool-indicator .tool-leading {
+    width: 0.95em;
+    text-align: center;
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    color: color-mix(in oklab, var(--text-muted) 86%, var(--accent) 14%);
+}
+
+.tool-indicator.running .tool-leading {
+    color: color-mix(in oklab, var(--accent) 72%, var(--text-muted) 28%);
+}
+
+.tool-indicator.done .tool-leading {
+    color: var(--green);
+}
+
+.tool-indicator.failed .tool-leading {
+    color: var(--coral);
 }
 
 .tool-indicator .tool-desc {
-    flex-shrink: 0;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: color-mix(in oklab, var(--text-muted) 84%, var(--text) 16%);
 }
 
 .tool-indicator .tool-detail {
@@ -4558,7 +4605,7 @@ html[data-platform="darwin"] .sv-topbar-title {
 .tool-dots {
     display: inline-flex;
     gap: 2px;
-    margin-left: auto;
+    margin-left: 0.2rem;
 }
 
 .tool-dots span {
@@ -4578,8 +4625,7 @@ html[data-platform="darwin"] .sv-topbar-title {
 }
 
 .tool-indicator .tool-status {
-    margin-left: auto;
-    font-size: 0.82rem;
+    display: none;
 }
 
 .tool-indicator .tool-status.done {
@@ -4594,22 +4640,24 @@ html[data-platform="darwin"] .sv-topbar-title {
 .chain-summary {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.38rem;
     margin: var(--space-xs) 0;
-    padding: 0.35rem 0.7rem;
+    padding: 0.3rem 0.65rem;
     border: 0;
-    border-left: 2px solid var(--accent);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    background: var(--tool-bg);
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--accent) 24%, transparent);
+    background: color-mix(in oklab, var(--tool-bg) 78%, transparent);
     color: var(--text-muted);
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     cursor: pointer;
     user-select: none;
     max-width: 100%;
+    transition: background 0.16s ease, border-color 0.16s ease;
 }
 
 .chain-summary:hover {
-    background: var(--overlay-subtle);
+    background: color-mix(in oklab, var(--overlay-subtle) 70%, transparent);
+    border-color: color-mix(in oklab, var(--accent) 34%, transparent);
 }
 
 .chain-summary .chain-summary-text {
@@ -4626,17 +4674,17 @@ html[data-platform="darwin"] .sv-topbar-title {
 /* 思考折叠块 */
 .thinking-block {
     margin: var(--space-xs) 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: min(100%, 900px);
     font-size: 0.8rem;
 }
 
 .thinking-block-summary {
     display: inline-flex;
     align-items: center;
-    gap: 0.2rem;
+    gap: 0.42rem;
+    padding: 0.1rem 0;
     cursor: pointer;
     color: var(--text-muted);
-    font-style: italic;
     user-select: none;
     list-style: none;
 }
@@ -4648,7 +4696,7 @@ html[data-platform="darwin"] .sv-topbar-title {
 .thinking-block-summary .thinking-dots {
     display: inline-flex;
     gap: 2px;
-    margin-left: 2px;
+    margin-left: 1px;
 }
 
 .thinking-block-summary .thinking-dots span {
@@ -4664,25 +4712,57 @@ html[data-platform="darwin"] .sv-topbar-title {
 
 .thinking-block-arrow {
     display: inline-block;
-    font-style: normal;
-    font-size: 0.75rem;
-    transition: transform 0.15s ease;
+    font-size: 0.74rem;
+    transition: transform 0.15s ease, color 0.15s ease;
+    color: color-mix(in oklab, var(--text-muted) 84%, var(--accent) 16%);
 }
 
 .thinking-block-arrow.open {
     transform: rotate(90deg);
 }
 
+.thinking-block-title {
+    font-size: 0.74rem;
+    letter-spacing: 0.09em;
+    font-weight: 700;
+    color: color-mix(in oklab, var(--text-muted) 86%, var(--text) 14%);
+}
+
+.thinking-block-state {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.38rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--accent) 22%, transparent);
+    background: color-mix(in oklab, var(--tool-bg) 80%, transparent);
+    color: color-mix(in oklab, var(--text-muted) 85%, var(--accent) 15%);
+}
+
+.thinking-block-state.running {
+    border-color: color-mix(in oklab, var(--accent) 34%, transparent);
+    color: color-mix(in oklab, var(--accent) 56%, var(--text-muted) 44%);
+}
+
+.thinking-block-panel {
+    margin-top: 0.28rem;
+    border: 1px dashed color-mix(in oklab, var(--accent) 34%, transparent);
+    border-radius: 12px;
+    background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--tool-bg) 78%, transparent),
+        color-mix(in oklab, var(--bg-card, var(--bg)) 88%, var(--tool-bg) 12%)
+    );
+    padding: 0.7rem 0.82rem;
+}
+
+.thinking-block.running .thinking-block-panel {
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 14%, transparent) inset;
+}
+
 .thinking-block-body {
-    margin-top: var(--space-xs);
-    padding: var(--space-sm) var(--space-md);
-    color: var(--text-muted);
-    font-style: italic;
-    font-size: 0.78rem;
-    line-height: 1.6;
+    color: color-mix(in oklab, var(--text) 90%, var(--text-muted) 10%);
+    font-size: 0.84rem;
+    line-height: 1.7;
     white-space: pre-wrap;
-    border-left: 2px solid var(--border);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 /* ========================================

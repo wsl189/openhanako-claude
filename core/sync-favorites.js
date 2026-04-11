@@ -1,8 +1,8 @@
 /**
- * sync-favorites.js — 收藏模型同步到 Pi SDK
+ * sync-favorites.js — 收藏模型同步到运行时目录
  *
  * 当用户在设置页收藏/取消收藏模型时，自动同步到 HANA_HOME/models.json（默认 ~/.hanako/models.json），
- * 让 Pi SDK 的 ModelRegistry 能发现这些模型。
+ * 让 Hanako 的模型目录与收藏模型保持一致。
  */
 
 import fs from "fs";
@@ -194,7 +194,7 @@ export function syncFavoritesToModelsJson(configPath, opts = {}) {
       throw new Error(t("error.providerMissingApi", { provider: provName }));
     }
 
-    // 本地服务（localhost）不需要 apiKey，给个占位符让 Pi SDK 通过 hasAuth
+    // 本地服务（localhost）不需要 apiKey，给个占位符让下游流程通过完整性检查
     const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/.test(baseUrl);
     if (!apiKey && !isLocal) {
       throw new Error(t("error.providerMissingApiKey", { provider: provName }));
@@ -217,7 +217,7 @@ export function syncFavoritesToModelsJson(configPath, opts = {}) {
         const existing = { ...existingModels.get(mid) };
         const known = _knownModels[mid];
         if (!existing.name) existing.name = known?.name || humanizeName(mid);
-        // 补全 input 字段（旧版本创建的条目可能缺 "image"，Pi SDK 会静默过滤图片）
+        // 补全 input 字段（旧版本创建的条目可能缺 "image"，会导致图片能力丢失）
         if (!existing.input || !existing.input.includes("image")) {
           existing.input = ["text", "image"];
         }

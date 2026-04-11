@@ -338,6 +338,11 @@
     "summaryToolsOnly": "Execution chain ({tools} tools)"
   },
   "tool": {
+    "_line": {
+      "running": "Running",
+      "done": "Completed",
+      "failed": "Failed"
+    },
     "web_search": {
       "running": "🌐 Searching the web",
       "done": "🌐 Web search completed",
@@ -1211,6 +1216,7 @@
     "agentNotExists": "Agent \"{id}\" does not exist",
     "modelNoResponse": "Model returned no content. Please check API configuration and network connection.",
     "noActiveSession": "No active session",
+    "modelSwitchBusy": "Please wait for the reply or compaction to finish before switching models",
     "compacting": "Compaction in progress",
     "waitForReply": "Please wait for the response to finish before compacting",
     "compactFailed": "Compaction failed: {msg}",

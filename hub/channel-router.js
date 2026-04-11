@@ -673,7 +673,7 @@ export class ChannelRouter {
   _normalizeChannelTimestamp(ts) {
     const raw = String(ts || "").trim();
     if (!raw) return null;
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?$/.test(raw)) {
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?$/.test(raw)) {
       return raw.replace(" ", "T");
     }
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(raw)) {

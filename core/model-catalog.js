@@ -3,7 +3,7 @@
  *
  * 职责：
  *   - 维护 Map<"provider/model", ModelEntry> 内存目录
- *   - 启动时从 models.json（Pi SDK）+ ProviderRegistry 一次性聚合
+ *   - 启动时从 models.json + ProviderRegistry 一次性聚合
  *   - 提供 provider/model 双段 key 的唯一真相来源
  *   - models.json 的写入仍由 sync-favorites.js 负责（不变）
  *
@@ -30,7 +30,7 @@ const _knownModels = _require("../lib/known-models.json");
  * @property {number} contextWindow  - context window token 数
  * @property {number} [maxTokens]    - 最大输出 token 数
  * @property {boolean} [reasoning]   - 是否为思维链模型
- * @property {object} [_sdkEntry]    - 原始 Pi SDK model 对象（向后兼容用）
+ * @property {object} [_sdkEntry]    - 原始模型对象（向后兼容用）
  */
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ function enrichFromKnown(modelId) {
 export class ModelCatalog {
   /**
    * @param {import('./provider-registry.js').ProviderRegistry} providerRegistry
-   * @param {string} modelsJsonPath - models.json 路径（Pi SDK 维护）
+   * @param {string} modelsJsonPath - models.json 路径
    */
   constructor(providerRegistry, modelsJsonPath) {
     this._registry = providerRegistry;
@@ -280,10 +280,10 @@ export class ModelCatalog {
   }
 
   /**
-   * 将 ModelEntry 转换为 Pi SDK 期望的格式
-   * 主要用于 session.setModel() 等需要传原始 SDK entry 的地方
+   * 将 ModelEntry 转换为运行时模型对象
+   * 主要用于 session.setModel() 等需要传完整模型信息的地方
    * @param {ModelEntry} entry
-   * @returns {object} Pi SDK ModelEntry 格式
+   * @returns {object} 运行时模型对象
    */
   toSdkEntry(entry) {
     // 始终构建完整的 SDK shape，不走 _sdkEntry 捷径

@@ -1,7 +1,7 @@
 /**
  * 运行时模型覆盖工具：
  * 将 agent.config.models.overrides 中的 context/maxOutput 映射到
- * Pi SDK 运行时模型字段 contextWindow/maxTokens。
+ * 运行时模型字段 contextWindow/maxTokens。
  */
 
 function toPositiveInt(value) {
@@ -39,4 +39,3 @@ export function applyRuntimeModelOverrides(model, overrides) {
 
   return patched;
 }
-

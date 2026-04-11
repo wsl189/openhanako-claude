@@ -23,36 +23,10 @@ import { cronToHuman } from '../../utils/format';
 interface Props {
   message: ChatMessage;
   showAvatar: boolean;
-  chainGroup?: {
-    isOwner: boolean;
-    hideTextWhenCollapsed: boolean;
-    totalThinking: number;
-    totalTools: number;
-    allCompleted: boolean;
-    allSuccessful: boolean;
-    isSettled: boolean;
-    collapsed: boolean;
-    onToggle: () => void;
-  };
+  isStreaming?: boolean;
 }
 
-function isChainBlock(block: ContentBlock): boolean {
-  return block.type === 'thinking' || block.type === 'tool_group';
-}
-
-function isChainBlockCompleted(block: ContentBlock): boolean {
-  if (block.type === 'thinking') return !!block.sealed;
-  if (block.type === 'tool_group') return block.tools.every(t => t.done);
-  return true;
-}
-
-function isChainBlockSuccessful(block: ContentBlock): boolean {
-  if (block.type === 'thinking') return !!block.sealed;
-  if (block.type === 'tool_group') return block.tools.every(t => t.done && t.success);
-  return true;
-}
-
-export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, chainGroup }: Props) {
+export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, isStreaming = false }: Props) {
   const agentName = useStore(s => s.agentName) || 'Hanako';
   const agentYuan = useStore(s => s.agentYuan) || 'hanako';
   const agentAvatarUrl = useStore(s => s.agentAvatarUrl);
@@ -91,24 +65,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   }, [sessionAgent?.avatarUrl, agentAvatarUrl, fallbackAvatar]);
 
   const blocks = message.blocks || [];
-  const displayBlocks = useMemo(() => {
-    const chain: ContentBlock[] = [];
-    const confirms: ContentBlock[] = [];
-    const rest: ContentBlock[] = [];
-
-    for (const b of blocks) {
-      if (isChainBlock(b)) {
-        chain.push(b);
-        continue;
-      }
-      if (b.type === 'cron_confirm' || b.type === 'settings_confirm') {
-        confirms.push(b);
-        continue;
-      }
-      rest.push(b);
-    }
-    return [...chain, ...confirms, ...rest];
-  }, [blocks]);
+  const displayBlocks = blocks;
 
   const finalTextIndex = useMemo(() => {
     for (let i = displayBlocks.length - 1; i >= 0; i--) {
@@ -119,85 +76,21 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const finalTextHtml = finalTextIndex >= 0 && displayBlocks[finalTextIndex].type === 'text'
     ? displayBlocks[finalTextIndex].html
     : '';
+  const [smoothedFinalTextHtml, setSmoothedFinalTextHtml] = useState(finalTextHtml);
 
-  const chainStats = useMemo(() => {
-    let thinkingCount = 0;
-    let toolCount = 0;
-    let allCompleted = true;
-    let allSuccessful = true;
-
-    for (let i = 0; i < displayBlocks.length; i++) {
-      const block = displayBlocks[i];
-      if (!isChainBlock(block)) continue;
-      if (block.type === 'thinking') thinkingCount += 1;
-      if (block.type === 'tool_group') toolCount += block.tools.length;
-      if (!isChainBlockCompleted(block)) allCompleted = false;
-      if (!isChainBlockSuccessful(block)) allSuccessful = false;
+  useEffect(() => {
+    if (!isStreaming) {
+      setSmoothedFinalTextHtml(finalTextHtml);
+      return;
     }
-
-    return {
-      hasChain: thinkingCount + toolCount > 0,
-      thinkingCount,
-      toolCount,
-      allCompleted,
-      allSuccessful,
-    };
-  }, [displayBlocks]);
+    const timer = window.setTimeout(() => {
+      setSmoothedFinalTextHtml(finalTextHtml);
+    }, 34);
+    return () => window.clearTimeout(timer);
+  }, [finalTextHtml, isStreaming]);
 
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
-  const [chainCollapsedLocal, setChainCollapsedLocal] = useState(false);
-  const [chainAutoCollapsedLocal, setChainAutoCollapsedLocal] = useState(false);
-
-  const chainThinkingCount = chainGroup ? chainGroup.totalThinking : chainStats.thinkingCount;
-  const chainToolCount = chainGroup ? chainGroup.totalTools : chainStats.toolCount;
-  const chainHasAny = chainGroup
-    ? (chainGroup.totalThinking + chainGroup.totalTools > 0)
-    : chainStats.hasChain;
-  const chainIsSingleThinkingOnly = chainThinkingCount === 1 && chainToolCount === 0;
-
-  const chainCanCollapse = chainHasAny &&
-    !chainIsSingleThinkingOnly &&
-    (chainGroup
-      ? (chainGroup.allCompleted && chainGroup.isSettled)
-      : chainStats.allCompleted);
-
-  const chainAllSuccessful = chainGroup
-    ? chainGroup.allSuccessful
-    : chainStats.allSuccessful;
-
-  useEffect(() => {
-    if (chainGroup) return;
-    if (chainCanCollapse && !chainAutoCollapsedLocal) {
-      setChainCollapsedLocal(true);
-      setChainAutoCollapsedLocal(true);
-      return;
-    }
-    if (!chainCanCollapse) {
-      setChainCollapsedLocal(false);
-      setChainAutoCollapsedLocal(false);
-    }
-  }, [chainCanCollapse, chainAutoCollapsedLocal, chainGroup]);
-
-  const chainCollapsed = chainGroup ? chainGroup.collapsed : chainCollapsedLocal;
-  const toggleChainCollapsed = useCallback(() => {
-    if (!chainCanCollapse) return;
-    if (chainGroup) {
-      chainGroup.onToggle();
-      return;
-    }
-    setChainCollapsedLocal(v => !v);
-  }, [chainCanCollapse, chainGroup]);
-
-  const chainSummaryText = useMemo(() => {
-    if (chainThinkingCount > 0 && chainToolCount > 0) {
-      return t('chain.summaryBoth', { thinking: chainThinkingCount, tools: chainToolCount });
-    }
-    if (chainThinkingCount > 0) {
-      return t('chain.summaryThinkingOnly', { thinking: chainThinkingCount });
-    }
-    return t('chain.summaryToolsOnly', { tools: chainToolCount });
-  }, [chainThinkingCount, chainToolCount, t]);
 
   const handleCopy = useCallback(() => {
     if (!finalTextHtml) return;
@@ -239,30 +132,12 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
         </div>
       )}
       <div className="message assistant">
-        {chainCanCollapse && chainHasAny && (!chainGroup || chainGroup.isOwner) && (
-          <button
-            className={`chain-summary${chainCollapsed ? ' collapsed' : ' expanded'}`}
-            onClick={toggleChainCollapsed}
-            type="button"
-            aria-label={chainSummaryText}
-            title={chainSummaryText}
-          >
-            <span className={`thinking-block-arrow${chainCollapsed ? '' : ' open'}`}>›</span>
-            <span className="chain-summary-text">{chainSummaryText}</span>
-            {chainCollapsed ? <span className="chain-summary-status">{chainAllSuccessful ? '✓' : '!'}</span> : null}
-          </button>
-        )}
         {displayBlocks.map((block, i) => {
-          if (chainCanCollapse && isChainBlock(block) && chainCollapsed) return null;
-          if (chainCanCollapse && chainCollapsed && block.type === 'text' && chainGroup?.hideTextWhenCollapsed) {
-            return null;
-          }
-
           const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
           if (isFinalTextBlock) {
             return (
-              <div key={i} className="assistant-final-reply">
-                <MarkdownContent html={block.html} />
+              <div key={i} className={`assistant-final-reply${isStreaming ? ' streaming' : ''}`}>
+                <MarkdownContent html={isStreaming ? smoothedFinalTextHtml : block.html} className={isStreaming ? 'md-content stream-live' : 'md-content'} />
                 <button
                   className={`msg-copy-btn${copied ? ' copied' : ''}`}
                   onClick={handleCopy}
@@ -303,7 +178,7 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan
     case 'mood':
       return <MoodBlock yuan={block.yuan} text={block.text} />;
     case 'tool_group':
-      return <ToolGroupBlock tools={block.tools} collapsed={block.collapsed} agentName={agentName} />;
+      return <ToolGroupBlock tools={block.tools} agentName={agentName} />;
     case 'text':
       return <MarkdownContent html={block.html} />;
     case 'xing':

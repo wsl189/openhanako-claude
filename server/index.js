@@ -19,7 +19,7 @@ import { HanaEngine } from "../core/engine.js";
 import { ensureFirstRun } from "../core/first-run.js";
 import { initDebugLog } from "../lib/debug-log.js";
 
-// Pi SDK 的 fetch 请求会累积 AbortSignal listener，提高上限避免无害警告
+// 某些 provider fetch 请求会累积 AbortSignal listener，提高上限避免无害警告
 setMaxListeners(50);
 
 import { loadLocale } from "./i18n.js";
@@ -83,11 +83,36 @@ dlog.log("server", "engine initialized");
 import { BrowserManager } from "../lib/browser/browser-manager.js";
 BrowserManager.setSessionResolver(() => engine.currentSessionPath);
 
+async function restoreLatestSessionForActiveAgent(targetEngine) {
+  try {
+    const activeAgentId = targetEngine.currentAgentId;
+    const sessions = await targetEngine.listSessions();
+    const latest = sessions.find((item) => item.agentId === activeAgentId && item.path);
+    if (!latest?.path) return null;
+    await targetEngine.switchSession(latest.path);
+    return latest;
+  } catch (err) {
+    dlog.warn("server", `restore latest session failed: ${err.message}`);
+    return null;
+  }
+}
+
 if (engine.currentModel) {
-  console.log("[server] ③ 创建 session...");
-  await engine.createSession();
-  console.log("[server] ③ Session created");
-  dlog.log("server", `session created, model=${engine.currentModel.name}`);
+  if (process.send) {
+    console.log("[server] ③ Desktop 模式：跳过启动时自动新建 session");
+    dlog.log("server", "desktop mode: skip auto session creation on boot");
+  } else {
+    const restored = await restoreLatestSessionForActiveAgent(engine);
+    if (restored) {
+      console.log(`[server] ③ 已恢复最近 session: ${restored.path}`);
+      dlog.log("server", `session restored, model=${engine.currentModel.name}, path=${restored.path}`);
+    } else {
+      console.log("[server] ③ 创建 session...");
+      await engine.createSession();
+      console.log("[server] ③ Session created");
+      dlog.log("server", `session created, model=${engine.currentModel.name}`);
+    }
+  }
 } else {
   console.warn("[server] ⚠ 无可用模型，跳过 session 创建。请在设置中配置 API key。");
   dlog.warn("server", "no models available, session creation skipped");

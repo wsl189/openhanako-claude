@@ -338,6 +338,11 @@
     "summaryToolsOnly": "思考和执行链（{tools} 次工具执行）"
   },
   "tool": {
+    "_line": {
+      "running": "执行",
+      "done": "已执行",
+      "failed": "执行失败"
+    },
     "web_search": {
       "running": "🌐 正在搜索网络",
       "done": "🌐 已完成网络搜索",
@@ -1211,6 +1216,7 @@
     "agentNotExists": "助手 \"{id}\" 不存在",
     "modelNoResponse": "模型未返回任何内容，请检查 API 配置和网络连接。",
     "noActiveSession": "没有活跃的 session",
+    "modelSwitchBusy": "当前正在回复或整理上下文，请稍后再切换模型",
     "compacting": "正在压缩中",
     "waitForReply": "请等待回复结束后再压缩",
     "compactFailed": "压缩失败: {msg}",

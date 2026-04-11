@@ -16,6 +16,7 @@ import {
   loadModelsRegistry,
   resolveApiKeyFromAuth,
 } from "../lib/memory/config-loader.js";
+import { t } from "../server/i18n.js";
 import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
 
 const log = createModuleLogger("config");
@@ -242,6 +243,9 @@ export class ConfigCoordinator {
     const model = models.setModel(modelId);
     const session = this._d.getSession();
     if (session) {
+      if (session.isStreaming || session.isCompacting) {
+        throw new Error(t("error.modelSwitchBusy"));
+      }
       await session.setModel(
         applyRuntimeModelOverrides(model, this._d.getAgent?.()?.config?.models?.overrides),
       );

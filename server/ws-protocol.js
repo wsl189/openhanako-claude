@@ -7,6 +7,7 @@
  *   { type: "resume_stream", sessionPath: "...", streamId: "...", sinceSeq: 128 }  (按事件序号续传)
  *
  * Server → Client:
+ *   { type: "sdk_message", message: { role: "assistant"|"user", content: [...] } }
  *   { type: "text_delta", delta: "..." }
  *   { type: "thinking_start" }
  *   { type: "thinking_delta", delta: "..." }

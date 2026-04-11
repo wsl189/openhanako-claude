@@ -1,28 +1,32 @@
 /**
  * SessionCoordinator — Session 生命周期管理
  *
- * 从 Engine 提取，负责 session 的创建/切换/关闭/列表、
- * isolated 执行、session 标题、activity session 提升。
- * 不持有 engine 引用，通过构造器注入依赖。
+ * 负责 Hanako 本地 session metadata 与 Claude Agent SDK session runtime 的桥接。
  */
 import fs from "fs";
-import fsp from "fs/promises";
 import path from "path";
-import {
-  createAgentSession,
-  SessionManager,
-  SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+import { randomUUID } from "crypto";
+import { getSessionInfo, renameSession } from "@anthropic-ai/claude-agent-sdk";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { BrowserManager } from "../lib/browser/browser-manager.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
+import { extractTextToolCalls } from "./provider-tool-call-fallback.js";
 import { t, getLocale } from "../server/i18n.js";
-import { buildCompactionSettings } from "./compaction-settings.js";
-import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
+import {
+  createSessionMetadata,
+  isClaudeSessionPath,
+  listSessionMetadata,
+  patchSessionMetadata,
+  readSessionMetadata,
+} from "./claude-session-store.js";
+import { ClaudeSessionRuntime } from "./claude-session-runtime.js";
+import { ProviderSessionRuntime } from "./provider-session-runtime.js";
+import { buildClaudeRuntimeConfig, CLAUDE_BUILTIN_TOOL_NAMES } from "./claude-runtime-config.js";
+import { readSessionMessagesFromLog } from "./session-message-log.js";
+import { normalizeWorkspacePath } from "./path-utils.js";
 
 const log = createModuleLogger("session");
 
-/** 巡检/定时任务默认工具白名单 */
 export const PATROL_TOOLS_DEFAULT = [
   "search_memory", "pin_memory", "unpin_memory",
   "recall_experience", "record_experience",
@@ -31,57 +35,159 @@ export const PATROL_TOOLS_DEFAULT = [
   "present_files", "message_agent", "channel",
 ];
 
-function extractTextFromContent(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((block) => block?.type === "text" && block?.text)
-    .map((block) => block.text)
-    .join("");
-}
-
-function extractLastAssistantText(messages) {
-  const list = Array.isArray(messages) ? messages : [];
-  const lastAssistant = [...list].reverse().find((msg) => msg?.role === "assistant");
-  return extractTextFromContent(lastAssistant?.content);
-}
-
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
   return isZh ? "（插话）\n" : "(Interjection)\n";
 }
+
+function normalizeAnthropicBaseUrlForSdk(url = "") {
+  return String(url || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/(v1\/)?messages$/i, "")
+    .replace(/\/v1$/i, "");
+}
+
+function extractAssistantTextFromSdkMessage(message) {
+  const content = message?.message?.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+}
+
+function extractToolUsesFromAssistantContent(content = []) {
+  return (Array.isArray(content) ? content : [])
+    .filter((block) => block?.type === "tool_use" && block.id)
+    .map((block) => ({
+      id: block.id,
+      name: block.name || "",
+      args: block.input,
+    }));
+}
+
+function extractTextToolUsesFromAssistantContent(content = [], availableToolNames = []) {
+  if (!Array.isArray(content) || content.length === 0) return [];
+  const rawText = content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n");
+  if (!rawText.trim()) return [];
+
+  const parsed = extractTextToolCalls(rawText, availableToolNames);
+  if (!Array.isArray(parsed?.toolCalls) || parsed.toolCalls.length === 0) return [];
+
+  return parsed.toolCalls
+    .filter((toolCall) => toolCall?.name)
+    .map((toolCall, idx) => ({
+      id: String(toolCall.id || `text_tool_use_${idx}`),
+      name: String(toolCall.name || ""),
+      args: (toolCall.arguments && typeof toolCall.arguments === "object") ? toolCall.arguments : undefined,
+    }));
+}
+
+function normalizeContentBlocks(content) {
+  if (Array.isArray(content)) return content.filter(Boolean);
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (content && typeof content === "object") {
+    if (typeof content.text === "string") return [{ type: "text", text: content.text }];
+    if (typeof content.content === "string") return [{ type: "text", text: content.content }];
+  }
+  return [];
+}
+
+function tryParseJson(raw = "") {
+  const text = String(raw || "").trim();
+  if (!text || !/^[\[{]/.test(text)) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function extractToolResultPayload(rawContent) {
+  let content = normalizeContentBlocks(rawContent);
+  let details;
+
+  if (!content.length && typeof rawContent === "string") {
+    const parsed = tryParseJson(rawContent);
+    if (parsed && typeof parsed === "object") {
+      if (parsed.details && typeof parsed.details === "object") {
+        details = parsed.details;
+      } else if (parsed.structuredContent?.details && typeof parsed.structuredContent.details === "object") {
+        details = parsed.structuredContent.details;
+      }
+      if (parsed.content !== undefined) {
+        content = normalizeContentBlocks(parsed.content);
+      }
+      if (!content.length && Array.isArray(parsed.content)) {
+        content = parsed.content.filter(Boolean);
+      }
+      if (!content.length && typeof rawContent === "string") {
+        content = [{ type: "text", text: rawContent }];
+      }
+    }
+  }
+
+  if (!content.length && rawContent && typeof rawContent === "object") {
+    if (rawContent.details && typeof rawContent.details === "object") {
+      details = rawContent.details;
+    } else if (rawContent.structuredContent?.details && typeof rawContent.structuredContent.details === "object") {
+      details = rawContent.structuredContent.details;
+    }
+    if (rawContent.content !== undefined) {
+      content = normalizeContentBlocks(rawContent.content);
+    }
+  }
+
+  return {
+    content: content.length ? content : [{ type: "text", text: String(rawContent || "") }],
+    details,
+  };
+}
+
+function parseToolInputFromJsonDelta(rawInput = "") {
+  const text = String(rawInput || "").trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 const MAX_CACHED_SESSIONS = 20;
+const ANTHROPIC_PROVIDER_RUNTIME_ALLOWLIST = new Set([
+  "minimax",
+  "minimax-oauth",
+  "moonshot",
+  "kimi-coding",
+  "zhipu",
+]);
+
+function isOfficialAnthropicBaseUrl(url = "") {
+  const raw = String(url || "").trim();
+  if (!raw) return false;
+  try {
+    const { hostname } = new URL(raw);
+    const host = String(hostname || "").toLowerCase();
+    return host === "api.anthropic.com" || host.endsWith(".anthropic.com");
+  } catch {
+    return false;
+  }
+}
 
 export class SessionCoordinator {
-  /**
-   * @param {object} deps
-   * @param {string} deps.agentsDir
-   * @param {() => object} deps.getAgent - 当前焦点 agent
-   * @param {() => string} deps.getActiveAgentId
-   * @param {() => import('./model-manager.js').ModelManager} deps.getModels
-   * @param {() => object} deps.getResourceLoader
-   * @param {() => import('./skill-manager.js').SkillManager} deps.getSkills
-   * @param {(cwd, customTools?, opts?) => object} deps.buildTools
-   * @param {(event, sp) => void} deps.emitEvent
-   * @param {() => string|null} deps.getHomeCwd
-   * @param {(path) => string|null} deps.agentIdFromSessionPath
-   * @param {(id) => Promise} deps.switchAgentOnly - 仅切换 agent 指针
-   * @param {() => object} deps.getConfig
-   * @param {() => Map} deps.getAgents
-   * @param {(agentId) => object} deps.getActivityStore
-   * @param {(agentId) => object|null} deps.getAgentById
-   * @param {() => object} deps.listAgents - 列出所有 agent
-   */
   constructor(deps) {
     this._d = deps;
     this._session = null;
     this._sessionStarted = false;
     this._sessions = new Map();
     this._headlessRefCount = 0;
-    this._titlesCache = new Map(); // sessionDir → { titles, ts }
+    this._streamState = new Map();
   }
-
-  static _TITLES_TTL = 60_000; // 60 秒
 
   get session() { return this._session; }
   get sessionStarted() { return this._sessionStarted; }
@@ -91,121 +197,487 @@ export class SessionCoordinator {
     return this._session?.sessionManager?.getSessionFile?.() ?? null;
   }
 
-  /**
-   * 在发起每轮对话前刷新一次 system prompt，并同步 AgentSession 的 _baseSystemPrompt 缓存。
-   * 这样可确保诸如“当前时间”等动态信息在每轮都更新。
-   */
-  _refreshSessionPrompt(agent, session, reason = "prompt") {
-    if (!agent || !session) return;
+  _refreshSessionPrompt(agent) {
+    if (!agent) return;
     agent.refreshSystemPrompt?.();
-    if (session?.setActiveToolsByName && session?.getActiveToolNames) {
-      try {
-        session.setActiveToolsByName(session.getActiveToolNames());
-      } catch (err) {
-        log.warn(`${reason} prompt rebuild failed: ${err.message}`);
-      }
-    }
   }
 
-  // ── Session 创建 / 切换 ──
+  _buildSessionEnv(models, agentConfig, modelRef) {
+    const resolved = models.resolveModelWithCredentials(modelRef, agentConfig);
+    return {
+      model: resolved.model,
+      env: {
+        ...process.env,
+        ANTHROPIC_BASE_URL: resolved.api === "anthropic-messages"
+          ? (normalizeAnthropicBaseUrlForSdk(resolved.base_url) || undefined)
+          : (resolved.base_url || undefined),
+        ANTHROPIC_API_KEY: resolved.api_key || undefined,
+      },
+      resolved,
+    };
+  }
 
-  async createSession(sessionMgr, cwd, memoryEnabled = true) {
-    const t0 = Date.now();
-    const effectiveCwd = cwd || this._d.getHomeCwd() || process.cwd();
-    const agent = this._d.getAgent();
+  _emitRuntimeEvent(event, sessionPath) {
+    this._d.emitEvent(event, sessionPath);
+  }
+
+  _shouldUseProviderRuntime(resolved) {
+    if (!resolved?.api) return false;
+    if (resolved.api === "openai-completions") return true;
+    if (resolved.api !== "anthropic-messages") return false;
+
+    const providerId = String(resolved.provider || "").trim().toLowerCase();
+    if (ANTHROPIC_PROVIDER_RUNTIME_ALLOWLIST.has(providerId)) {
+      return true;
+    }
+
+    if (
+      providerId
+      && providerId !== "anthropic"
+      && !isOfficialAnthropicBaseUrl(resolved.base_url)
+    ) {
+      // 兼容 Anthropic 协议但非 Anthropic 官方网关的 provider，
+      // 常会产出伪工具调用文本（如 [TOOL_CALL]）而非结构化 tool_use。
+      // 这类场景走 ProviderSessionRuntime 可稳定执行 fallback 工具调用。
+      return true;
+    }
+    return false;
+  }
+
+  _getStreamState(sessionPath, customToolNames = []) {
+    if (!this._streamState.has(sessionPath)) {
+      this._streamState.set(sessionPath, {
+        blockTypes: new Map(),
+        blockToolUseByIndex: new Map(),
+        toolCalls: new Map(),
+        customToolNames: new Set(customToolNames),
+        availableToolNames: new Set([...CLAUDE_BUILTIN_TOOL_NAMES, ...customToolNames]),
+      });
+    }
+    const state = this._streamState.get(sessionPath);
+    state.customToolNames = new Set(customToolNames);
+    state.availableToolNames = new Set([...CLAUDE_BUILTIN_TOOL_NAMES, ...customToolNames]);
+    return state;
+  }
+
+  _translateClaudeEvent(event, sessionPath, customToolNames = []) {
+    const state = this._getStreamState(sessionPath, customToolNames);
+    const translated = [];
+
+    if (event?.type === "stream_event") {
+      const raw = event.event;
+      if (raw?.type === "content_block_start") {
+        const block = raw.content_block || null;
+        if (block?.type) state.blockTypes.set(raw.index, block.type);
+        if (block?.type === "thinking") {
+          translated.push({ type: "thinking_start" });
+          if (typeof block.thinking === "string" && block.thinking) {
+            translated.push({ type: "thinking_delta", delta: block.thinking });
+          }
+        } else if (block?.type === "tool_use" && block.id) {
+          if (Number.isInteger(raw.index)) {
+            state.blockToolUseByIndex.set(raw.index, block.id);
+          }
+          state.toolCalls.set(block.id, {
+            name: block.name || "",
+            args: block.input,
+            rawInput: typeof block.input === "object" ? JSON.stringify(block.input) : "",
+            custom: state.customToolNames.has(block.name || ""),
+          });
+          translated.push({
+            type: "tool_start",
+            name: block.name || "",
+            toolCallId: block.id,
+            args: block.input,
+          });
+        } else if (block?.type === "text" && typeof block.text === "string" && block.text) {
+          translated.push({ type: "text_delta", delta: block.text });
+        }
+      } else if (raw?.type === "content_block_delta") {
+        if (raw?.delta?.type === "text_delta") {
+          translated.push({ type: "text_delta", delta: raw.delta.text || "" });
+        } else if (raw?.delta?.type === "thinking_delta") {
+          translated.push({ type: "thinking_delta", delta: raw.delta.thinking || "" });
+        } else if (raw?.delta?.type === "input_json_delta") {
+          const toolUseId = state.blockToolUseByIndex.get(raw.index);
+          const toolMeta = toolUseId ? state.toolCalls.get(toolUseId) : null;
+          if (toolUseId && toolMeta) {
+            const nextRawInput = `${toolMeta.rawInput || ""}${raw.delta.partial_json || ""}`;
+            toolMeta.rawInput = nextRawInput;
+            const parsed = parseToolInputFromJsonDelta(nextRawInput);
+            if (parsed && typeof parsed === "object") {
+              toolMeta.args = parsed;
+              translated.push({
+                type: "tool_start",
+                name: toolMeta.name || "",
+                toolCallId: toolUseId,
+                args: toolMeta.args,
+              });
+            }
+          }
+        }
+      } else if (raw?.type === "content_block_stop") {
+        const blockType = state.blockTypes.get(raw.index);
+        if (blockType === "thinking") {
+          translated.push({ type: "thinking_end" });
+        }
+        if (blockType === "tool_use") {
+          state.blockToolUseByIndex.delete(raw.index);
+        }
+        state.blockTypes.delete(raw.index);
+      }
+    } else if (event?.type === "assistant") {
+      const content = event.message?.content || [];
+      translated.push({
+        type: "sdk_message",
+        message: {
+          role: "assistant",
+          content: Array.isArray(content) ? content : [],
+        },
+      });
+      const structuredToolUses = extractToolUsesFromAssistantContent(content);
+      const fallbackTextToolUses = structuredToolUses.length
+        ? []
+        : extractTextToolUsesFromAssistantContent(content, [...state.availableToolNames]);
+      for (const toolUse of [...structuredToolUses, ...fallbackTextToolUses]) {
+        if (state.toolCalls.has(toolUse.id)) {
+          const prev = state.toolCalls.get(toolUse.id);
+          const nextArgs = toolUse.args && typeof toolUse.args === "object" ? toolUse.args : prev?.args;
+          state.toolCalls.set(toolUse.id, {
+            ...prev,
+            name: toolUse.name || prev?.name || "",
+            args: nextArgs,
+          });
+          translated.push({
+            type: "tool_start",
+            name: toolUse.name || prev?.name || "",
+            toolCallId: toolUse.id,
+            args: nextArgs,
+          });
+          continue;
+        }
+        state.toolCalls.set(toolUse.id, {
+          name: toolUse.name,
+          args: toolUse.args,
+          custom: state.customToolNames.has(toolUse.name),
+        });
+        translated.push({
+          type: "tool_start",
+          name: toolUse.name,
+          toolCallId: toolUse.id,
+          args: toolUse.args,
+        });
+      }
+      translated.push({ type: "assistant_snapshot", content });
+    } else if (event?.type === "user") {
+      const content = Array.isArray(event.message?.content) ? event.message.content : [];
+      const toolResultContent = content.filter((block) => block?.type === "tool_result" && block.tool_use_id);
+      if (toolResultContent.length) {
+        translated.push({
+          type: "sdk_message",
+          message: {
+            role: "user",
+            content: toolResultContent,
+          },
+        });
+      }
+      for (const block of content) {
+        if (block?.type !== "tool_result" || !block.tool_use_id) continue;
+        const toolUseId = block.tool_use_id;
+        let matchedToolUseId = toolUseId;
+        let toolMeta = state.toolCalls.get(toolUseId) || null;
+        if (!toolMeta) {
+          const pending = [...state.toolCalls.entries()]
+            .reverse()
+            .find(([, meta]) => !meta?.custom);
+          if (pending) {
+            matchedToolUseId = pending[0];
+            toolMeta = pending[1];
+          }
+        }
+        const resolvedToolMeta = toolMeta || {};
+        // 自定义 MCP 工具由 onToolEnd 注入详细事件，避免重复落 tool_end。
+        if (resolvedToolMeta.custom) continue;
+        const payload = extractToolResultPayload(block.content);
+        translated.push({
+          type: "tool_end",
+          name: resolvedToolMeta.name || "",
+          toolCallId: matchedToolUseId || toolUseId,
+          args: resolvedToolMeta.args,
+          success: block.is_error !== true,
+          content: payload.content,
+          details: payload.details,
+        });
+        if (matchedToolUseId) {
+          state.toolCalls.delete(matchedToolUseId);
+        } else {
+          state.toolCalls.delete(toolUseId);
+        }
+      }
+    } else if (event?.type === "tool_use_summary") {
+      for (const toolUseId of event.preceding_tool_use_ids || []) {
+        const toolMeta = state.toolCalls.get(toolUseId);
+        if (!toolMeta || toolMeta.custom) continue;
+        translated.push({
+          type: "tool_end",
+          name: toolMeta.name || "",
+          toolCallId: toolUseId,
+          args: toolMeta.args,
+          success: true,
+          content: [{ type: "text", text: event.summary || "" }],
+          details: { summary: event.summary || "" },
+        });
+        state.toolCalls.delete(toolUseId);
+      }
+    } else if (event?.type === "tool_start") {
+      const alreadyOpen = [...state.toolCalls.values()].some((toolMeta) => (
+        toolMeta.custom && toolMeta.name === event.name
+      ));
+      if (!alreadyOpen) {
+        state.toolCalls.set(event.toolCallId, {
+          name: event.name || "",
+          args: event.args,
+          custom: true,
+        });
+        translated.push({
+          type: "tool_start",
+          name: event.name || "",
+          toolCallId: event.toolCallId,
+          args: event.args,
+        });
+      }
+    } else if (event?.type === "tool_end") {
+      let matchedToolUseId = event.toolCallId;
+      if (!state.toolCalls.has(matchedToolUseId)) {
+        const pending = [...state.toolCalls.entries()]
+          .reverse()
+          .find(([, toolMeta]) => toolMeta.custom && toolMeta.name === event.name);
+        matchedToolUseId = pending?.[0] || event.toolCallId || null;
+      }
+      const toolMeta = matchedToolUseId ? (state.toolCalls.get(matchedToolUseId) || {}) : {};
+      translated.push({
+        type: "tool_end",
+        name: event.name || toolMeta.name || "",
+        toolCallId: matchedToolUseId,
+        args: event.args || toolMeta.args,
+        success: event.success !== false && !event.details?.error,
+        content: event.content || [],
+        details: event.details,
+      });
+      if (matchedToolUseId) state.toolCalls.delete(matchedToolUseId);
+    } else if (event?.type === "compaction_start") {
+      if (event.trigger === "auto") {
+        translated.push({ type: "auto_compaction_start" });
+      }
+    } else if (event?.type === "compaction_end") {
+      if (event.trigger === "auto") {
+        translated.push({ type: "auto_compaction_end" });
+      }
+    } else if (event?.type === "result") {
+      if (event._hanakoManualCompaction) {
+        return translated;
+      }
+      if (event.is_error) {
+        translated.push({ type: "error", message: event.errors?.[0] || "Claude execution failed" });
+      }
+      translated.push({ type: "turn_end" });
+      state.blockTypes.clear();
+      state.blockToolUseByIndex.clear();
+      state.toolCalls.clear();
+    } else if (event?.type === "runtime_error") {
+      translated.push({ type: "error", message: event.error?.message || "Claude runtime error" });
+      translated.push({ type: "turn_end" });
+      state.blockTypes.clear();
+      state.blockToolUseByIndex.clear();
+      state.toolCalls.clear();
+    }
+
+    return translated;
+  }
+
+  async _createRuntime({
+    agent,
+    sessionPath,
+    metadata,
+    cwd,
+    memoryEnabled,
+    resumeExisting = true,
+    builtinEnabledOverride = null,
+    customEnabledOverride = null,
+    systemAppend = "",
+    noTools = false,
+    noMemory = false,
+  }) {
+    const normalizedCwd = normalizeWorkspacePath(cwd, process.cwd());
     const models = this._d.getModels();
-    log.log(`createSession cwd=${effectiveCwd} (传入: ${cwd || "未指定"})`);
-
-    if (!models.currentModel) {
+    const modelRef = agent?.config?.models?.chat || models.currentModel?.id || models.defaultModel?.id;
+    if (!modelRef) {
       throw new Error(t("error.noAvailableModel"));
     }
+    const { model, env, resolved } = this._buildSessionEnv(models, agent?.config, modelRef);
+    const builtTools = this._d.buildTools(normalizedCwd, agent?.tools || [], {
+      agent,
+      agentDir: agent?.agentDir,
+      noTools,
+      noMemory,
+      builtinEnabledOverride,
+      customEnabledOverride,
+    });
 
-    if (!sessionMgr) {
-      sessionMgr = SessionManager.create(effectiveCwd, agent.sessionDir);
+    const useProviderRuntime = this._shouldUseProviderRuntime(resolved);
+    log.log(
+      `[runtime-route] ${useProviderRuntime ? "provider-runtime" : "claude-sdk-runtime"} `
+      + `provider=${resolved?.provider || "unknown"} api=${resolved?.api || "unknown"} `
+      + `base=${resolved?.base_url || ""}`,
+    );
+
+    let runtime = null;
+    if (useProviderRuntime) {
+      const providerToolNames = [
+        ...(builtTools.tools || []).map((tool) => tool?.name),
+        ...(builtTools.customTools || []).map((tool) => tool?.name),
+      ].filter(Boolean);
+      const providerToolInstruction = [
+        "Provider-compatible tool mode is enabled for this session.",
+        `Only these API tools are callable: ${providerToolNames.length ? providerToolNames.join(", ") : "none"}.`,
+        "Use only the tool names listed above. Tools not listed there are unavailable in this session.",
+      ].join("\n");
+      runtime = new ProviderSessionRuntime({
+        sessionId: metadata?.sessionId || randomUUID(),
+        cwd: normalizedCwd,
+        sessionPath,
+        resolvedModel: resolved,
+        systemPrompt: [
+          agent?.buildSystemPrompt?.() || "",
+          systemAppend,
+          providerToolInstruction,
+        ].filter(Boolean).join("\n\n"),
+        tools: [...(builtTools.tools || []), ...(builtTools.customTools || [])],
+      });
+      await runtime.start();
+      return runtime;
     }
 
-    // 必须在 createAgentSession 前切换 session 级记忆状态，
-    // 否则首轮 prompt 会沿用上一个 session 的 system prompt。
-    const creatingAgent = agent;
-    creatingAgent.setMemoryEnabled(memoryEnabled);
-
-    const { tools: sessionTools, customTools: sessionCustomTools } = this._d.buildTools(effectiveCwd, null, { workspace: this._d.getHomeCwd() });
-    // pi-coding-agent 当前版本在 createAgentSession() 内会重建内置工具，
-    // 仅使用 tools 的“名字”而忽略传入实例。把沙盒后的 builtin 同名注入 customTools，
-    // 确保运行时真正执行的是我们包装后的工具实现。
-    const sessionRuntimeTools = [...sessionCustomTools, ...sessionTools];
-    const runtimeModel = this._applyRuntimeModelOverrides(models.currentModel);
-    const { session } = await createAgentSession({
-      cwd: effectiveCwd,
-      sessionManager: sessionMgr,
-      settingsManager: this._createSettings(runtimeModel),
-      authStorage: models.authStorage,
-      modelRegistry: models.modelRegistry,
-      model: runtimeModel,
-      thinkingLevel: models.resolveThinkingLevel(this._d.getPrefs().getThinkingLevel()),
-      resourceLoader: this._d.getResourceLoader(),
-      tools: sessionTools,
-      customTools: sessionRuntimeTools,
+    const runtimeConfig = buildClaudeRuntimeConfig({
+      agent,
+      cwd: normalizedCwd,
+      workspace: normalizeWorkspacePath(
+        agent?.config?.desk?.home_folder || this._d.getHomeCwd(),
+        normalizedCwd,
+      ),
+      toolProfile: this._d.getAgentPermissionConfig?.(path.basename(agent?.agentDir || "")) || null,
+      customTools: agent?.tools || [],
+      builtinEnabledOverride,
+      customEnabledOverride,
+      noTools,
+      noMemory,
+      systemAppend,
+      model,
+      env,
+      createToolContext: () => ({
+        sessionManager: runtime?.sessionManager,
+      }),
+      emitToolEvent: (event) => {
+        runtime?._recordToolEvent?.(event);
+        runtime?._emit?.(event);
+      },
     });
-    const elapsed = Date.now() - t0;
-    log.log(`session created (${elapsed}ms), model=${runtimeModel?.name || "?"}`);
-    this._session = session;
-    this._sessionStarted = false;
-    // 会话切到新 cwd 后，立即重建 system prompt，避免 cwd 文案滞后。
-    // 同时刷新会话缓存，确保动态信息（如当前时间）可生效。
-    this._refreshSessionPrompt(creatingAgent, session, "createSession");
 
-    // 事件转发
-    const sessionPath = session.sessionManager?.getSessionFile?.();
+    runtime = new ClaudeSessionRuntime({
+      sessionId: metadata?.sessionId || randomUUID(),
+      resumeSessionId: resumeExisting ? (metadata?.sessionId || null) : null,
+      cwd: normalizedCwd,
+      sessionPath,
+      options: runtimeConfig.options,
+    });
+    await runtime.start();
+    return runtime;
+  }
+
+  _bindRuntime(sessionPath, session, agentId, memoryEnabled) {
+    // 显式打标：当前 runtime 统一输出结构化流事件，前端可跳过 legacy 标签解析链。
+    session.hanakoStructuredStream = true;
+    session.hanakoRuntimeSource = session?.eventProtocol === "hanako"
+      ? "provider-runtime"
+      : "claude-sdk-runtime";
+    const customToolNames = (
+      this._d.getAgentById(agentId)?.tools
+      || this._d.getAgent()?.tools
+      || []
+    ).map((tool) => tool?.name).filter(Boolean);
     const unsub = session.subscribe((event) => {
-      this._d.emitEvent(event, sessionPath);
+      if (session?.eventProtocol === "hanako") {
+        this._emitRuntimeEvent(event, sessionPath);
+        return;
+      }
+      for (const translatedEvent of this._translateClaudeEvent(event, sessionPath, customToolNames)) {
+        this._emitRuntimeEvent(translatedEvent, sessionPath);
+      }
     });
-
-    // 存入 map（SessionEntry）
-    const mapKey = sessionPath || `_anon_${Date.now()}`;
-    const old = this._sessions.get(mapKey);
-    if (old) old.unsub();
-    this._sessions.set(mapKey, {
+    const old = this._sessions.get(sessionPath);
+    old?.unsub?.();
+    this._sessions.set(sessionPath, {
       session,
-      agentId: this._d.getActiveAgentId(),
+      agentId,
       memoryEnabled,
       lastTouchedAt: Date.now(),
       unsub,
     });
-
-    // LRU 淘汰：按 lastTouchedAt 排序，跳过 streaming 和焦点 session
     if (this._sessions.size > MAX_CACHED_SESSIONS) {
       const candidates = [...this._sessions.entries()]
-        .filter(([key, e]) => key !== mapKey && !e.session.isStreaming)
+        .filter(([key, e]) => key !== sessionPath && !e.session.isStreaming)
         .sort((a, b) => a[1].lastTouchedAt - b[1].lastTouchedAt);
       for (const [key, entry] of candidates) {
-        entry.unsub();
+        entry.unsub?.();
+        entry.session?.close?.();
         this._sessions.delete(key);
         if (this._sessions.size <= MAX_CACHED_SESSIONS) break;
       }
     }
+  }
 
-    return session;
+  async createSession(_sessionMgr = null, cwd, memoryEnabled = true) {
+    const t0 = Date.now();
+    const effectiveCwd = cwd || this._d.getHomeCwd() || process.cwd();
+    const agent = this._d.getAgent();
+    const sessionDir = agent.sessionDir;
+    fs.mkdirSync(sessionDir, { recursive: true });
+    agent.setMemoryEnabled(memoryEnabled);
+    this._refreshSessionPrompt(agent);
+
+    const { sessionPath, metadata } = createSessionMetadata(sessionDir, {
+      sessionId: randomUUID(),
+      cwd: effectiveCwd,
+      agentId: this._d.getActiveAgentId(),
+      memoryEnabled,
+    });
+    const runtime = await this._createRuntime({
+      agent,
+      sessionPath,
+      metadata,
+      cwd: effectiveCwd,
+      memoryEnabled,
+      resumeExisting: false,
+    });
+
+    this._session = runtime;
+    this._sessionStarted = false;
+    this._bindRuntime(sessionPath, runtime, this._d.getActiveAgentId(), memoryEnabled);
+    log.log(`session created (${Date.now() - t0}ms), model=${runtime.options?.model || "?"}`);
+    return runtime;
   }
 
   _readSessionMemoryEnabled(sessionPath, agent = this._d.getAgent()) {
     try {
-      const metaPath = path.join(agent.sessionDir, "session-meta.json");
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-      const sessKey = path.basename(sessionPath);
-      return meta[sessKey]?.memoryEnabled !== false;
-    } catch (err) {
-      if (err.code !== "ENOENT") {
-        log.warn(`session-meta.json 读取失败: ${err.message}`);
-      }
-      return true;
+      return readSessionMetadata(sessionPath)?.memoryEnabled !== false;
+    } catch {
+      return agent?.memoryEnabled !== false;
     }
   }
 
   async refreshCurrentSessionTools() {
     const sessionPath = this.currentSessionPath;
     if (!sessionPath) return { reloaded: false, reason: "no-active-session" };
-
     const currentEntry = this._sessions.get(sessionPath);
     const currentSession = currentEntry?.session || this._session;
     if (!currentSession) return { reloaded: false, reason: "session-not-cached" };
@@ -216,30 +688,35 @@ export class SessionCoordinator {
       await this._d.switchAgentOnly(targetAgentId);
       this._d.getSkills()?.syncAgentSkills?.(this._d.getAgent());
     }
-
     const agent = this._d.getAgentById(targetAgentId) || this._d.getAgent();
-    const sessionMgr = SessionManager.open(sessionPath, agent.sessionDir);
-    const cwd = sessionMgr.getCwd?.() || undefined;
-    const memoryEnabled = this._readSessionMemoryEnabled(sessionPath, agent);
+    const metadata = readSessionMetadata(sessionPath);
+    const memoryEnabled = metadata?.memoryEnabled !== false;
     const wasStarted = this._sessionStarted;
-
-    await this.createSession(sessionMgr, cwd, memoryEnabled);
+    const runtime = await this._createRuntime({
+      agent,
+      sessionPath,
+      metadata,
+      cwd: metadata.cwd,
+      memoryEnabled,
+      resumeExisting: true,
+    });
+    this._session = runtime;
     this._sessionStarted = wasStarted;
+    this._bindRuntime(sessionPath, runtime, targetAgentId || this._d.getActiveAgentId(), memoryEnabled);
     return { reloaded: true, sessionPath };
   }
 
   async switchSession(sessionPath) {
+    if (!isClaudeSessionPath(sessionPath)) {
+      throw new Error(`unsupported session path: ${sessionPath}`);
+    }
     const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
     if (targetAgentId && targetAgentId !== this._d.getActiveAgentId()) {
-      // Phase 1: 跨 agent 切换只切指针，不清旧 session
       await this._d.switchAgentOnly(targetAgentId);
       this._d.getSkills()?.syncAgentSkills?.(this._d.getAgent());
     }
 
-    // 从 session-meta.json 恢复记忆开关
     const memoryEnabled = this._readSessionMemoryEnabled(sessionPath, this._d.getAgent());
-
-    // 如果已在 map 中，切指针
     const existing = this._sessions.get(sessionPath);
     if (existing) {
       if (this._session && this._session !== existing.session) {
@@ -254,12 +731,10 @@ export class SessionCoordinator {
       existing.lastTouchedAt = Date.now();
       const targetAgent = this._d.getAgentById(existing.agentId) || this._d.getAgent();
       targetAgent.setMemoryEnabled(memoryEnabled);
-      // 命中缓存会话时也要刷新，确保 prompt 中 cwd 与动态时间等信息与当前会话一致
-      this._refreshSessionPrompt(targetAgent, existing.session, "switchSession");
+      this._refreshSessionPrompt(targetAgent);
       return existing.session;
     }
 
-    // 不在 map 中，先 flush 当前再新建
     if (this._session) {
       const oldSp = this._session.sessionManager?.getSessionFile?.();
       if (oldSp) {
@@ -268,9 +743,21 @@ export class SessionCoordinator {
         await oldAgent?._memoryTicker?.notifySessionEnd(oldSp).catch(() => {});
       }
     }
-    const sessionMgr = SessionManager.open(sessionPath, this._d.getAgent().sessionDir);
-    const cwd = sessionMgr.getCwd?.() || undefined;
-    return this.createSession(sessionMgr, cwd, memoryEnabled);
+
+    const metadata = readSessionMetadata(sessionPath);
+    const agent = this._d.getAgentById(targetAgentId) || this._d.getAgent();
+    const runtime = await this._createRuntime({
+      agent,
+      sessionPath,
+      metadata,
+      cwd: metadata.cwd,
+      memoryEnabled,
+      resumeExisting: true,
+    });
+    this._session = runtime;
+    this._sessionStarted = false;
+    this._bindRuntime(sessionPath, runtime, targetAgentId || this._d.getActiveAgentId(), memoryEnabled);
+    return runtime;
   }
 
   async prompt(text, opts) {
@@ -283,7 +770,7 @@ export class SessionCoordinator {
       if (entry) entry.lastTouchedAt = Date.now();
       promptAgent = entry ? (this._d.getAgentById(entry.agentId) || promptAgent) : promptAgent;
     }
-    this._refreshSessionPrompt(promptAgent, this._session, "prompt");
+    this._refreshSessionPrompt(promptAgent);
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await this._session.prompt(text, promptOpts);
     if (sp) {
@@ -306,11 +793,8 @@ export class SessionCoordinator {
       const entry = this._sessions.get(sp);
       if (entry) entry.lastTouchedAt = Date.now();
     }
-    this._session.steer(getSteerPrefix() + text);
-    return true;
+    return this._session.steer(getSteerPrefix() + text);
   }
-
-  // ── Path 感知 API（Phase 2） ──
 
   async promptSession(sessionPath, text, opts) {
     const entry = this._sessions.get(sessionPath);
@@ -318,7 +802,7 @@ export class SessionCoordinator {
     entry.lastTouchedAt = Date.now();
     if (sessionPath === this.currentSessionPath) this._sessionStarted = true;
     const promptAgent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
-    this._refreshSessionPrompt(promptAgent, entry.session, "promptSession");
+    this._refreshSessionPrompt(promptAgent);
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await entry.session.prompt(text, promptOpts);
     promptAgent?._memoryTicker?.notifyTurn(sessionPath);
@@ -328,8 +812,7 @@ export class SessionCoordinator {
     const entry = this._sessions.get(sessionPath);
     if (!entry?.session.isStreaming) return false;
     entry.lastTouchedAt = Date.now();
-    entry.session.steer(getSteerPrefix() + text);
-    return true;
+    return entry.session.steer(getSteerPrefix() + text);
   }
 
   async abortSession(sessionPath) {
@@ -339,10 +822,9 @@ export class SessionCoordinator {
     return true;
   }
 
-  /** 中断所有正在 streaming 的 session */
   async abortAllStreaming() {
     const tasks = [];
-    for (const [sp, entry] of this._sessions) {
+    for (const [, entry] of this._sessions) {
       if (entry.session.isStreaming) {
         tasks.push(entry.session.abort().catch(() => {}));
       }
@@ -351,20 +833,20 @@ export class SessionCoordinator {
     return tasks.length;
   }
 
-  // ── Session 关闭 ──
-
   async closeSession(sessionPath) {
     const entry = this._sessions.get(sessionPath);
     if (entry) {
       if (entry.session.isStreaming) {
         try { await entry.session.abort(); } catch {}
       }
-      entry.unsub();
+      entry.unsub?.();
+      await entry.session.close?.();
       this._sessions.delete(sessionPath);
     }
     if (sessionPath === this.currentSessionPath) {
       this._session = null;
     }
+    this._streamState.delete(sessionPath);
   }
 
   async closeAllSessions() {
@@ -374,18 +856,18 @@ export class SessionCoordinator {
       if (entry.session.isStreaming) {
         try { await entry.session.abort(); } catch {}
       }
-      entry.unsub();
+      entry.unsub?.();
+      await entry.session.close?.();
     }
     this._sessions.clear();
     this._session = null;
+    this._streamState.clear();
   }
 
   async cleanupSession() {
     await this.closeAllSessions();
     log.log("sessions cleaned up");
   }
-
-  // ── Session 查询 ──
 
   getSessionByPath(sessionPath) {
     return this._sessions.get(sessionPath)?.session ?? null;
@@ -405,33 +887,56 @@ export class SessionCoordinator {
   async listSessions() {
     const allSessions = [];
     const agents = this._d.listAgents();
-
     for (const agent of agents) {
       const sessionDir = path.join(this._d.agentsDir, agent.id, "sessions");
       if (!fs.existsSync(sessionDir)) continue;
-      try {
-        const sessions = await SessionManager.list(process.cwd(), sessionDir);
-        const titles = await this._loadSessionTitlesFor(sessionDir);
-        for (const s of sessions) {
-          const rawTitle = titles[s.path];
-          const cleanStoredTitle = typeof rawTitle === "string" ? rawTitle.trim() : "";
-          if (cleanStoredTitle) {
-            s.title = cleanStoredTitle;
-          } else if (typeof s.title === "string" && s.title.trim()) {
-            s.title = s.title.trim();
-          } else {
-            s.title = null;
-          }
-          s.agentId = agent.id;
-          s.agentName = agent.name;
-          allSessions.push(s);
+      const listed = listSessionMetadata(sessionDir, {
+        includeArchived: false,
+        directOnly: true,
+      });
+      for (const item of listed) {
+        const meta = item.metadata;
+        let info = null;
+        let historyMessages = [];
+        try {
+          info = await getSessionInfo(meta.sessionId, { dir: meta.cwd });
+        } catch {
+          info = null;
         }
-      } catch {}
+        try {
+          historyMessages = readSessionMessagesFromLog(item.sessionPath, { limit: 200 });
+        } catch {
+          historyMessages = [];
+        }
+        const firstUser = historyMessages.find((message) => message?.role === "user");
+        const firstMessage = firstUser
+          ? extractAssistantTextFromSdkMessage({
+            message: {
+              content: Array.isArray(firstUser?.content)
+                ? firstUser.content
+                : [{ type: "text", text: String(firstUser?.content || "") }],
+            },
+          })
+          : "";
+        const messageCount = historyMessages.filter((message) =>
+          message?.role === "user" || message?.role === "assistant"
+        ).length;
+        allSessions.push({
+          path: item.sessionPath,
+          title: meta.title || info?.customTitle || info?.summary || null,
+          firstMessage: info?.firstPrompt || firstMessage || "",
+          modified: new Date(info?.lastModified || meta.updatedAt || Date.now()),
+          messageCount,
+          cwd: meta.cwd || info?.cwd || null,
+          agentId: agent.id,
+          agentName: agent.name,
+        });
+      }
     }
 
     const currentPath = this.currentSessionPath;
     const activeAgentId = this._d.getActiveAgentId();
-    if (currentPath && this._sessionStarted && !allSessions.find(s => s.path === currentPath)) {
+    if (currentPath && this._sessionStarted && !allSessions.find((s) => s.path === currentPath)) {
       allSessions.unshift({
         path: currentPath,
         title: null,
@@ -449,69 +954,33 @@ export class SessionCoordinator {
   }
 
   async saveSessionTitle(sessionPath, title) {
-    const agentId = this._d.agentIdFromSessionPath(sessionPath);
-    const sessionDir = agentId
-      ? path.join(this._d.agentsDir, agentId, "sessions")
-      : this._d.getAgent().sessionDir;
-    const titlePath = path.join(sessionDir, "session-titles.json");
-    const titles = await this._loadSessionTitlesFor(sessionDir);
-    titles[sessionPath] = title;
-    await fsp.writeFile(titlePath, JSON.stringify(titles, null, 2), "utf-8");
-    // 更新缓存
-    this._titlesCache.set(sessionDir, { titles: { ...titles }, ts: Date.now() });
-  }
-
-  async _loadSessionTitlesFor(sessionDir) {
-    const cached = this._titlesCache.get(sessionDir);
-    if (cached && Date.now() - cached.ts < SessionCoordinator._TITLES_TTL) {
-      return { ...cached.titles };
-    }
+    const metadata = patchSessionMetadata(sessionPath, { title });
     try {
-      const raw = await fsp.readFile(path.join(sessionDir, "session-titles.json"), "utf-8");
-      const titles = JSON.parse(raw);
-      this._titlesCache.set(sessionDir, { titles, ts: Date.now() });
-      return { ...titles };
+      await renameSession(metadata.sessionId, title || "", { dir: metadata.cwd });
     } catch {
-      this._titlesCache.set(sessionDir, { titles: {}, ts: Date.now() });
-      return {};
+      // local metadata is source of truth for Hanako UI
     }
   }
-
-  // ── Session Context ──
 
   createSessionContext() {
     const models = this._d.getModels();
     const skills = this._d.getSkills();
     return {
-      authStorage:    models.authStorage,
-      modelRegistry:  models.modelRegistry,
+      authStorage: models.authStorage,
+      modelRegistry: models.modelRegistry,
       resourceLoader: this._d.getResourceLoader(),
-      allSkills:      skills.allSkills,
+      allSkills: skills.allSkills,
       getSkillsForAgent: (ag) => skills.getSkillsForAgent(ag),
-      buildTools:     (cwd, customTools, opts) => this._d.buildTools(cwd, customTools, opts),
-      resolveModel:   (agentConfig) => {
+      buildTools: (cwd, customTools, opts) => this._d.buildTools(cwd, customTools, opts),
+      resolveModel: (agentConfig) => {
         let id = agentConfig?.models?.chat;
-        // 非 active agent 可能没有配 models.chat（模板默认为空），回退到全局默认模型
         if (!id) {
-          if (models.defaultModel) {
-            log.log(`[resolveModel] agentConfig 未指定 models.chat，回退到默认模型 ${models.defaultModel.id}`);
-            return models.defaultModel;
-          }
-          log.error(`[resolveModel] agentConfig 未指定 models.chat，也没有默认模型`);
+          if (models.defaultModel) return models.defaultModel;
           throw new Error(t("error.resolveModelNoChatModel"));
         }
-        const found = models.availableModels.find(m => m.id === id);
+        const found = models.availableModels.find((m) => m.id === id);
         if (!found) {
-          // 模型 ID 在可用列表中找不到，尝试回退到默认模型
-          if (models.defaultModel) {
-            log.log(`[resolveModel] 模型 "${id}" 不在可用列表中，回退到默认模型 ${models.defaultModel.id}`);
-            return models.defaultModel;
-          }
-          const available = models.availableModels.map(m => `${m.provider}/${m.id}`).join(", ");
-          const hasAuth = models.modelRegistry
-            ? `hasAuth("${models.inferModelProvider?.(id) || "?"}")=unknown`
-            : "no registry";
-          log.error(`[resolveModel] 找不到模型 "${id}"。availableModels=[${available}]。${hasAuth}`);
+          if (models.defaultModel) return models.defaultModel;
           throw new Error(t("error.resolveModelNotAvailable", { id }));
         }
         return found;
@@ -523,7 +992,6 @@ export class SessionCoordinator {
     const agent = this._d.getAgent();
     const oldPath = path.join(agent.agentDir, "activity", activitySessionFile);
     if (!fs.existsSync(oldPath)) return null;
-
     const newPath = path.join(agent.sessionDir, activitySessionFile);
     try {
       fs.renameSync(oldPath, newPath);
@@ -536,13 +1004,9 @@ export class SessionCoordinator {
     }
   }
 
-  // ── Isolated Execution ──
-
   async executeIsolated(prompt, opts = {}) {
     const targetAgent = opts.agentId ? this._d.getAgentById(opts.agentId) : this._d.getAgent();
     if (!targetAgent) throw new Error(t("error.agentNotInitialized", { id: opts.agentId }));
-
-    // abort signal：提前中止检查
     if (opts.signal?.aborted) {
       return { sessionPath: null, replyText: "", error: "aborted" };
     }
@@ -551,142 +1015,87 @@ export class SessionCoordinator {
     const wasBrowserRunning = bm.isRunning;
     this._headlessRefCount++;
     if (this._headlessRefCount === 1) bm.setHeadless(true);
-    let tempSessionMgr;
-    const cleanupTempSession = () => {
-      const sp = tempSessionMgr?.getSessionFile?.();
-      if (sp) {
-        try { fs.unlinkSync(sp); } catch {}
-      }
-    };
+
+    let sessionPath = null;
+    let runtime = null;
     try {
       const sessionDir = opts.persist || targetAgent.sessionDir;
       fs.mkdirSync(sessionDir, { recursive: true });
-
-      const agentWorkspace = targetAgent?.config?.desk?.home_folder;
-      const execCwd = opts.cwd || agentWorkspace || this._d.getHomeCwd() || process.cwd();
-      const models = this._d.getModels();
-      const agentPreferredModel = targetAgent.config?.models?.chat;
-      const modelId = opts.model ? null : agentPreferredModel;
-      let resolvedModel = opts.model;
-      if (!resolvedModel) {
-        if (modelId) {
-          resolvedModel = models.availableModels.find(m => m.id === modelId);
-        }
-        if (!resolvedModel) {
-          // agent 未配 models.chat 或配置的模型不在可用列表：fallback 到当前默认模型
-          resolvedModel = models.defaultModel;
-        }
-        if (!resolvedModel) {
-          log.error(`[executeIsolated] agent "${targetAgent.agentName}" 未指定 models.chat，也没有可用的默认模型`);
-          throw new Error(t("error.executeIsolatedNoModel", { name: targetAgent.agentName }));
-        }
-        if (modelId && resolvedModel.id !== modelId) {
-          log.log(`[executeIsolated] 模型 "${modelId}" 不可用，fallback → ${resolvedModel.id}`);
-        }
-      }
-      const execModel = this._applyRuntimeModelOverrides(
-        models.resolveExecutionModel(resolvedModel),
-        targetAgent?.config?.models?.overrides,
-      );
-      tempSessionMgr = SessionManager.create(execCwd, sessionDir);
-      const { tools: allBuiltinTools, customTools: allCustomTools } = this._d.buildTools(
-        execCwd,
-        targetAgent.tools,
-        { agentDir: targetAgent.agentDir, workspace: agentWorkspace || this._d.getHomeCwd() },
-      );
-
-      const patrolAllowed = opts.toolFilter
-        || targetAgent.config?.desk?.patrol_tools
-        || PATROL_TOOLS_DEFAULT;
-      const allowSet = new Set(patrolAllowed);
-      const actCustomTools = allCustomTools.filter(t => allowSet.has(t.name));
-
-      // builtin tools 过滤：传入 builtinFilter 时只保留白名单内的 builtin 工具
-      const actTools = opts.builtinFilter
-        ? allBuiltinTools.filter(t => opts.builtinFilter.includes(t.name))
-        : allBuiltinTools;
-      // 同 createSession：强制用沙盒包装后的 builtin 覆盖 SDK 默认内置工具。
-      const actRuntimeTools = [...actCustomTools, ...actTools];
-
-      const agent = this._d.getAgent();
-      const skills = this._d.getSkills();
-      const resourceLoader = this._d.getResourceLoader();
-      const execResourceLoader = (targetAgent === agent)
-        ? resourceLoader
-        : Object.create(resourceLoader, {
-            getSystemPrompt: { value: () => targetAgent.systemPrompt },
-            getSkills: { value: () => skills.getSkillsForAgent(targetAgent) },
-          });
-
-      const { session } = await createAgentSession({
+      const execCwd = opts.cwd || targetAgent?.config?.desk?.home_folder || this._d.getHomeCwd() || process.cwd();
+      const patrolAllowed = opts.toolFilter || targetAgent.config?.desk?.patrol_tools || PATROL_TOOLS_DEFAULT;
+      const builtinOverride = opts.builtinFilter
+        ? opts.builtinFilter
+        : CLAUDE_BUILTIN_TOOL_NAMES;
+      const customOverride = patrolAllowed;
+      const { sessionPath: createdPath, metadata } = createSessionMetadata(sessionDir, {
+        sessionId: randomUUID(),
         cwd: execCwd,
-        sessionManager: tempSessionMgr,
-        settingsManager: this._createSettings(execModel, targetAgent?.config?.models?.overrides),
-        authStorage: models.authStorage,
-        modelRegistry: models.modelRegistry,
-        model: execModel,
-        thinkingLevel: models.resolveThinkingLevel(this._d.getPrefs().getThinkingLevel()),
-        resourceLoader: execResourceLoader,
-        tools: actTools,
-        customTools: actRuntimeTools,
+        agentId: path.basename(targetAgent.agentDir),
+        memoryEnabled: true,
+      });
+      sessionPath = createdPath;
+
+      runtime = await this._createRuntime({
+        agent: targetAgent,
+        sessionPath,
+        metadata,
+        cwd: execCwd,
+        memoryEnabled: true,
+        resumeExisting: false,
+        builtinEnabledOverride: builtinOverride,
+        customEnabledOverride: customOverride,
       });
 
       let replyText = "";
-      const unsub = session.subscribe((event) => {
-        if (event.type === "message_update") {
-          const sub = event.assistantMessageEvent;
-          if (sub?.type === "text_delta") {
-            replyText += sub.delta || "";
+      const unsub = runtime.subscribe((event) => {
+        if (event?.type === "stream_event") {
+          const raw = event.event;
+          if (raw?.type === "content_block_delta" && raw?.delta?.type === "text_delta") {
+            replyText += raw.delta.text || "";
           }
+        } else if (event?.type === "assistant") {
+          const finalText = extractAssistantTextFromSdkMessage(event);
+          if (finalText) replyText = finalText;
+        } else if (event?.type === "result" && typeof event.result === "string" && event.result.trim()) {
+          replyText = event.result.trim();
         }
       });
 
-      // abort signal：监听中止，转发到子 session
-      const abortHandler = () => session.abort();
+      const abortHandler = () => runtime.abort();
       opts.signal?.addEventListener("abort", abortHandler, { once: true });
-
-      // 二次检查：覆盖初始化期间 signal 已变 aborted 的竞争窗口
       if (opts.signal?.aborted) {
         opts.signal.removeEventListener("abort", abortHandler);
         unsub?.();
-        cleanupTempSession();
+        try { await runtime.close(); } catch {}
+        if (!opts.persist && sessionPath) {
+          try { fs.unlinkSync(sessionPath); } catch {}
+        }
         return { sessionPath: null, replyText: "", error: "aborted" };
       }
 
       try {
-        await session.prompt(prompt);
+        await runtime.prompt(prompt);
       } finally {
         opts.signal?.removeEventListener("abort", abortHandler);
         unsub?.();
       }
 
-      // 回填保护：某些 provider 可能不发 text_delta，
-      // 但最终 assistant 消息已写入 session。
-      if (!replyText.trim()) {
-        const fallbackText = extractLastAssistantText(session?.messages).trim();
-        if (fallbackText) {
-          replyText = fallbackText;
-          log.log("[executeIsolated] recovered final assistant text from session messages");
-        }
-      }
       replyText = sanitizeAssistantVisibleText(replyText);
-
-      const sessionPath = session.sessionManager?.getSessionFile?.() || null;
-
       if (!opts.persist && sessionPath) {
         try { fs.unlinkSync(sessionPath); } catch {}
         return { sessionPath: null, replyText, error: null };
       }
-
       return { sessionPath, replyText, error: null };
     } catch (err) {
       log.error(`isolated execution failed: ${err.message}`);
-      // 清理失败的临时 session 文件
-      if (!opts.persist && tempSessionMgr) {
-        cleanupTempSession();
+      if (!opts.persist && sessionPath) {
+        try { fs.unlinkSync(sessionPath); } catch {}
       }
       return { sessionPath: null, replyText: "", error: err.message };
     } finally {
+      if (runtime) {
+        try { await runtime.close(); } catch {}
+      }
       this._headlessRefCount = Math.max(0, this._headlessRefCount - 1);
       if (this._headlessRefCount === 0) bm.setHeadless(false);
       const browserNowRunning = bm.isRunning;
@@ -694,19 +1103,5 @@ export class SessionCoordinator {
         this._d.emitEvent({ type: "browser_bg_status", running: browserNowRunning, url: bm.currentUrl }, null);
       }
     }
-  }
-
-  _applyRuntimeModelOverrides(model, overrides = null) {
-    const activeOverrides = overrides || this._d.getAgent?.()?.config?.models?.overrides;
-    return applyRuntimeModelOverrides(model, activeOverrides);
-  }
-
-  /** 创建 session 专用 settings（控制 compaction + max_completion_tokens） */
-  _createSettings(model, overrides = null) {
-    const runtimeModel = this._applyRuntimeModelOverrides(model, overrides);
-    const contextWindow = runtimeModel?.contextWindow || 200_000;
-    return SettingsManager.inMemory({
-      compaction: buildCompactionSettings(contextWindow),
-    });
   }
 }

@@ -4,12 +4,12 @@
  * 职责：
  *   - 统一管理所有 provider 的凭证（API key / OAuth token）
  *   - 按 providerId 索引，无自动 fallback
- *   - 不负责 OAuth 登录流程（由 Pi SDK AuthStorage 负责）
+ *   - 不负责 OAuth 登录流程（由 SimpleAuthStorage 负责）
  *   - 读凭证时调用方必须明确指定 providerId
  *
  * 凭证优先级（加载时）：
  *   1. providers.yaml（api_key / base_url 覆盖）
- *   2. auth.json（OAuth token / Pi SDK 格式 API key）
+ *   2. auth.json（OAuth token / 历史兼容 API key）
  *   3. per-agent config.yaml providers 块（向后兼容，传入时用）
  *
  * 设计来源：Cherry Studio 的 OAuth/API 分离方式 + 去掉自动 fallback
@@ -186,6 +186,8 @@ export class AuthStore {
    * @returns {{ apiKey: string, baseUrl: string, api: string }|null}
    */
   get(providerId, agentConfig) {
+    const providerEntry = this._registry.get(providerId);
+
     // 先查内存（直接命中 providerId 或 authJsonKey 别名）
     if (this._creds.has(providerId)) {
       return this._creds.get(providerId);
@@ -195,6 +197,15 @@ export class AuthStore {
     const mappedId = this._authKeyToId.get(providerId);
     if (mappedId && this._creds.has(mappedId)) {
       return this._creds.get(mappedId);
+    }
+
+    if (providerEntry?.authType === "none") {
+      return {
+        apiKey: "",
+        baseUrl: providerEntry.baseUrl || "",
+        api: providerEntry.api || "openai-completions",
+        source: "provider-registry",
+      };
     }
 
     // per-agent config 向后兼容（不存入内存，每次现查）

@@ -22,6 +22,14 @@ function showToast(text: string, type: 'success' | 'error' = 'success', duration
   useStore.getState().addToast(text, type, duration);
 }
 
+function extractFetchErrorMessage(err: unknown, fallback: string): string {
+  const message = String((err as any)?.message || '').trim();
+  if (!message) return fallback;
+  const detail = message.split(' - ').pop()?.trim();
+  if (detail && detail !== message) return detail;
+  return message;
+}
+
 // ── 斜杠命令 ──
 
 const isZh = (window as any).i18n?.locale?.startsWith?.('zh') ?? true;
@@ -562,7 +570,10 @@ function InputAreaInner() {
               />
             )}
             <ContextRing />
-            <ModelSelector models={models} />
+            <ModelSelector
+              models={models}
+              disabled={!connected || sending || isStreaming}
+            />
             <SendButton
               isStreaming={isStreaming}
               hasInput={!!inputText.trim()}
@@ -826,12 +837,22 @@ function ThinkingLevelButton({ level, onChange, modelXhigh }: {
 
 // ── Model Selector ──
 
-function ModelSelector({ models }: { models: Array<{ id: string; name: string; provider?: string; isCurrent?: boolean }> }) {
+function ModelSelector({
+  models,
+  disabled = false,
+}: {
+  models: Array<{ id: string; name: string; provider?: string; isCurrent?: boolean }>;
+  disabled?: boolean;
+}) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   const current = models.find(m => m.isCurrent);
+
+  useEffect(() => {
+    if (disabled && open) setOpen(false);
+  }, [disabled, open]);
 
   // Close on outside click
   useEffect(() => {
@@ -844,20 +865,26 @@ function ModelSelector({ models }: { models: Array<{ id: string; name: string; p
   }, [open]);
 
   const switchModel = useCallback(async (modelId: string) => {
+    if (disabled) return;
     try {
       await hanaFetch('/api/models/set', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ modelId }),
       });
+
       const favRes = await hanaFetch('/api/models/favorites');
       const favData = await favRes.json();
-      useStore.setState({ models: favData.models || [] });
-    } catch (err) {
+      useStore.setState({
+        models: favData.models || [],
+        currentModel: favData.current || null,
+      });
+    } catch (err: any) {
       console.error('[model] switch failed:', err);
+      showToast(extractFetchErrorMessage(err, t('model.switchFailed')), 'error');
     }
     setOpen(false);
-  }, []);
+  }, [disabled, t]);
 
   // 按 provider 分组
   const grouped = useMemo(() => {
@@ -881,7 +908,15 @@ function ModelSelector({ models }: { models: Array<{ id: string; name: string; p
 
   return (
     <div className={'model-selector' + (open ? ' open' : '')} ref={ref}>
-      <button className="model-pill" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
+      <button
+        className="model-pill"
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (disabled) return;
+          setOpen(!open);
+        }}
+      >
         <span>{current?.name || t('model.unknown') || '...'}</span>
         <span className="model-arrow">▾</span>
       </button>

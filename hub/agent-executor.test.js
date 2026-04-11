@@ -4,116 +4,82 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  createAgentSessionMock,
-  sessionManagerCreateMock,
-  settingsInMemoryMock,
+  createSessionMetadataMock,
+  buildClaudeRuntimeConfigMock,
+  runtimeCtorMock,
 } = vi.hoisted(() => ({
-  createAgentSessionMock: vi.fn(),
-  sessionManagerCreateMock: vi.fn(),
-  settingsInMemoryMock: vi.fn(),
+  createSessionMetadataMock: vi.fn(),
+  buildClaudeRuntimeConfigMock: vi.fn(),
+  runtimeCtorMock: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-  createAgentSession: createAgentSessionMock,
-  SessionManager: {
-    create: sessionManagerCreateMock,
+vi.mock("../core/claude-session-store.js", () => ({
+  createSessionMetadata: createSessionMetadataMock,
+}));
+
+vi.mock("../core/claude-runtime-config.js", () => ({
+  buildClaudeRuntimeConfig: buildClaudeRuntimeConfigMock,
+}));
+
+vi.mock("../core/claude-session-runtime.js", () => ({
+  ClaudeSessionRuntime: class {
+    constructor(opts) {
+      return runtimeCtorMock(opts);
+    }
   },
-  SettingsManager: {
-    inMemory: settingsInMemoryMock,
-  },
+}));
+
+vi.mock("../core/model-runtime-overrides.js", () => ({
+  applyRuntimeModelOverrides: (model) => model,
 }));
 
 import { runAgentSession } from "./agent-executor.js";
 
-describe("runAgentSession sandboxed builtin tools", () => {
+describe("runAgentSession with Claude runtime", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    sessionManagerCreateMock.mockReturnValue({ id: "temp-session-manager" });
-    settingsInMemoryMock.mockReturnValue({ id: "settings" });
-  });
-
-  it("injects wrapped builtin tools into customTools to avoid SDK default override", async () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-exec-test-"));
-    const agentDir = path.join(tempRoot, "alpha");
-    fs.mkdirSync(agentDir, { recursive: true });
-
-    const wrappedBuiltin = { name: "bash", execute: vi.fn() };
-    const wrappedCustom = { name: "custom_tool", execute: vi.fn() };
-    const fakeSession = {
-      prompt: vi.fn(async () => {}),
-      subscribe: vi.fn(() => () => {}),
-      sessionManager: {
-        getSessionFile: () => null,
+    createSessionMetadataMock.mockReturnValue({
+      sessionPath: "/tmp/fake.session.json",
+      metadata: { sessionId: "s1" },
+    });
+    buildClaudeRuntimeConfigMock.mockReturnValue({
+      options: {
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: "append",
+        },
       },
-    };
-    createAgentSessionMock.mockResolvedValue({ session: fakeSession });
-
-    const agent = {
-      agentDir,
-      tools: [{ name: "bash", execute: vi.fn() }],
-      personality: "personality",
-      systemPrompt: "system",
-      config: { desk: { home_folder: "/workspace" } },
-    };
-    const ctx = {
-      resourceLoader: {},
-      authStorage: { id: "auth" },
-      modelRegistry: { id: "registry" },
-      buildTools: vi.fn(() => ({
-        tools: [wrappedBuiltin],
-        customTools: [wrappedCustom],
-      })),
-      resolveModel: vi.fn(() => ({ id: "test-model", contextWindow: 200_000 })),
-      getSkillsForAgent: vi.fn(() => []),
-    };
-    const engine = {
-      getAgent: vi.fn(() => agent),
-      createSessionContext: vi.fn(() => ctx),
-      getHomeFolder: vi.fn(() => "/workspace"),
-      setSessionPendingImages: vi.fn(),
-      clearSessionPendingImages: vi.fn(),
-    };
-
-    try {
-      await runAgentSession(
-        "alpha",
-        [{ text: "hello", capture: false }],
-        { engine },
-      );
-    } finally {
-      fs.rmSync(tempRoot, { recursive: true, force: true });
-    }
-
-    expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
-    const createArgs = createAgentSessionMock.mock.calls[0][0];
-    expect(createArgs.tools).toEqual([wrappedBuiltin]);
-    expect(createArgs.customTools).toEqual([wrappedCustom, wrappedBuiltin]);
+    });
   });
 
-  it("prefers last assistant snapshot text over concatenated intermediate deltas", async () => {
+  it("captures final assistant snapshot instead of intermediate deltas", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-exec-test-"));
     const agentDir = path.join(tempRoot, "alpha");
     fs.mkdirSync(agentDir, { recursive: true });
 
     let onEvent = null;
-    const fakeSession = {
+    const fakeRuntime = {
+      start: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      abort: vi.fn(async () => true),
       prompt: vi.fn(async () => {
         onEvent?.({
-          type: "message_update",
-          assistantMessageEvent: {
-            type: "text_delta",
-            delta: "让我先获取数据。",
-            partial: { content: [{ type: "text", text: "让我先获取数据。" }] },
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "让我先获取数据。" },
           },
-          message: { content: [{ type: "text", text: "让我先获取数据。" }] },
         });
         onEvent?.({
-          type: "message_update",
-          assistantMessageEvent: {
-            type: "done",
-            partial: { content: [{ type: "text", text: "最终结论：今天建议观望。" }] },
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "最终结论：今天建议观望。" }],
           },
-          message: { content: [{ type: "text", text: "最终结论：今天建议观望。" }] },
+        });
+        onEvent?.({
+          type: "result",
+          result: "最终结论：今天建议观望。",
         });
       }),
       subscribe: vi.fn((cb) => {
@@ -121,33 +87,37 @@ describe("runAgentSession sandboxed builtin tools", () => {
         return () => {};
       }),
       sessionManager: {
-        getSessionFile: () => null,
+        getSessionFile: () => "/tmp/fake.session.json",
+        getSessionId: () => "s1",
+        getCwd: () => "/workspace",
       },
+      _emit: vi.fn(),
     };
-    createAgentSessionMock.mockResolvedValue({ session: fakeSession });
+    runtimeCtorMock.mockImplementation(() => fakeRuntime);
 
     const agent = {
       agentDir,
       tools: [],
       personality: "personality",
       systemPrompt: "system",
-      config: { desk: { home_folder: "/workspace" } },
-    };
-    const ctx = {
-      resourceLoader: {},
-      authStorage: { id: "auth" },
-      modelRegistry: { id: "registry" },
-      buildTools: vi.fn(() => ({
-        tools: [],
-        customTools: [],
-      })),
-      resolveModel: vi.fn(() => ({ id: "test-model", contextWindow: 200_000 })),
-      getSkillsForAgent: vi.fn(() => []),
+      buildSystemAppendPrompt: () => "hanako append",
+      config: {
+        locale: "zh-CN",
+        desk: { home_folder: "/workspace" },
+        models: { overrides: null },
+      },
+      refreshSystemPrompt: vi.fn(),
     };
     const engine = {
       getAgent: vi.fn(() => agent),
-      createSessionContext: vi.fn(() => ctx),
       getHomeFolder: vi.fn(() => "/workspace"),
+      createSessionContext: vi.fn(() => ({
+        resolveModel: vi.fn(() => ({ id: "test-model", contextWindow: 200_000 })),
+      })),
+      getAgentPermissionConfig: vi.fn(() => ({
+        sandbox: { mode: "standard", path_rules: [] },
+        tools: { builtin_enabled: ["read", "grep"], custom_enabled: [] },
+      })),
       setSessionPendingImages: vi.fn(),
       clearSessionPendingImages: vi.fn(),
     };
@@ -159,6 +129,10 @@ describe("runAgentSession sandboxed builtin tools", () => {
         { engine },
       );
       expect(text).toBe("最终结论：今天建议观望。");
+      expect(createSessionMetadataMock).toHaveBeenCalledTimes(1);
+      expect(buildClaudeRuntimeConfigMock).toHaveBeenCalledTimes(1);
+      expect(fakeRuntime.start).toHaveBeenCalledTimes(1);
+      expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

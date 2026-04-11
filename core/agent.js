@@ -31,7 +31,7 @@ import { createClaudeCoreTool } from "../lib/tools/claude-core-tool.js";
 import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
 import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
-import { formatSkillsForPrompt } from "@mariozechner/pi-coding-agent";
+import { formatSkillsForPrompt } from "./skill-loader.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { t } from "../server/i18n.js";
 
@@ -631,8 +631,8 @@ export class Agent {
     return fill(raw);
   }
 
-  /** 组装 system prompt */
-  buildSystemPrompt() {
+  /** 组装附加到 Claude Code preset 后面的 Hanako append prompt */
+  buildSystemAppendPrompt() {
     const isZh = String(this._config.locale || "").startsWith("zh");
     const agentId = path.basename(this.agentDir || "");
 
@@ -826,5 +826,19 @@ export class Agent {
       : "Your day starts at 4:00 AM. Conversations before 4:00 AM belong to the previous day.");
 
     return parts.join("\n");
+  }
+
+  /** 向后兼容：旧路径仍返回完整 Hanako prompt 字符串 */
+  buildSystemPrompt() {
+    return this.buildSystemAppendPrompt();
+  }
+
+  /** Claude Agent SDK 专用 systemPrompt 配置 */
+  getClaudeSystemPromptConfig() {
+    return {
+      type: "preset",
+      preset: "claude_code",
+      append: this.buildSystemAppendPrompt(),
+    };
   }
 }

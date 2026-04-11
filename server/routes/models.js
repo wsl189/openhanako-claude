@@ -1,11 +1,24 @@
 /**
  * 模型管理 REST 路由
  */
-import { supportsXhigh } from "@mariozechner/pi-ai";
 import { t } from "../i18n.js";
 import { createRequire } from "module";
 const _require = createRequire(import.meta.url);
 const _knownModels = _require("../../lib/known-models.json");
+
+function isModelSwitchConflict(err) {
+  const message = String(err?.message || "");
+  return message === t("error.modelSwitchBusy")
+    || message.includes("already running a turn")
+    || message.includes("already compacting");
+}
+
+function supportsXhigh(model) {
+  if (!model || typeof model !== "object") return false;
+  if (model.xhigh === true || model.supportsXhigh === true) return true;
+  const id = String(model.id || "").toLowerCase();
+  return id.includes("opus-4-6") || id.includes("gpt-5.4") || id.includes("gpt-5.3-codex") || id.includes("gpt-5.2");
+}
 
 /** 查询模型显示名：overrides > SDK name > known-models > id */
 function resolveModelName(id, sdkName, overrides) {
@@ -15,7 +28,43 @@ function resolveModelName(id, sdkName, overrides) {
   return sdkName || id;
 }
 
+function resolveModelRef(modelRef, availableModels, modelCatalog) {
+  const ref = String(modelRef || "").trim();
+  if (!ref) return null;
+
+  const direct = availableModels.find((model) => {
+    if (model.id === ref) return true;
+    return !!(model.provider && `${model.provider}/${model.id}` === ref);
+  });
+  if (direct) return direct;
+
+  const entry = modelCatalog?.resolve?.(ref);
+  if (!entry) return null;
+
+  return (
+    availableModels.find((model) => model.id === entry.modelId && model.provider === entry.providerId)
+    || modelCatalog.toSdkEntry(entry)
+  );
+}
+
+function isCurrentModelRef(modelRef, currentModel, modelCatalog) {
+  if (!currentModel) return false;
+  const ref = String(modelRef || "").trim();
+  if (!ref) return false;
+
+  if (ref === currentModel.id) return true;
+  if (currentModel.provider && ref === `${currentModel.provider}/${currentModel.id}`) return true;
+
+  const currentKey = currentModel.provider
+    ? `${currentModel.provider}/${currentModel.id}`
+    : currentModel.id;
+  const currentEntry = modelCatalog?.resolve?.(currentKey);
+  const refEntry = modelCatalog?.resolve?.(ref);
+  return !!(currentEntry && refEntry && currentEntry.key === refEntry.key);
+}
+
 export default async function modelsRoute(app, { engine }) {
+  const modelCatalog = engine._models?.modelCatalog || null;
 
   // 列出可用模型
   app.get("/api/models", async (req, reply) => {
@@ -25,9 +74,14 @@ export default async function modelsRoute(app, { engine }) {
         id: m.id,
         name: resolveModelName(m.id, m.name, overrides),
         provider: m.provider,
-        isCurrent: m.id === engine.currentModel?.id,
+        isCurrent: isCurrentModelRef(m.provider ? `${m.provider}/${m.id}` : m.id, engine.currentModel, modelCatalog),
       }));
-      return { models, current: engine.currentModel?.id || null };
+      return {
+        models,
+        current: engine.currentModel
+          ? (engine.currentModel.provider ? `${engine.currentModel.provider}/${engine.currentModel.id}` : engine.currentModel.id)
+          : null,
+      };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
@@ -42,20 +96,25 @@ export default async function modelsRoute(app, { engine }) {
 
       const overrides = engine.config?.models?.overrides;
       const result = favorites.map(id => {
-        const m = available.find(am => am.id === id);
+        const m = resolveModelRef(id, available, modelCatalog);
         return {
           id,
           name: resolveModelName(id, m?.name, overrides),
           provider: m?.provider || "",
-          isCurrent: id === engine.currentModel?.id,
+          isCurrent: isCurrentModelRef(id, engine.currentModel, modelCatalog),
           reasoning: m ? !!m.reasoning : false,
           xhigh: m ? supportsXhigh(m) : false,
         };
       });
 
+      const current = favorites.find((id) => isCurrentModelRef(id, engine.currentModel, modelCatalog))
+        || (engine.currentModel
+          ? (engine.currentModel.provider ? `${engine.currentModel.provider}/${engine.currentModel.id}` : engine.currentModel.id)
+          : null);
+
       return {
         models: result,
-        current: engine.currentModel?.id || null,
+        current,
         hasFavorites: favorites.length > 0,
       };
     } catch (err) {
@@ -133,7 +192,7 @@ export default async function modelsRoute(app, { engine }) {
       await engine.setModel(modelId);
       return { ok: true, model: engine.currentModel?.name };
     } catch (err) {
-      reply.code(500);
+      reply.code(isModelSwitchConflict(err) ? 409 : 500);
       return { error: err.message };
     }
   });

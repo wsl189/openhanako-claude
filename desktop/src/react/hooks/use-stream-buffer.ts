@@ -8,26 +8,147 @@
  * app-ws-shim 直接调用 streamBufferManager.handle(msg)。
  */
 
-import type { ChatMessage, ContentBlock, ChatListItem } from '../stores/chat-types';
+import type { ChatMessage, ChatListItem, ContentBlock } from '../stores/chat-types';
 import { useStore } from '../stores';
 import { renderMarkdown } from '../utils/markdown';
+import { applyChatStreamLiveEvent, upsertCronConfirmation } from '../utils/chat-stream-reducer';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const FLUSH_INTERVAL = 200;
+// 更高刷新频率，让前端流式文字更接近连续输出观感
+const FLUSH_INTERVAL = 90;
+
+export function stripSdkDiagnosticLines(text: string): string {
+  return String(text || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .filter((line) => !line.includes('[ede_diagnostic]'))
+    .join('\n')
+    .replace(/^\n+/, '')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
+export function stripStreamToolMarkup(text: string): string {
+  return String(text || '')
+    .replace(/```[\s\S]*?(?:<assistant\b[^>]*\bto=|<tool_use\b|<minimax:tool_call\b|<function_calls\b)[\s\S]*?```/gi, ' ')
+    .replace(/```[\s\S]*?\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\][\s\S]*?```/gi, ' ')
+    .replace(/<assistant\b[^>]*\bto\s*=\s*(?:"[^"]+"|'[^']+'|“[^”]+”|‘[^’]+’|[^\s>]+)[^>]*>[\s\S]*?<\/assistant>\s*/gi, ' ')
+    .replace(/<tool_use\b[^>]*\bname\s*=\s*(?:"[^"]+"|'[^']+'|“[^”]+”|‘[^’]+’|[^\s>]+)[^>]*>[\s\S]*?<\/tool_use>\s*/gi, ' ')
+    .replace(/<minimax:tool_call\b[^>]*>[\s\S]*?<\/minimax:tool_call>\s*/gi, ' ')
+    .replace(/<function_calls\b[^>]*>[\s\S]*?<\/function_calls>\s*/gi, ' ')
+    .replace(/<\/?function_calls\b[^>]*>\s*/gi, ' ')
+    .replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>\s*/gi, ' ')
+    .replace(/<\/?parameter\b[^>]*>\s*/gi, ' ')
+    .replace(/<\/?invoke\b[^>]*>\s*/gi, ' ')
+    .replace(/\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]\s*/gi, ' ')
+    .replace(/\bto\s*=\s*[A-Za-z_][\w-]*\b/gi, ' ')
+    .replace(/\bcode omitted\b/gi, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n');
+}
 
 interface Buffer {
   sessionPath: string;
   textAcc: string;
+  textAnchorIndex: number | null;
   thinkingAcc: string;
+  hadThinking: boolean;
   xingAcc: string;
   xingTitle: string;
+  liveBlocks: ContentBlock[];
   inThinking: boolean;
   inXing: boolean;
   lastFlushTime: number;
   flushTimer: ReturnType<typeof setTimeout> | null;
   /** 当前 turn 是否已追加了空 assistant message */
   messageAppended: boolean;
+}
+
+function isReasoningLikeType(type: unknown): boolean {
+  const normalized = String(type || '').toLowerCase();
+  if (!normalized || normalized === 'text') return false;
+  return /(reason|think|analysis|commentary|summary)/.test(normalized);
+}
+
+function pickSnapshotText(block: any): string {
+  if (typeof block === 'string') return block;
+  if (!block || typeof block !== 'object') return '';
+  if (typeof block.text === 'string') return block.text;
+  if (typeof block.content === 'string') return block.content;
+  if (typeof block.reasoning === 'string') return block.reasoning;
+  if (typeof block.thinking === 'string') return block.thinking;
+  if (typeof block.output_text === 'string') return block.output_text;
+  return '';
+}
+
+function extractSnapshotTextContent(content: any[]): string {
+  let text = '';
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    if (block.type === 'tool_use') continue;
+    const part = pickSnapshotText(block);
+    if (!part) continue;
+    if (isReasoningLikeType(block.type)) continue;
+    text += part;
+  }
+  return text;
+}
+
+function extractSnapshotThinkingContent(content: any[]): string {
+  let thinking = '';
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const part = pickSnapshotText(block);
+    if (!part) continue;
+    if (block.type === 'thinking' || isReasoningLikeType(block.type)) {
+      thinking += part;
+    }
+  }
+  return thinking;
+}
+
+function extractSnapshotToolUses(content: any[]): Array<{ id: string; name: string; args?: Record<string, unknown> }> {
+  const out: Array<{ id: string; name: string; args?: Record<string, unknown> }> = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    if (block.type !== 'tool_use' || !block.id) continue;
+    out.push({
+      id: String(block.id),
+      name: String(block.name || ''),
+      args: (block.input && typeof block.input === 'object') ? block.input : undefined,
+    });
+  }
+  return out;
+}
+
+function hasRenderableAssistantSnapshot(content: any[]): boolean {
+  if (!Array.isArray(content) || content.length === 0) return false;
+  if (extractSnapshotToolUses(content).length > 0) return true;
+  if (stripSdkDiagnosticLines(extractSnapshotTextContent(content)).trim()) return true;
+  if (stripSdkDiagnosticLines(extractSnapshotThinkingContent(content)).trim()) return true;
+  return false;
+}
+
+function extractSdkToolResults(content: any[]): Array<{ toolCallId: string; success: boolean }> {
+  const out: Array<{ toolCallId: string; success: boolean }> = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    if (block.type !== 'tool_result' || !block.tool_use_id) continue;
+    out.push({
+      toolCallId: String(block.tool_use_id),
+      success: block.is_error !== true,
+    });
+  }
+  return out;
+}
+
+function mergeSnapshotText(acc: string, snapshotText: string): string {
+  if (!snapshotText) return acc;
+  if (!acc) return snapshotText;
+  if (snapshotText.startsWith(acc)) return snapshotText;
+  if (acc.startsWith(snapshotText)) return acc;
+  return mergeDelta(acc, snapshotText);
 }
 
 export function mergeDelta(acc: string, rawDelta: unknown): string {
@@ -51,100 +172,112 @@ export function mergeDelta(acc: string, rawDelta: unknown): string {
   return acc + delta;
 }
 
-type CronConfirmStatus = 'pending' | 'approved' | 'rejected';
-type CronConfirmBlock = Extract<ContentBlock, { type: 'cron_confirm' }>;
+function maybeApproveCronCard(blocks: ContentBlock[], msg: any): ContentBlock[] {
+  if (msg.name !== 'cron' || !msg.success || msg.details?.action !== 'added') return blocks;
 
-function normalizeCronEverySchedule(raw: unknown): string {
-  const toMinutes = (value: number): number => {
-    if (!Number.isFinite(value) || value <= 0) return 1;
-    // 兼容旧数据：小于 1000 的数字按“分钟数”理解。
-    if (value < 1000) return Math.max(1, Math.round(value));
-    return Math.max(1, Math.round(value / 60000));
+  const job = (msg.details?.job || {}) as Record<string, unknown>;
+  const jobData = {
+    type: String(job.type || msg.args?.type || ''),
+    schedule: job.schedule ?? msg.args?.schedule,
+    prompt: String(job.prompt || msg.args?.prompt || ''),
+    label: String(job.label || msg.args?.label || ''),
   };
 
-  if (typeof raw === 'number') return `every:${toMinutes(raw)}m`;
-  const text = String(raw ?? '').trim();
-  if (!text) return '';
-  if (/^\d+$/.test(text)) return `every:${toMinutes(parseInt(text, 10))}m`;
-  const cronEveryMin = text.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
-  if (cronEveryMin?.[1]) return `every:${Math.max(1, parseInt(cronEveryMin[1], 10))}m`;
-  return text;
-}
-
-function normalizeCronJobIdentity(jobData: Record<string, unknown> | undefined) {
-  const type = String(jobData?.type ?? '').trim().toLowerCase();
-  const prompt = String(jobData?.prompt ?? '').trim();
-  const label = String(jobData?.label ?? '').trim();
-  const scheduleRaw = jobData?.schedule;
-  const schedule = type === 'every'
-    ? normalizeCronEverySchedule(scheduleRaw)
-    : String(scheduleRaw ?? '').trim();
-  return {
-    type,
-    schedule,
-    // prompt 优先作为身份键，避免 label 在默认补全时造成误判。
-    identityText: prompt || label,
-  };
-}
-
-function sameCronJob(
-  a: Record<string, unknown> | undefined,
-  b: Record<string, unknown> | undefined,
-): boolean {
-  if (!a || !b) return false;
-  const na = normalizeCronJobIdentity(a);
-  const nb = normalizeCronJobIdentity(b);
-  if (!na.type || !nb.type || na.type !== nb.type) return false;
-  if (!na.schedule || !nb.schedule || na.schedule !== nb.schedule) return false;
-  if (na.identityText && nb.identityText) return na.identityText === nb.identityText;
-  return true;
-}
-
-function findCronCardIndex(
-  blocks: ContentBlock[],
-  params: { confirmId?: string; jobData?: Record<string, unknown> },
-): number {
-  if (params.confirmId) {
-    const idx = blocks.findIndex(
-      (b: any) => b.type === 'cron_confirm' && b.confirmId === params.confirmId,
-    );
-    if (idx >= 0) return idx;
-  }
-  return blocks.findIndex(
-    (b: any) => b.type === 'cron_confirm' && sameCronJob(b.jobData, params.jobData),
-  );
-}
-
-function mergeCronCard(
-  current: CronConfirmBlock,
-  incoming: CronConfirmBlock,
-): CronConfirmBlock {
-  const mergedStatus: CronConfirmStatus =
-    current.status !== 'pending' && incoming.status === 'pending'
-      ? current.status
-      : incoming.status;
-
-  return {
-    ...current,
-    confirmId: incoming.confirmId || current.confirmId,
-    jobData: { ...(current.jobData || {}), ...(incoming.jobData || {}) },
-    status: mergedStatus,
-  };
+  return upsertCronConfirmation(blocks, {
+    confirmId: undefined,
+    jobData,
+    status: 'approved',
+  });
 }
 
 function createBuffer(sessionPath: string): Buffer {
   return {
     sessionPath,
     textAcc: '',
+    textAnchorIndex: null,
     thinkingAcc: '',
+    hadThinking: false,
     xingAcc: '',
     xingTitle: '',
+    liveBlocks: [],
     inThinking: false,
     inXing: false,
     lastFlushTime: 0,
     flushTimer: null,
     messageAppended: false,
   };
+}
+
+function hasBufferedRenderableState(buf: Buffer): boolean {
+  const hasText = !!String(buf.textAcc || '').trim();
+  const hasThinking = !!String(buf.thinkingAcc || '').trim();
+  const hasXing = !!String(buf.xingAcc || '').trim();
+  return !!(
+    hasText
+    || hasThinking
+    || buf.hadThinking
+    || hasXing
+    || buf.liveBlocks.length > 0
+    || buf.inThinking
+    || buf.inXing
+  );
+}
+
+function hasRenderableTextHtml(html: string): boolean {
+  const plain = String(html || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return !!plain;
+}
+
+function sanitizeBufferedStreamText(text: string): string {
+  return stripStreamToolMarkup(stripSdkDiagnosticLines(text))
+    .replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
+}
+
+function buildTextBlockFromBufferedText(text: string): Extract<ContentBlock, { type: 'text' }> | null {
+  const displayText = sanitizeBufferedStreamText(text);
+  if (!displayText.trim()) return null;
+  return { type: 'text', html: renderMarkdown(displayText) };
+}
+
+function finalizeBufferedTextSegment(buf: Buffer): void {
+  if (!buf.textAcc) {
+    buf.textAnchorIndex = null;
+    return;
+  }
+  const block = buildTextBlockFromBufferedText(buf.textAcc);
+  const anchor = buf.textAnchorIndex;
+  buf.textAcc = '';
+  buf.textAnchorIndex = null;
+  if (!block) return;
+
+  const insertAt = Number.isInteger(anchor)
+    ? Math.max(0, Math.min(Number(anchor), buf.liveBlocks.length))
+    : buf.liveBlocks.length;
+  buf.liveBlocks = [
+    ...buf.liveBlocks.slice(0, insertAt),
+    block,
+    ...buf.liveBlocks.slice(insertAt),
+  ];
+}
+
+function isRenderableBlock(block: ContentBlock): boolean {
+  if (!block) return false;
+  switch (block.type) {
+    case 'text':
+      return hasRenderableTextHtml(block.html);
+    case 'thinking':
+      return !!String(block.content || '').trim();
+    case 'xing':
+      return !!String(block.content || '').trim();
+    case 'tool_group':
+      return Array.isArray(block.tools) && block.tools.length > 0;
+    default:
+      return true;
+  }
 }
 
 class StreamBufferManager {
@@ -163,7 +296,6 @@ class StreamBufferManager {
   /** 确保 store 中已为该 session 追加了一条空 assistant message */
   private ensureMessage(buf: Buffer): void {
     if (buf.messageAppended) return;
-    buf.messageAppended = true;
 
     const store = useStore.getState();
     const session = store.chatSessions[buf.sessionPath];
@@ -172,6 +304,7 @@ class StreamBufferManager {
     const id = `stream-${Date.now()}`;
     const msg: ChatMessage = { id, role: 'assistant', blocks: [] };
     store.appendItem(buf.sessionPath, { type: 'message', data: msg });
+    buf.messageAppended = true;
   }
 
   /** 调度节流 flush */
@@ -187,8 +320,32 @@ class StreamBufferManager {
     }
   }
 
+  private dropTrailingEmptyAssistantMessage(sessionPath: string): void {
+    useStore.setState((state: any) => {
+      const session = state.chatSessions?.[sessionPath];
+      if (!session || !Array.isArray(session.items) || session.items.length === 0) return {};
+      const items: ChatListItem[] = session.items;
+      const last = items[items.length - 1];
+      if (!last || last.type !== 'message' || last.data.role !== 'assistant') return {};
+      const blocks = Array.isArray(last.data.blocks) ? last.data.blocks : [];
+      if (blocks.some((block) => isRenderableBlock(block))) return {};
+      return {
+        chatSessions: {
+          ...state.chatSessions,
+          [sessionPath]: {
+            ...session,
+            items: items.slice(0, -1),
+          },
+        },
+      };
+    });
+  }
+
   /** 把 buffer 中累积的内容一次性 flush 到 Zustand */
   private flush(buf: Buffer): void {
+    // 防止“空 buffer”把上一条消息 blocks 覆盖成 []。
+    if (!hasBufferedRenderableState(buf)) return;
+
     buf.lastFlushTime = Date.now();
     if (buf.flushTimer) {
       clearTimeout(buf.flushTimer);
@@ -197,44 +354,43 @@ class StreamBufferManager {
 
     const store = useStore.getState();
     store.updateLastMessage(buf.sessionPath, (msg) => {
-      const blocks = [...(msg.blocks || [])];
+      const blocks: ContentBlock[] = [];
 
       // ── Thinking ──
-      if (buf.thinkingAcc || buf.inThinking) {
-        const idx = blocks.findIndex(b => b.type === 'thinking');
+      const shouldKeepThinkingShell = buf.hadThinking && !buf.textAcc && !buf.xingAcc && buf.liveBlocks.length === 0;
+      if (buf.thinkingAcc || buf.inThinking || shouldKeepThinkingShell) {
         const thinkingBlock: ContentBlock = {
           type: 'thinking',
           content: buf.thinkingAcc,
           sealed: !buf.inThinking,
         };
-        if (idx >= 0) blocks[idx] = thinkingBlock;
-        else blocks.unshift(thinkingBlock); // thinking 在最前面
+        blocks.push(thinkingBlock);
       }
 
-      // ── Text ──
+      // ── Ordered content (text + tools + files + artifacts ...) ──
+      const orderedLiveBlocks = [...buf.liveBlocks];
       if (buf.textAcc) {
-        const displayText = buf.textAcc.replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
-        const html = renderMarkdown(displayText);
-        const idx = blocks.findIndex(b => b.type === 'text');
-        if (idx >= 0) {
-          blocks[idx] = { type: 'text', html };
-        } else {
-          blocks.push({ type: 'text', html });
+        const currentTextBlock = buildTextBlockFromBufferedText(buf.textAcc);
+        if (currentTextBlock) {
+          const insertAt = Number.isInteger(buf.textAnchorIndex)
+            ? Math.max(0, Math.min(Number(buf.textAnchorIndex), orderedLiveBlocks.length))
+            : orderedLiveBlocks.length;
+          orderedLiveBlocks.splice(insertAt, 0, currentTextBlock);
         }
       }
 
       // ── Xing ──
       if (buf.xingAcc || buf.inXing) {
-        const idx = blocks.findIndex(b => b.type === 'xing');
         const xingBlock: ContentBlock = {
           type: 'xing',
           title: buf.xingTitle,
           content: buf.xingAcc,
           sealed: !buf.inXing,
         };
-        if (idx >= 0) blocks[idx] = xingBlock;
-        else blocks.push(xingBlock);
+        blocks.push(xingBlock);
       }
+
+      blocks.push(...orderedLiveBlocks);
 
       return { ...msg, blocks };
     });
@@ -248,20 +404,118 @@ class StreamBufferManager {
     const buf = this.getBuffer(sessionPath);
 
     switch (msg.type) {
+      case 'sdk_message': {
+        const role = String(msg.message?.role || '');
+        const content = Array.isArray(msg.message?.content) ? msg.message.content : [];
+        if (role === 'assistant') {
+          if (!hasRenderableAssistantSnapshot(content) && !buf.messageAppended) break;
+          this.ensureMessage(buf);
+          const snapshotThinking = stripSdkDiagnosticLines(extractSnapshotThinkingContent(content));
+          if (snapshotThinking) {
+            buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, snapshotThinking);
+            buf.hadThinking = true;
+          } else if (!buf.inThinking) {
+            buf.thinkingAcc = '';
+          }
+
+          const snapshotText = stripSdkDiagnosticLines(extractSnapshotTextContent(content));
+          if (snapshotText) {
+            if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
+            buf.textAcc = mergeSnapshotText(buf.textAcc, snapshotText);
+          }
+
+          const toolUses = extractSnapshotToolUses(content);
+          if (toolUses.length > 0) {
+            finalizeBufferedTextSegment(buf);
+          }
+          for (const toolUse of toolUses) {
+            buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
+              type: 'tool_start',
+              name: toolUse.name,
+              toolCallId: toolUse.id,
+              args: toolUse.args,
+            });
+          }
+        } else if (role === 'user') {
+          const toolResults = extractSdkToolResults(content);
+          if (toolResults.length === 0 && !buf.messageAppended) break;
+          if (toolResults.length > 0) {
+            finalizeBufferedTextSegment(buf);
+          }
+          let nextLiveBlocks = buf.liveBlocks;
+          for (const toolResult of toolResults) {
+            nextLiveBlocks = applyChatStreamLiveEvent(nextLiveBlocks, {
+              type: 'tool_end',
+              toolCallId: toolResult.toolCallId,
+              success: toolResult.success,
+            });
+          }
+          const applied = nextLiveBlocks !== buf.liveBlocks;
+          if (!applied && !buf.messageAppended) break;
+          this.ensureMessage(buf);
+          buf.liveBlocks = nextLiveBlocks;
+        }
+        this.scheduleFlush(buf);
+        break;
+      }
+
+      case 'assistant_snapshot': {
+        const content = Array.isArray(msg.content) ? msg.content : [];
+        if (!hasRenderableAssistantSnapshot(content) && !buf.messageAppended) break;
+        this.ensureMessage(buf);
+
+        const snapshotThinking = stripSdkDiagnosticLines(extractSnapshotThinkingContent(content));
+        if (snapshotThinking) {
+          buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, snapshotThinking);
+          buf.hadThinking = true;
+        } else if (!buf.inThinking) {
+          buf.thinkingAcc = '';
+        }
+
+        const snapshotText = stripSdkDiagnosticLines(extractSnapshotTextContent(content));
+        if (snapshotText) {
+          if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
+          buf.textAcc = mergeSnapshotText(buf.textAcc, snapshotText);
+        }
+
+        const toolUses = extractSnapshotToolUses(content);
+        if (toolUses.length > 0) {
+          finalizeBufferedTextSegment(buf);
+        }
+        for (const toolUse of toolUses) {
+          buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
+            type: 'tool_start',
+            name: toolUse.name,
+            toolCallId: toolUse.id,
+            args: toolUse.args,
+          });
+        }
+
+        this.scheduleFlush(buf);
+        break;
+      }
+
       case 'text_delta':
         this.ensureMessage(buf);
-        buf.textAcc += msg.delta || '';
+        if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
+        buf.textAcc = mergeDelta(
+          buf.textAcc,
+          stripSdkDiagnosticLines(msg.delta || ''),
+        );
         this.scheduleFlush(buf);
         break;
 
       case 'thinking_start':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
         buf.inThinking = true;
+        buf.hadThinking = true;
         buf.thinkingAcc = '';
         this.flush(buf);
         break;
 
       case 'thinking_delta':
+        if (msg.delta) buf.hadThinking = true;
         buf.thinkingAcc = mergeDelta(buf.thinkingAcc, msg.delta);
         // thinking 内容不频繁 flush，等 end 或下一个 text_delta
         break;
@@ -272,6 +526,7 @@ class StreamBufferManager {
         break;
 
       case 'xing_start':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
         buf.inXing = true;
         buf.xingAcc = '';
@@ -289,176 +544,65 @@ class StreamBufferManager {
         break;
 
       case 'tool_start':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
-        // 工具事件频率低，直接写 store
-        this.flush(buf); // 先 flush 文本
-        useStore.getState().updateLastMessage(sessionPath, (m) => {
-          const blocks = [...(m.blocks || [])];
-          // 找最后一个 tool_group 或创建新的
-          let lastTg = blocks.length - 1;
-          while (lastTg >= 0 && blocks[lastTg].type !== 'tool_group') lastTg--;
-          if (lastTg >= 0 && blocks[lastTg].type === 'tool_group') {
-            const tg = blocks[lastTg] as Extract<ContentBlock, { type: 'tool_group' }>;
-            // 如果上一个 group 里还有未完成的工具，追加到同一个 group
-            if (tg.tools.some(t => !t.done)) {
-              blocks[lastTg] = {
-                ...tg,
-                tools: [...tg.tools, { name: msg.name, args: msg.args, done: false, success: false }],
-              };
-              return { ...m, blocks };
-            }
-          }
-          // 新建 tool_group
-          blocks.push({
-            type: 'tool_group',
-            tools: [{ name: msg.name, args: msg.args, done: false, success: false }],
-            collapsed: false,
-          });
-          return { ...m, blocks };
-        });
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
+        this.flush(buf);
         break;
 
       case 'tool_end':
-        useStore.getState().updateLastMessage(sessionPath, (m) => {
-          const blocks = [...(m.blocks || [])];
-          let updatedTool = false;
-          // 从后往前找含该 tool 名且未 done 的
-          for (let i = blocks.length - 1; i >= 0; i--) {
-            if (blocks[i].type !== 'tool_group') continue;
-            const tg = blocks[i] as Extract<ContentBlock, { type: 'tool_group' }>;
-            const toolIdx = tg.tools.findIndex(t => t.name === msg.name && !t.done);
-            if (toolIdx >= 0) {
-              const tools = [...tg.tools];
-              const mergedArgs = (() => {
-                const currentArgs = tools[toolIdx].args;
-                if (!msg.args || typeof msg.args !== 'object') return currentArgs;
-                if (!currentArgs || typeof currentArgs !== 'object') return msg.args;
-                return { ...currentArgs, ...msg.args };
-              })();
-              tools[toolIdx] = { ...tools[toolIdx], args: mergedArgs, done: true, success: !!msg.success };
-              const allDone = tools.every(t => t.done);
-              blocks[i] = { ...tg, tools, collapsed: allDone && tools.length > 1 };
-              updatedTool = true;
-              break;
-            }
-          }
-
-          // cron add 成功后，实时补上“已创建”卡片（覆盖免确认场景）
-          if (msg.name === 'cron' && msg.success && msg.details?.action === 'added') {
-            const job = (msg.details?.job || {}) as Record<string, unknown>;
-            const jobData = {
-              type: String(job.type || msg.args?.type || ''),
-              schedule: job.schedule ?? msg.args?.schedule,
-              prompt: String(job.prompt || msg.args?.prompt || ''),
-              label: String(job.label || msg.args?.label || ''),
-            };
-            const existingIdx = findCronCardIndex(blocks, { jobData });
-            if (existingIdx >= 0) {
-              const card = blocks[existingIdx] as CronConfirmBlock;
-              blocks[existingIdx] = mergeCronCard(card, {
-                type: 'cron_confirm',
-                confirmId: card.confirmId,
-                jobData,
-                status: 'approved',
-              });
-            } else {
-              blocks.push({ type: 'cron_confirm', jobData, status: 'approved' as const } as any);
-            }
-            return { ...m, blocks };
-          }
-
-          return updatedTool ? { ...m, blocks } : m;
-        });
+        finalizeBufferedTextSegment(buf);
+        {
+          const nextLiveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
+          const applied = nextLiveBlocks !== buf.liveBlocks;
+          if (!applied && !buf.messageAppended) break;
+          this.ensureMessage(buf);
+          buf.liveBlocks = nextLiveBlocks;
+        }
+        buf.liveBlocks = maybeApproveCronCard(buf.liveBlocks, msg);
+        this.flush(buf);
         break;
 
       case 'file_output':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
         this.flush(buf);
-        useStore.getState().updateLastMessage(sessionPath, (m) => ({
-          ...m,
-          blocks: [...(m.blocks || []), { type: 'file_output', filePath: msg.filePath, label: msg.label, ext: msg.ext }],
-        }));
         break;
 
       case 'artifact':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
         this.flush(buf);
-        useStore.getState().updateLastMessage(sessionPath, (m) => ({
-          ...m,
-          blocks: [...(m.blocks || []), {
-            type: 'artifact',
-            artifactId: msg.artifactId || msg.id,
-            artifactType: msg.artifactType || msg.type,
-            title: msg.title || '',
-            content: msg.content || '',
-            language: msg.language,
-          }],
-        }));
         break;
 
       case 'browser_screenshot':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
         this.flush(buf);
-        useStore.getState().updateLastMessage(sessionPath, (m) => ({
-          ...m,
-          blocks: [...(m.blocks || []), { type: 'browser_screenshot', base64: msg.base64, mimeType: msg.mimeType }],
-        }));
         break;
 
       case 'skill_activated':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
         this.flush(buf);
-        useStore.getState().updateLastMessage(sessionPath, (m) => ({
-          ...m,
-          blocks: [...(m.blocks || []), { type: 'skill', skillName: msg.skillName, skillFilePath: msg.skillFilePath }],
-        }));
         break;
 
       case 'cron_confirmation':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
         this.flush(buf);
-        useStore.getState().updateLastMessage(sessionPath, (m) => {
-          const blocks = [...(m.blocks || [])];
-          const incoming: CronConfirmBlock = {
-            type: 'cron_confirm' as const,
-            confirmId: msg.confirmId,
-            jobData: (msg.jobData || {}) as Record<string, unknown>,
-            status: 'pending' as const,
-          };
-          const existingIdx = findCronCardIndex(blocks, {
-            confirmId: msg.confirmId,
-            jobData: msg.jobData,
-          });
-          if (existingIdx >= 0) {
-            const card = blocks[existingIdx] as CronConfirmBlock;
-            blocks[existingIdx] = mergeCronCard(card, incoming);
-          } else {
-            blocks.push(incoming);
-          }
-          return { ...m, blocks };
-        });
         break;
 
       case 'settings_confirmation':
+        finalizeBufferedTextSegment(buf);
         this.ensureMessage(buf);
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
         this.flush(buf);
-        useStore.getState().updateLastMessage(sessionPath, (m) => ({
-          ...m,
-          blocks: [...(m.blocks || []), {
-            type: 'settings_confirm' as const,
-            confirmId: msg.confirmId,
-            settingKey: msg.settingKey,
-            cardType: msg.cardType,
-            currentValue: msg.currentValue,
-            proposedValue: msg.proposedValue,
-            options: msg.options,
-            optionLabels: msg.optionLabels,
-            label: msg.label,
-            description: msg.description,
-            frontend: msg.frontend,
-            status: 'pending' as const,
-          }],
-        }));
         break;
 
       case 'compaction_start':
@@ -481,11 +625,19 @@ class StreamBufferManager {
         break;
 
       case 'turn_end':
-        this.flush(buf);
+        buf.textAcc = stripStreamToolMarkup(stripSdkDiagnosticLines(buf.textAcc));
+        if (hasBufferedRenderableState(buf)) {
+          this.flush(buf);
+        } else if (buf.messageAppended) {
+          this.dropTrailingEmptyAssistantMessage(sessionPath);
+        }
         // 清理 buffer
         buf.textAcc = '';
+        buf.textAnchorIndex = null;
         buf.thinkingAcc = '';
+        buf.hadThinking = false;
         buf.xingAcc = '';
+        buf.liveBlocks = [];
         buf.inThinking = false;
         buf.inXing = false;
         buf.messageAppended = false;

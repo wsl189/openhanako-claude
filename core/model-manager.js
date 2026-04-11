@@ -1,7 +1,7 @@
 /**
  * ModelManager — 模型发现、切换、凭证解析
  *
- * 管理 Pi SDK AuthStorage / ModelRegistry 基础设施，
+ * 管理 Hanako AuthStorage / ModelRegistry 适配层，
  * 以及模型选择、provider 凭证查找、utility 配置解析。
  * 从 Engine 提取，Engine 通过 manager 访问模型状态。
  *
@@ -9,21 +9,24 @@
  * 四个新模块通过 init() 后挂载到实例，旧接口保持向后兼容。
  */
 import path from "path";
-import {
-  AuthStorage,
-  ModelRegistry,
-} from "@mariozechner/pi-coding-agent";
-import { registerOAuthProvider } from "@mariozechner/pi-ai/oauth";
-import { minimaxOAuthProvider } from "../lib/oauth/minimax-portal.js";
 import { clearConfigCache, loadGlobalProviders } from "../lib/memory/config-loader.js";
 import { t } from "../server/i18n.js";
 import { ProviderRegistry } from "./provider-registry.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { AuthStore } from "./auth-store.js";
 import { ExecutionRouter } from "./execution-router.js";
+import { SimpleAuthStorage } from "./simple-auth-storage.js";
+import { SimpleModelRegistry } from "./simple-model-registry.js";
 
 function isLocalBaseUrl(url) {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(String(url || ""));
+}
+
+function normalizeAnthropicThinkingModelId(modelId, api) {
+  const raw = String(modelId || "").trim();
+  if (api !== "anthropic-messages") return raw;
+  if (!raw.startsWith("claude-")) return raw;
+  return raw.replace(/-thinking$/i, "");
 }
 
 export class ModelManager {
@@ -48,19 +51,20 @@ export class ModelManager {
 
   /** 初始化 AuthStorage + ModelRegistry + 新架构模块 */
   init() {
-    this._authStorage = AuthStorage.create(path.join(this._hanakoHome, "auth.json"));
-    registerOAuthProvider(minimaxOAuthProvider);
-    this._modelRegistry = new ModelRegistry(
-      this._authStorage,
-      path.join(this._hanakoHome, "models.json"),
-    );
-
-    // v2 模块初始化
     this.providerRegistry.reload();
     this.modelCatalog = new ModelCatalog(this.providerRegistry, this.modelsJsonPath);
     this.authStore = new AuthStore(this._hanakoHome, this.providerRegistry);
     this.authStore.load();
     this.executionRouter = new ExecutionRouter(this.modelCatalog, this.authStore);
+    this._authStorage = new SimpleAuthStorage({
+      authJsonPath: this.authJsonPath,
+      providerRegistry: this.providerRegistry,
+    });
+    this._modelRegistry = new SimpleModelRegistry({
+      providerRegistry: this.providerRegistry,
+      modelCatalog: this.modelCatalog,
+      authStore: this.authStore,
+    });
   }
 
   // ── Getters ──
@@ -80,20 +84,16 @@ export class ModelManager {
 
   /** 刷新可用模型列表 */
   async refreshAvailable() {
-    this._availableModels = await this._modelRegistry.getAvailable();
-    this._injectOAuthCustomModels();
-    // v2：同步刷新 ModelCatalog + builtinModels 回灌
     if (this.modelCatalog) {
       await this.modelCatalog.build();
       const oauthCustom = this._prefs?.getOAuthCustomModels?.() || {};
       this.modelCatalog.injectOAuthCustomModels(oauthCustom);
-      this.authStore?.load();
-      // 用 ModelCatalog（含 known-models.json 元数据）修正 _availableModels 中的 contextWindow
-      // 供应商 /v1/models 返回的 context_length 经常不准确
-      this._enrichFromCatalog();
-      // 将 Catalog 中有但 _availableModels 没有的 builtinModels 回灌
-      this._mergeBuiltinModels();
     }
+    this.authStore?.load();
+    this._availableModels = await this._modelRegistry.getAvailable();
+    this._injectOAuthCustomModels();
+    this._enrichFromCatalog();
+    this._mergeBuiltinModels();
     return this._availableModels;
   }
 
@@ -185,23 +185,19 @@ export class ModelManager {
       sharedModels,
       authJsonPath: authJsonPath || this.authJsonPath,
     });
-    if (synced) {
+   if (synced) {
       clearConfigCache();
-      this._modelRegistry.refresh();
-      // refresh() 内部调 resetOAuthProviders()，需要重新注册
-      registerOAuthProvider(minimaxOAuthProvider);
-      this._availableModels = await this._modelRegistry.getAvailable();
-      this._injectOAuthCustomModels();
-      // v2：同步刷新 ModelCatalog + AuthStore（和 refreshAvailable 保持一致）
       if (this.modelCatalog) {
         await this.modelCatalog.refresh();
         const oauthCustom = this._prefs?.getOAuthCustomModels?.() || {};
         this.modelCatalog.injectOAuthCustomModels(oauthCustom);
-        this.authStore?.invalidate();
-        this.authStore?.load();
-        this._enrichFromCatalog();
-        this._mergeBuiltinModels();
       }
+      this.authStore?.invalidate();
+      this.authStore?.load();
+      this._availableModels = await this._modelRegistry.getAvailable();
+      this._injectOAuthCustomModels();
+      this._enrichFromCatalog();
+      this._mergeBuiltinModels();
     }
     return synced;
   }
@@ -211,8 +207,24 @@ export class ModelManager {
    * @returns {object} 新模型对象
    */
   setModel(modelId) {
-    const model = this._availableModels.find(m => m.id === modelId);
-    if (!model) throw new Error(t("error.modelNotFound", { id: modelId }));
+    const ref = String(modelId || "").trim();
+    if (!ref) throw new Error(t("error.modelNotFound", { id: modelId }));
+
+    let model = this._availableModels.find((m) => {
+      if (m.id === ref) return true;
+      return !!(m.provider && `${m.provider}/${m.id}` === ref);
+    });
+
+    if (!model && this.modelCatalog) {
+      const entry = this.modelCatalog.resolve(ref);
+      if (entry) {
+        model =
+          this._availableModels.find((m) => m.id === entry.modelId && m.provider === entry.providerId)
+          || this.modelCatalog.toSdkEntry(entry);
+      }
+    }
+
+    if (!model) throw new Error(t("error.modelNotFound", { id: ref }));
     this._sessionModel = model;
     return model;
   }
@@ -294,7 +306,7 @@ export class ModelManager {
       throw new Error(t("error.providerMissingCreds", { provider }));
     }
     return {
-      model: entry.id,
+      model: normalizeAnthropicThinkingModelId(entry.id, creds.api),
       provider,
       api: creds.api,
       api_key: creds.api_key,

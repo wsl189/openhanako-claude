@@ -100,13 +100,14 @@ function formatChannelTime(timestamp: string): string {
   if (!timestamp) return '';
   const parts = timestamp.split(' ');
   if (parts.length < 2) return timestamp;
+  const displayTime = parts[1].replace(/\.\d{1,3}$/, '');
 
   const today = new Date();
   const [y, mo, d] = parts[0].split('-').map(Number);
   const t = (window as any).t;
 
   if (y === today.getFullYear() && mo === today.getMonth() + 1 && d === today.getDate()) {
-    return parts[1];
+    return displayTime;
   }
   if (y === today.getFullYear() && mo === today.getMonth() + 1 && d === today.getDate() - 1) {
     return t('time.yesterday');

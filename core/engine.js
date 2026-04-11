@@ -14,9 +14,6 @@
  */
 import fs from "fs";
 import path from "path";
-import {
-  DefaultResourceLoader,
-} from "@mariozechner/pi-coding-agent";
 
 import { PreferencesManager } from "./preferences-manager.js";
 import { ModelManager } from "./model-manager.js";
@@ -33,11 +30,13 @@ import {
   summarizeActivityQuick as _summarizeActivityQuick,
 } from "./llm-utils.js";
 import { debugLog } from "../lib/debug-log.js";
-import { createSandboxedTools } from "../lib/sandbox/index.js";
 import { t } from "../server/i18n.js";
+import { SimpleResourceLoader } from "./skill-loader.js";
+import { CLAUDE_BUILTIN_TOOL_NAMES, HANAKO_TO_CLAUDE_BUILTIN } from "./claude-runtime-config.js";
+import { createSandboxedTools } from "../lib/sandbox/index.js";
 
-const REQUIRED_BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
-const OPTIONAL_BUILTIN_TOOLS = ["write", "edit", "bash"];
+const REQUIRED_BUILTIN_TOOLS = [];
+const OPTIONAL_BUILTIN_TOOLS = [...CLAUDE_BUILTIN_TOOL_NAMES];
 const ALL_BUILTIN_TOOL_NAMES = [...REQUIRED_BUILTIN_TOOLS, ...OPTIONAL_BUILTIN_TOOLS];
 const PATH_RULE_ACCESS = new Set(["read_only", "read_write"]);
 
@@ -51,6 +50,22 @@ function uniqStrings(list = []) {
     out.push(s);
   }
   return out;
+}
+
+function normalizeBuiltinToolNames(list = []) {
+  const normalized = [];
+  const seen = new Set();
+  for (const item of list) {
+    const raw = String(item || "").trim();
+    if (!raw) continue;
+    const next = ALL_BUILTIN_TOOL_NAMES.includes(raw)
+      ? raw
+      : HANAKO_TO_CLAUDE_BUILTIN[raw];
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    normalized.push(next);
+  }
+  return normalized;
 }
 
 export class HanaEngine {
@@ -152,15 +167,14 @@ export class HanaEngine {
       getAgentById: (id) => this._agentMgr.getAgent(id),
       getSkillsForAgent: (agent) => this._skills.getSkillsForAgent(agent),
       getModelManager: () => this._models,
-      getResourceLoader: () => this._resourceLoader,
       getPreferences: () => this._readPreferences(),
-      buildTools: (cwd, customTools, opts) => this.buildTools(cwd, customTools, opts),
+      getAgentPermissionConfig: (agentId) => this.getAgentPermissionConfig(agentId),
       getHomeCwd: () => this.homeCwd,
       setSessionPendingImages: (sessionPath, images) => this.setSessionPendingImages(sessionPath, images),
       clearSessionPendingImages: (sessionPath) => this.clearSessionPendingImages(sessionPath),
     });
 
-    // Pi SDK resources（init 时填充）
+    // Skill/resource loader（init 时填充）
     this._resourceLoader = null;
 
     // 事件系统
@@ -422,8 +436,8 @@ export class HanaEngine {
     // 0. Provider 迁移
     this._configCoord.migrateProvidersToGlobal(log);
 
-    // 1. Pi SDK + ModelCatalog（必须在 agent init 之前，agent 需要解析记忆模型）
-    log(`[init] 1/5 Pi SDK 初始化...`);
+    // 1. 模型目录 + 认证层（必须在 agent init 之前，agent 需要解析记忆模型）
+    log(`[init] 1/5 模型与认证初始化...`);
     this._models.init();
     this._models.setPreferences(this._prefs);
     await this._models.modelCatalog.build();
@@ -448,12 +462,8 @@ export class HanaEngine {
     fs.mkdirSync(skillsDir, { recursive: true });
 
     this._skills = new SkillManager({ skillsDir, agentsDir: this.agentsDir });
-    this._resourceLoader = new DefaultResourceLoader({
+    this._resourceLoader = new SimpleResourceLoader({
       systemPromptOverride: () => this.agent.systemPrompt,
-      agentsFilesOverride: () => ({ agentsFiles: [] }),
-      noExtensions: true,
-      noPromptTemplates: true,
-      noThemes: true,
       additionalSkillPaths: [skillsDir],
     });
     await this._resourceLoader.reload();
@@ -545,7 +555,7 @@ export class HanaEngine {
     return this.agent;
   }
 
-  _legacySandboxMode() {
+  _fallbackSandboxMode() {
     return this._readPreferences().sandbox === false ? "full-access" : "standard";
   }
 
@@ -579,15 +589,15 @@ export class HanaEngine {
   getAgentPermissionConfig(agentId = null) {
     const ag = agentId ? this.getAgent(agentId) : this.agent;
     const catalog = this.getToolCatalog(agentId);
-    const legacyMode = this._legacySandboxMode();
+    const fallbackMode = this._fallbackSandboxMode();
     const configuredMode = ag?.config?.sandbox?.mode;
     const mode = configuredMode === "full-access" || configuredMode === "standard" || configuredMode === "balanced"
       ? configuredMode
-      : legacyMode;
+      : fallbackMode;
     const pathRules = this._normalizePathRules(ag?.config?.sandbox?.path_rules);
 
     const hasBuiltinConfig = Array.isArray(ag?.config?.tools?.builtin_enabled);
-    const configuredBuiltin = uniqStrings(ag?.config?.tools?.builtin_enabled || []);
+    const configuredBuiltin = normalizeBuiltinToolNames(ag?.config?.tools?.builtin_enabled || []);
     const builtin_enabled = hasBuiltinConfig
       ? uniqStrings([...configuredBuiltin, ...REQUIRED_BUILTIN_TOOLS])
           .filter(n => ALL_BUILTIN_TOOL_NAMES.includes(n))
@@ -610,28 +620,23 @@ export class HanaEngine {
     const targetAgent = this._resolveAgentForToolBuild(opts);
     const ct = customTools || targetAgent.tools;
     const effectiveAgentDir = opts.agentDir || targetAgent.agentDir;
-    const effectiveWorkspace = opts.workspace !== undefined
-      ? opts.workspace
-      : this._configCoord.getHomeFolder(path.basename(effectiveAgentDir));
     const profile = this.getAgentPermissionConfig(path.basename(effectiveAgentDir));
-    const effectiveMode = opts.mode || profile.sandbox.mode;
+    const builtinEnabled = opts.noTools
+      ? []
+      : normalizeBuiltinToolNames(opts.builtinEnabledOverride || profile.tools.builtin_enabled || []);
+    const customEnabled = opts.noTools
+      ? []
+      : uniqStrings(opts.customEnabledOverride || profile.tools.custom_enabled || []);
+    const customSet = new Set(customEnabled);
 
-    const built = createSandboxedTools(cwd, ct, {
+    return createSandboxedTools(cwd, ct.filter(t => customSet.has(t?.name)), {
       agentDir: effectiveAgentDir,
-      workspace: effectiveWorkspace,
+      workspace: targetAgent?.config?.desk?.home_folder || this.homeCwd || cwd,
       hanakoHome: this.hanakoHome,
-      mode: effectiveMode,
-      pathRules: profile.sandbox.path_rules,
+      mode: profile?.sandbox?.mode || "standard",
+      pathRules: profile?.sandbox?.path_rules || [],
+      builtinEnabled,
     });
-
-    const requiredSet = new Set(REQUIRED_BUILTIN_TOOLS);
-    const builtinSet = new Set(profile.tools.builtin_enabled);
-    const customSet = new Set(profile.tools.custom_enabled);
-
-    return {
-      tools: built.tools.filter(t => requiredSet.has(t.name) || builtinSet.has(t.name)),
-      customTools: built.customTools.filter(t => customSet.has(t.name)),
-    };
   }
 
   // ════════════════════════════

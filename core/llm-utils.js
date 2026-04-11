@@ -9,7 +9,7 @@ import path from "path";
 import { callProviderText } from "../lib/llm/provider-client.js";
 import { getLocale } from "../server/i18n.js";
 
-/** Pi SDK content block 是否为工具调用（兼容 tool_use / toolCall 两种格式） */
+/** 内容块是否为工具调用（兼容 tool_use / toolCall 两种格式） */
 export const isToolCallBlock = (b) => (b.type === "tool_use" || b.type === "toolCall") && !!b.name;
 
 /** 取工具调用参数（兼容 input / arguments） */

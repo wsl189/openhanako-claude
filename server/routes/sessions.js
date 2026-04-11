@@ -3,13 +3,25 @@
  */
 import fs from "fs/promises";
 import path from "path";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { t } from "../i18n.js";
 import { BrowserManager } from "../../lib/browser/browser-manager.js";
 import { isToolCallBlock, getToolArgs } from "../../core/llm-utils.js";
+import { sanitizeAssistantVisibleText } from "../../lib/text/assistant-visible-text.js";
+import {
+  SESSION_FILE_EXT,
+  listSessionMetadata,
+  patchSessionMetadata,
+  readSessionMetadata,
+} from "../../core/claude-session-store.js";
+import { buildSessionMessagesFromSession } from "../../core/claude-transcript.js";
+import {
+  hasSessionMessageLog,
+  messageLogPathForSession,
+  readSessionMessagesFromLog,
+} from "../../core/session-message-log.js";
 
 /**
- * 从 Pi SDK 的 content 块数组中提取纯文本 + thinking + tool_use 调用
+ * 从内容块数组中提取纯文本 + thinking + tool_use 调用
  * content 可能是 string 或 [{type: "text", text: "..."}, {type: "thinking", thinking: "..."}, ...]
  * 返回 { text, thinking, toolUses }
  */
@@ -68,9 +80,100 @@ function extractTextContent(content, { stripThink = false } = {}) {
           if (params[k] !== undefined) args[k] = params[k];
         }
       }
-      return { name: block.name, args: Object.keys(args).length ? args : undefined };
+      return {
+        name: block.name,
+        toolUseId: block.id || undefined,
+        args: Object.keys(args).length ? args : undefined,
+      };
     });
   return { text, thinking, toolUses };
+}
+
+function compactToolArgsForHistory(rawArgs) {
+  if (!rawArgs || typeof rawArgs !== "object") return undefined;
+  const args = {};
+  for (const k of TOOL_ARG_SUMMARY_KEYS) {
+    if (rawArgs[k] !== undefined) args[k] = rawArgs[k];
+  }
+  return Object.keys(args).length ? args : undefined;
+}
+
+function compactAssistantHistoryBlocks(content) {
+  if (!Array.isArray(content)) return [];
+  const out = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    if (block.type === "text" && typeof block.text === "string") {
+      const text = sanitizeAssistantVisibleText(block.text);
+      if (text) out.push({ type: "text", text });
+      continue;
+    }
+    if (block.type === "thinking" && typeof block.thinking === "string") {
+      if (block.thinking.trim()) out.push({ type: "thinking", thinking: block.thinking });
+      continue;
+    }
+    if (block.type === "tool_use" && block.id) {
+      out.push({
+        type: "tool_use",
+        id: block.id,
+        name: block.name || "",
+        input: compactToolArgsForHistory(getToolArgs(block) || block.input || {}),
+      });
+      continue;
+    }
+    if (
+      typeof block.type === "string"
+      && /(reason|analysis|commentary|summary)/i.test(block.type)
+    ) {
+      const text = typeof block.text === "string"
+        ? block.text
+        : (typeof block.reasoning === "string" ? block.reasoning : "");
+      if (text.trim()) out.push({ type: "thinking", thinking: text });
+    }
+  }
+  return out;
+}
+
+function isToolMessageSuccess(message) {
+  if (!message || typeof message !== "object") return true;
+  if (message.success === false) return false;
+  const error = message.details?.error;
+  return !(typeof error === "string" && error.trim());
+}
+
+function toAssistantHistoryToolResult(message) {
+  if (!message || typeof message !== "object") return null;
+  const name = String(message.toolName || "").trim();
+  if (!name) return null;
+  return {
+    name,
+    toolUseId: message.toolUseId ? String(message.toolUseId) : undefined,
+    args: compactToolArgsForHistory(message.args),
+    success: isToolMessageSuccess(message),
+  };
+}
+
+function appendAssistantToolResult(targetMessage, result) {
+  if (!targetMessage || !result) return;
+  const list = Array.isArray(targetMessage.toolResults) ? [...targetMessage.toolResults] : [];
+  let hit = -1;
+  if (result.toolUseId) {
+    hit = list.findIndex((item) => item?.toolUseId === result.toolUseId);
+  }
+  if (hit < 0) {
+    hit = list.findIndex((item) => !item?.toolUseId && item?.name === result.name);
+  }
+  if (hit >= 0) {
+    const prev = list[hit] || {};
+    list[hit] = {
+      ...prev,
+      ...result,
+      args: result.args || prev.args,
+    };
+  } else {
+    list.push(result);
+  }
+  targetMessage.toolResults = list;
 }
 
 /**
@@ -80,30 +183,57 @@ function extractTextContent(content, { stripThink = false } = {}) {
  */
 async function loadSessionHistoryMessages(engine, explicitPath) {
   const sessionPath = explicitPath || engine.currentSessionPath;
-  if (sessionPath) {
-    try {
-      const raw = await fs.readFile(sessionPath, "utf-8");
-      const messages = [];
+  if (!sessionPath) return Array.isArray(engine.messages) ? engine.messages : [];
 
-      for (const line of raw.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const entry = JSON.parse(line);
-          if (entry.type === "message" && entry.message) {
-            messages.push(entry.message);
-          }
-        } catch {
-          // 跳过损坏行
-        }
-      }
+  const activeSession = engine.getSessionByPath(sessionPath);
+  if (Array.isArray(activeSession?.messages) && activeSession.messages.length > 0) {
+    return activeSession.messages;
+  }
 
+  try {
+    if (hasSessionMessageLog(sessionPath)) {
+      const messages = readSessionMessagesFromLog(sessionPath);
       if (messages.length > 0) return messages;
-    } catch {
-      // 回退到内存态
     }
+  } catch {
+    // 回退到 transcript / 内存态
+  }
+
+  try {
+    const metadata = readSessionMetadata(sessionPath);
+    const messages = buildSessionMessagesFromSession({
+      sessionId: metadata.sessionId,
+      cwd: metadata.cwd,
+    });
+    if (messages.length > 0) return messages;
+  } catch {
+    // 回退到内存态
   }
 
   return Array.isArray(engine.messages) ? engine.messages : [];
+}
+
+async function moveSessionMessageLog(fromSessionPath, toSessionPath) {
+  const fromLogPath = messageLogPathForSession(fromSessionPath);
+  const toLogPath = messageLogPathForSession(toSessionPath);
+  if (!fromLogPath || !toLogPath || fromLogPath === toLogPath) return;
+  try {
+    await fs.access(fromLogPath);
+  } catch {
+    return;
+  }
+  await fs.mkdir(path.dirname(toLogPath), { recursive: true });
+  await fs.rename(fromLogPath, toLogPath);
+}
+
+async function removeSessionMessageLog(sessionPath) {
+  const logPath = messageLogPathForSession(sessionPath);
+  if (!logPath) return;
+  try {
+    await fs.unlink(logPath);
+  } catch {
+    // ignore missing sidecar
+  }
 }
 
 /**
@@ -217,10 +347,12 @@ async function resolveRestorePath(preferredPath) {
     return preferredPath;
   }
 
-  const ext = path.extname(preferredPath);
-  const base = preferredPath.slice(0, preferredPath.length - ext.length);
+  const suffix = preferredPath.endsWith(SESSION_FILE_EXT)
+    ? SESSION_FILE_EXT
+    : path.extname(preferredPath);
+  const base = preferredPath.slice(0, preferredPath.length - suffix.length);
   for (let i = 1; i <= 999; i++) {
-    const candidate = `${base}_restored-${i}${ext}`;
+    const candidate = `${base}_restored-${i}${suffix}`;
     try {
       await fs.access(candidate);
     } catch {
@@ -228,7 +360,7 @@ async function resolveRestorePath(preferredPath) {
     }
   }
 
-  return `${base}_restored-${Date.now()}${ext}`;
+  return `${base}_restored-${Date.now()}${suffix}`;
 }
 
 function normalizeAbsolutePath(rawPath) {
@@ -478,23 +610,29 @@ export default async function sessionsRoute(app, { engine }) {
       }
 
       const archiveDir = path.join(sessionDir, "archived");
-      let sessions = [];
-      try {
-        sessions = await SessionManager.list(process.cwd(), archiveDir);
-      } catch {
-        sessions = [];
-      }
-
-      const titles = await readSessionTitles(sessionDir);
-      const mapped = sessions.map((s) => ({
-        path: s.path,
-        title: resolveSessionTitle(titles, s.path, s.firstMessage || ""),
-        firstMessage: (s.firstMessage || "").slice(0, 120),
-        modified: s.modified?.toISOString?.() || s.modified || null,
-        messageCount: s.messageCount || 0,
-        cwd: s.cwd || null,
-        agentId,
-      }));
+      const archived = listSessionMetadata(archiveDir, { includeArchived: true });
+      const mapped = archived.map(({ sessionPath, metadata }) => {
+        let messages = [];
+        if (hasSessionMessageLog(sessionPath)) {
+          messages = readSessionMessagesFromLog(sessionPath, { limit: 50 });
+        } else {
+          messages = buildSessionMessagesFromSession({
+            sessionId: metadata.sessionId,
+            cwd: metadata.cwd,
+            limit: 50,
+          });
+        }
+        const firstUser = messages.find((m) => m.role === "user");
+        return {
+          path: sessionPath,
+          title: metadata.title || null,
+          firstMessage: extractTextContent(firstUser?.content || "").text.slice(0, 120),
+          modified: metadata.updatedAt || metadata.createdAt || null,
+          messageCount: messages.filter((m) => m.role === "user" || m.role === "assistant").length,
+          cwd: metadata.cwd || null,
+          agentId,
+        };
+      });
 
       mapped.sort((a, b) => {
         const at = a.modified ? new Date(a.modified).getTime() : 0;
@@ -528,24 +666,70 @@ export default async function sessionsRoute(app, { engine }) {
       const allMessages = [];
       const fileOutputs = [];
       const artifacts = [];
+      const toolUseToAssistantIndex = new Map();
+      const pendingToolResults = [];
+      let awaitingAssistantForTurn = false;
+      let lastAssistantIndex = -1;
       let globalIdx = 0;
 
       for (const m of sourceMessages) {
         if (m.role === "user") {
+          if (pendingToolResults.length && lastAssistantIndex >= 0) {
+            const lastAssistant = allMessages[lastAssistantIndex];
+            if (lastAssistant?.role === "assistant") {
+              for (const result of pendingToolResults) {
+                appendAssistantToolResult(lastAssistant, result);
+              }
+            }
+            pendingToolResults.length = 0;
+          }
           const { text } = extractTextContent(m.content);
           if (text) allMessages.push({ id: String(globalIdx++), role: "user", content: text });
+          awaitingAssistantForTurn = true;
         } else if (m.role === "assistant") {
           const { text, thinking, toolUses } = extractTextContent(m.content, { stripThink: true });
-          if (text || toolUses.length) {
-            allMessages.push({
+          const visibleText = sanitizeAssistantVisibleText(text);
+          const contentBlocks = compactAssistantHistoryBlocks(m.content);
+          if (visibleText || toolUses.length) {
+            const assistantMessage = {
               id: String(globalIdx++),
               role: "assistant",
-              content: text,
+              content: visibleText,
               thinking: thinking || undefined,
               toolCalls: toolUses.length ? toolUses : undefined,
-            });
+              contentBlocks: contentBlocks.length ? contentBlocks : undefined,
+            };
+            allMessages.push(assistantMessage);
+            const assistantIndex = allMessages.length - 1;
+            lastAssistantIndex = assistantIndex;
+            awaitingAssistantForTurn = false;
+            for (const toolUse of toolUses) {
+              if (toolUse?.toolUseId) {
+                toolUseToAssistantIndex.set(toolUse.toolUseId, assistantIndex);
+              }
+            }
+            if (pendingToolResults.length) {
+              for (const result of pendingToolResults) {
+                appendAssistantToolResult(assistantMessage, result);
+              }
+              pendingToolResults.length = 0;
+            }
           }
-        } else if (m.role === "toolResult") {
+        } else if (m.role === "tool" || m.role === "toolResult") {
+          const toolResult = toAssistantHistoryToolResult(m);
+          if (toolResult) {
+            let targetIndex = -1;
+            if (toolResult.toolUseId && toolUseToAssistantIndex.has(toolResult.toolUseId)) {
+              targetIndex = toolUseToAssistantIndex.get(toolResult.toolUseId);
+            } else if (!awaitingAssistantForTurn && lastAssistantIndex >= 0) {
+              targetIndex = lastAssistantIndex;
+            }
+            if (targetIndex >= 0 && allMessages[targetIndex]?.role === "assistant") {
+              appendAssistantToolResult(allMessages[targetIndex], toolResult);
+            } else {
+              pendingToolResults.push(toolResult);
+            }
+          }
           const d = m.details || {};
           if (m.toolName === "present_files" && d.files?.length) {
             fileOutputs.push({ afterIndex: allMessages.length - 1, files: d.files });
@@ -558,6 +742,14 @@ export default async function sessionsRoute(app, { engine }) {
               content: d.content,
               language: d.language,
             });
+          }
+        }
+      }
+      if (pendingToolResults.length && lastAssistantIndex >= 0) {
+        const lastAssistant = allMessages[lastAssistantIndex];
+        if (lastAssistant?.role === "assistant") {
+          for (const result of pendingToolResults) {
+            appendAssistantToolResult(lastAssistant, result);
           }
         }
       }
@@ -589,7 +781,7 @@ export default async function sessionsRoute(app, { engine }) {
       let todos = null;
       for (let i = sourceMessages.length - 1; i >= 0; i--) {
         const m = sourceMessages[i];
-        if (m.role === "toolResult" && m.toolName === "todo" && m.details?.todos) {
+        if ((m.role === "tool" || m.role === "toolResult") && m.toolName === "todo" && m.details?.todos) {
           todos = m.details.todos;
           break;
         }
@@ -758,12 +950,13 @@ export default async function sessionsRoute(app, { engine }) {
         let files;
         try { files = await fs.readdir(archiveDir); } catch { continue; }
         for (const f of files) {
-          if (!f.endsWith(".jsonl")) continue;
+          if (!f.endsWith(SESSION_FILE_EXT)) continue;
           const fp = path.join(archiveDir, f);
           try {
             const stat = await fs.stat(fp);
             if (stat.mtime.getTime() < cutoff) {
               await fs.unlink(fp);
+              await removeSessionMessageLog(fp);
               const tracked = getTrackedSession(workspaceTracker, fp);
               if (tracked) {
                 deleteTrackedSession(workspaceTracker, fp);
@@ -820,7 +1013,9 @@ export default async function sessionsRoute(app, { engine }) {
       const fileName = path.basename(sessionPath);
       const destPath = path.join(archiveDir, fileName);
       await fs.rename(sessionPath, destPath);
+      await moveSessionMessageLog(sessionPath, destPath);
       await remapSessionTitle(sessDir, sessionPath, destPath);
+      patchSessionMetadata(destPath, { archiveState: TRACK_STATE_ARCHIVED });
 
       try {
         const workspaceTracker = await readWorkspaceTracker(workspaceTrackerPath);
@@ -872,7 +1067,9 @@ export default async function sessionsRoute(app, { engine }) {
       }
 
       await fs.rename(archivedPath, targetPath);
+      await moveSessionMessageLog(archivedPath, targetPath);
       await remapSessionTitle(sessionDir, archivedPath, targetPath);
+      patchSessionMetadata(targetPath, { archiveState: TRACK_STATE_ACTIVE });
 
       if (tracked) {
         moveTrackedSession(workspaceTracker, archivedPath, targetPath, { state: TRACK_STATE_ACTIVE });
@@ -911,6 +1108,7 @@ export default async function sessionsRoute(app, { engine }) {
       }
 
       await fs.unlink(archivedPath);
+      await removeSessionMessageLog(archivedPath);
 
       const archiveDir = path.dirname(archivedPath);
       const sessionDir = path.dirname(archiveDir);

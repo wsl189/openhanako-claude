@@ -9,9 +9,9 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { t } from "../i18n.js";
 import { normalizeEverySchedule } from "../../lib/desk/cron-schedule.js";
+import { readSessionMetadata } from "../../core/claude-session-store.js";
 
 /** 解析真实路径（跟踪 symlink），失败返回 null */
 function realPath(p) {
@@ -138,8 +138,7 @@ function resolveSessionDeskDir(sessionPath, engine) {
   const sessionDir = path.join(engine.agentsDir, agentId, "sessions");
   if (!isInsidePath(resolvedSessionPath, sessionDir)) return null;
   try {
-    const mgr = SessionManager.open(resolvedSessionPath, sessionDir);
-    const cwd = mgr.getCwd?.();
+    const cwd = readSessionMetadata(resolvedSessionPath)?.cwd;
     if (typeof cwd !== "string") return null;
     const trimmed = cwd.trim();
     return trimmed || null;

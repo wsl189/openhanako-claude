@@ -2,60 +2,84 @@
  * BridgeSessionManager — Bridge（外部平台）session 管理
  *
  * 负责 bridge session 索引读写、外部消息执行、消息注入。
- * 从 Engine 提取，Engine 通过 manager 访问 bridge 功能。
+ * 使用 Claude Agent SDK runtime + Hanako session metadata。
  */
 import fs from "fs";
 import path from "path";
-import {
-  createAgentSession,
-  SessionManager,
-  SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+import { randomUUID } from "crypto";
 import { debugLog } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
-import { buildCompactionSettings } from "./compaction-settings.js";
 import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
+import { buildClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { ClaudeSessionRuntime } from "./claude-session-runtime.js";
+import {
+  createSessionMetadata,
+  patchSessionMetadata,
+  readSessionMetadata,
+} from "./claude-session-store.js";
+import { extractTextFromContent, resolveClaudeTranscriptPath } from "./claude-transcript.js";
 
-// Bridge 外部平台会话中禁用的工具（本地展示/agent 内部通信，不适合 IM 对话）
-const BRIDGE_BLOCKED_TOOL_NAMES = new Set([
-  "present_files",
-  "dm",
-  "message_agent",
-]);
+function nowIso() {
+  return new Date().toISOString();
+}
 
 function getSteerPrefix() {
   const isZh = getLocale().startsWith("zh");
   return isZh ? "（插话）\n" : "(Interjection)\n";
 }
 
+function normalizeAnthropicBaseUrlForSdk(url = "") {
+  return String(url || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/(v1\/)?messages$/i, "")
+    .replace(/\/v1$/i, "");
+}
+
+function extractAssistantTextFromSdkMessage(message) {
+  return extractTextFromContent(message?.message?.content || []);
+}
+
+function buildBridgeAssistantTranscriptEntry({ metadata, text, parentUuid = null }) {
+  return {
+    parentUuid,
+    isSidechain: false,
+    userType: "external",
+    cwd: metadata.cwd,
+    sessionId: metadata.sessionId,
+    version: "hanako-claude-sdk",
+    gitBranch: metadata.gitBranch || "HEAD",
+    type: "assistant",
+    message: {
+      id: `bridge_inject_${Date.now().toString(36)}`,
+      type: "message",
+      role: "assistant",
+      model: "hanako-bridge",
+      content: [{ type: "text", text }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+    uuid: randomUUID(),
+    timestamp: nowIso(),
+  };
+}
+
 export class BridgeSessionManager {
   /**
-   * @param {object} deps - 注入依赖（不持有 engine 引用）
-   * @param {() => object} deps.getAgent - 返回当前 agent（需 sessionDir）
-   * @param {(id: string) => object|null} deps.getAgentById - 按 ID 获取 agent
-   * @param {(agent: object) => object} [deps.getSkillsForAgent] - 获取指定 agent 的 skills
-   * @param {() => import('./model-manager.js').ModelManager} deps.getModelManager
-   * @param {() => object} deps.getResourceLoader
-   * @param {() => object} deps.getPreferences
-   * @param {(cwd: string, customTools?, opts?) => {tools: any[], customTools: any[]}} deps.buildTools
-   * @param {() => string} deps.getHomeCwd
-   * @param {(sessionPath: string, images: Array) => void} [deps.setSessionPendingImages]
-   * @param {(sessionPath: string) => void} [deps.clearSessionPendingImages]
+   * @param {object} deps
    */
   constructor(deps) {
     this._deps = deps;
     this._activeSessions = new Map();
   }
 
-  /** 活跃 bridge sessions（供 bridge-manager abort 用） */
   get activeSessions() { return this._activeSessions; }
 
-  /** 指定 bridge session 是否正在 streaming */
   isSessionStreaming(sessionKey) {
     return this._activeSessions.get(sessionKey)?.isStreaming ?? false;
   }
 
-  /** abort 指定 bridge session（如果正在 streaming） */
   async abortSession(sessionKey) {
     const session = this._activeSessions.get(sessionKey);
     if (!session?.isStreaming) return false;
@@ -63,16 +87,8 @@ export class BridgeSessionManager {
     return true;
   }
 
-  /**
-   * 重置指定 bridge session（清除上下文，下次消息会新建 session）
-   * @param {string} sessionKey
-   * @param {object} [opts]
-   * @param {string} [opts.agentId]
-   * @returns {Promise<boolean>}
-   */
   async resetSession(sessionKey, opts = {}) {
     const agent = this._resolveAgent(opts.agentId);
-
     const active = this._activeSessions.get(sessionKey);
     if (active?.isStreaming) {
       try { await active.abort(); } catch {}
@@ -83,24 +99,23 @@ export class BridgeSessionManager {
     const raw = index[sessionKey];
     if (!raw) return false;
 
-    // 保留元数据（name/avatarUrl/userId），仅删除 file 引用
     const entry = typeof raw === "string" ? {} : { ...raw };
+    const existingFile = typeof raw === "string" ? raw : raw?.file || null;
+    if (existingFile) {
+      const metaPath = path.join(agent.sessionDir, "bridge", existingFile);
+      try { fs.unlinkSync(metaPath); } catch {}
+    }
     delete entry.file;
     index[sessionKey] = entry;
     this.writeIndex(index, agent);
     return true;
   }
 
-  /** bridge 索引文件路径 */
   _indexPath(agent) {
     const a = agent || this._deps.getAgent();
     return path.join(a.sessionDir, "bridge", "bridge-sessions.json");
   }
 
-  /**
-   * 启动时 sanity check：扫描 bridge-index，清理孤儿条目
-   * （有 file 引用但 JSONL 文件已不存在的）
-   */
   reconcile() {
     const index = this.readIndex();
     const bridgeDir = path.join(this._deps.getAgent().sessionDir, "bridge");
@@ -111,7 +126,6 @@ export class BridgeSessionManager {
       if (!entry.file) continue;
       const fp = path.join(bridgeDir, entry.file);
       if (!fs.existsSync(fp)) {
-        // 保留元数据（name/avatarUrl/userId），只删 file 引用
         delete entry.file;
         index[sessionKey] = entry;
         cleaned++;
@@ -120,30 +134,24 @@ export class BridgeSessionManager {
 
     if (cleaned > 0) {
       this.writeIndex(index);
-      console.log(`[bridge-session] reconcile: 清理 ${cleaned} 个孤儿 session 引用`);
       debugLog()?.log("bridge", `reconcile: cleaned ${cleaned} orphan session refs`);
     }
   }
 
-  /** 读取 bridge session 索引 */
   readIndex(agent) {
     try {
       return JSON.parse(fs.readFileSync(this._indexPath(agent), "utf-8"));
-    } catch { return {}; }
+    } catch {
+      return {};
+    }
   }
 
-  /** 写入 bridge session 索引 */
   writeIndex(index, agent) {
     const dir = path.dirname(this._indexPath(agent));
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(this._indexPath(agent), JSON.stringify(index, null, 2) + "\n", "utf-8");
   }
 
-  /**
-   * 解析本次消息应使用的 agent：
-   * - 优先使用 opts.agentId
-   * - getAgentById 不可用/异常时回退当前 agent，避免外部会话直接失败
-   */
   _resolveAgent(agentId) {
     const fallback = this._deps.getAgent();
     if (!agentId || !this._deps.getAgentById) return fallback;
@@ -155,177 +163,168 @@ export class BridgeSessionManager {
     }
   }
 
-  /**
-   * 解析 bridge 会话应使用的模型：
-   * - 优先 agent.config.models.chat
-   * - 未配置或不可用时回退全局默认模型
-   */
   _resolveBridgeModel(mm, agent) {
     const preferredId = agent?.config?.models?.chat || "";
-
     if (!preferredId) {
-      if (mm.defaultModel) {
-        debugLog()?.log("bridge-session", `agent "${agent?.agentName || agent?.id || "unknown"}" 无 chat 模型，回退默认模型 ${mm.defaultModel.id}`);
-        return mm.defaultModel;
-      }
+      if (mm.defaultModel) return mm.defaultModel;
       throw new Error(t("error.bridgeAgentNoChatModel", { name: agent.agentName }));
     }
-
     const preferred = mm.availableModels.find((m) => m.id === preferredId);
     if (preferred) return preferred;
-
-    if (mm.defaultModel) {
-      debugLog()?.log("bridge-session", `agent "${agent?.agentName || agent?.id || "unknown"}" 模型 "${preferredId}" 不可用，回退默认模型 ${mm.defaultModel.id}`);
-      return mm.defaultModel;
-    }
-
+    if (mm.defaultModel) return mm.defaultModel;
     throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: preferredId }));
   }
 
-  /**
-   * 执行外部平台消息：找到或创建持久 session，prompt 并捕获回复文本
-   * @param {string} prompt - 格式化后的用户消息
-   * @param {string} sessionKey - 会话标识（如 tg_dm_12345）
-   * @param {object} [meta] - 元数据（name, avatarUrl, userId）
-   * @param {object} [opts] - { onDelta? }
-   * @returns {Promise<string|null>} agent 的回复文本
-   */
-  async executeExternalMessage(prompt, sessionKey, meta, opts = {}) {
-    // 优先用调用方传入的 agentId，避免 debounce 窗口内切 agent 导致路由到错误 agent
-    const agent = this._resolveAgent(opts.agentId);
-    const mm = this._deps.getModelManager();
+  _resolveBridgeMetadata({ agent, sessionKey, meta }) {
     const bridgeDir = path.join(agent.sessionDir, "bridge");
     const subDir = "owner";
     const sessionDir = path.join(bridgeDir, subDir);
     fs.mkdirSync(sessionDir, { recursive: true });
 
-    // 查找已有 session（兼容旧格式字符串和新格式对象）
     const index = this.readIndex(agent);
     const raw = index[sessionKey];
     const existingFile = typeof raw === "string" ? raw : raw?.file || null;
     const existingPath = existingFile ? path.join(bridgeDir, existingFile) : null;
 
+    if (existingPath && fs.existsSync(existingPath)) {
+      const metadata = patchSessionMetadata(existingPath, {
+        bridge: meta || raw?.bridge || null,
+      });
+      return { sessionPath: existingPath, metadata, index, existingFile, bridgeDir, subDir };
+    }
+
+    const homeCwd = agent?.config?.desk?.home_folder || this._deps.getHomeCwd() || process.cwd();
+    const created = createSessionMetadata(sessionDir, {
+      sessionId: randomUUID(),
+      cwd: homeCwd,
+      agentId: agent?.id || path.basename(agent?.agentDir || ""),
+      memoryEnabled: true,
+      bridge: meta || null,
+    });
+    return {
+      sessionPath: created.sessionPath,
+      metadata: created.metadata,
+      index,
+      existingFile: null,
+      bridgeDir,
+      subDir,
+    };
+  }
+
+  _buildRuntimeEnv(mm, agent, modelRef) {
+    const resolved = mm.resolveModelWithCredentials(modelRef, agent?.config);
+    return {
+      model: resolved.model,
+      env: {
+        ...process.env,
+        ANTHROPIC_BASE_URL: resolved.api === "anthropic-messages"
+          ? (normalizeAnthropicBaseUrlForSdk(resolved.base_url) || undefined)
+          : (resolved.base_url || undefined),
+        ANTHROPIC_API_KEY: resolved.api_key || undefined,
+        ANTHROPIC_AUTH_TOKEN: resolved.auth_token || undefined,
+      },
+    };
+  }
+
+  async executeExternalMessage(prompt, sessionKey, meta, opts = {}) {
+    const agent = this._resolveAgent(opts.agentId);
+    const mm = this._deps.getModelManager();
+    const mediaInstruction = "你当前处于外部平台会话，支持发送媒体文件。不要声称“平台不支持发送图片/文件”。\n当用户请求查看/接收图片或文件，或你已经生成了可交付媒体（图片、视频、音频、文档）时，输出媒体指令。\n仅在用户明确说“不要发送/先别发”时，不要输出 MEDIA: 或 <media> 标签。\n如果用户只是询问文件信息、列举路径、确认存在性，也不要输出媒体指令。\n当你确实需要发送媒体文件时，在回复中单独一行写 MEDIA:<source>。\nsource 只能是 http(s) URL、file:// 绝对路径、或本地绝对路径。\n路径里如果有空格，请用 <...> 包裹。\n禁止使用 present_files / dm / message_agent 来给用户传图或传文件。";
+
     try {
-      let mgr;
-      if (existingPath) {
-        try {
-          mgr = SessionManager.open(existingPath, sessionDir);
-        } catch {
-          mgr = null;
-        }
-      }
+      const { sessionPath, metadata, index, existingFile, bridgeDir, subDir } = this._resolveBridgeMetadata({
+        agent,
+        sessionKey,
+        meta,
+      });
+
       const homeCwd = agent?.config?.desk?.home_folder || this._deps.getHomeCwd() || process.cwd();
-      if (!mgr) {
-        mgr = SessionManager.create(homeCwd, sessionDir);
-      }
-
-      // Bridge 媒体协议：让模型通过 MEDIA:<url|file://|绝对路径> 返回媒体项。
-      const mediaInstruction = "你当前处于外部平台会话，支持发送媒体文件。不要声称“平台不支持发送图片/文件”。\n当用户请求查看/接收图片或文件，或你已经生成了可交付媒体（图片、视频、音频、文档）时，输出媒体指令。\n仅在用户明确说“不要发送/先别发”时，不要输出 MEDIA: 或 <media> 标签。\n如果用户只是询问文件信息、列举路径、确认存在性，也不要输出媒体指令。\n当你确实需要发送媒体文件时，在回复中单独一行写 MEDIA:<source>。\nsource 只能是 http(s) URL、file:// 绝对路径、或本地绝对路径。\n路径里如果有空格，请用 <...> 包裹，例如：\nMEDIA:https://example.com/photo.jpg\nMEDIA:</Users/me/Documents/volatility trading/book 2.pdf>\n不要把 MEDIA: 写在代码块里。一行一个。\n禁止使用 present_files / dm / message_agent 来给用户传图或传文件。";
-
-      // 外部会话统一走完整 agent 能力（记忆 + 工具）
-      const prefs = this._deps.getPreferences();
-      const bridgeCwd = homeCwd;
-      const { tools: bridgeTools, customTools: bridgeCustomTools } = this._deps.buildTools(
-        bridgeCwd,
-        agent.tools,
-        { agentDir: agent.agentDir, workspace: homeCwd },
+      const bridgeCwd = metadata.cwd || homeCwd;
+      const model = applyRuntimeModelOverrides(
+        this._resolveBridgeModel(mm, agent),
+        agent?.config?.models?.overrides,
       );
-      const filteredBridgeTools = (bridgeTools || []).filter(
-        (tool) => !BRIDGE_BLOCKED_TOOL_NAMES.has(tool?.name),
-      );
-      const filteredBridgeCustomTools = (bridgeCustomTools || []).filter(
-        (tool) => !BRIDGE_BLOCKED_TOOL_NAMES.has(tool?.name),
-      );
+      const runtimeEnv = this._buildRuntimeEnv(mm, agent, model);
+      const toolProfile = this._deps.getAgentPermissionConfig?.(
+        agent?.id || path.basename(agent?.agentDir || ""),
+      ) || null;
 
-      // 每条外部消息到来前刷新一次 system prompt，确保动态时间等信息是最新。
       try {
         agent.refreshSystemPrompt?.();
       } catch (err) {
         debugLog()?.error("bridge-session", `refresh system prompt failed: ${err.message}`);
       }
 
-      const model = this._resolveBridgeModel(mm, agent);
-      const runtimeModel = applyRuntimeModelOverrides(
-        model,
-        agent?.config?.models?.overrides,
-      );
-
-      const baseRL = this._deps.getResourceLoader();
-      const rl = Object.create(baseRL, {
-        getSystemPrompt: {
-          value: () => `${agent.systemPrompt}\n\n${mediaInstruction}`,
+      let runtime = null;
+      const runtimeConfig = buildClaudeRuntimeConfig({
+        agent,
+        cwd: bridgeCwd,
+        workspace: homeCwd,
+        toolProfile,
+        customTools: agent?.tools || [],
+        model: runtimeEnv.model,
+        env: runtimeEnv.env,
+        systemAppend: mediaInstruction,
+        createToolContext: () => ({
+          sessionManager: runtime?.sessionManager,
+        }),
+        emitToolEvent: (event) => {
+          runtime?._recordToolEvent?.(event);
+          runtime?._emit?.(event);
         },
       });
-      if (this._deps.getSkillsForAgent) {
-        Object.defineProperty(rl, "getSkills", {
-          value: () => this._deps.getSkillsForAgent(agent),
-        });
-      }
 
-      const sessionOpts = {
-        model: runtimeModel,
-        thinkingLevel: mm.resolveThinkingLevel(prefs?.thinking_level || "auto"),
-        resourceLoader: rl,
-        tools: filteredBridgeTools,
-        // 覆盖 SDK 默认内置工具，确保 bridge 会话也走沙盒包装后的 builtin。
-        customTools: [...filteredBridgeCustomTools, ...filteredBridgeTools],
-        settingsManager: this._createSettings(runtimeModel),
-      };
-
-      const { session } = await createAgentSession({
-        cwd: homeCwd,
-        sessionManager: mgr,
-        authStorage: mm.authStorage,
-        modelRegistry: mm.modelRegistry,
-        ...sessionOpts,
+      runtime = new ClaudeSessionRuntime({
+        sessionId: metadata.sessionId,
+        resumeSessionId: existingFile ? metadata.sessionId : null,
+        cwd: bridgeCwd,
+        sessionPath,
+        options: runtimeConfig.options,
       });
+      await runtime.start();
+      this._activeSessions.set(sessionKey, runtime);
 
-      this._activeSessions.set(sessionKey, session);
-
-      const sessionPath = session.sessionManager?.getSessionFile?.();
-      if (sessionPath) {
-        if (opts.images?.length) {
-          this._deps.setSessionPendingImages?.(sessionPath, opts.images);
-        } else {
-          this._deps.clearSessionPendingImages?.(sessionPath);
-        }
+      if (opts.images?.length) {
+        this._deps.setSessionPendingImages?.(sessionPath, opts.images);
+      } else {
+        this._deps.clearSessionPendingImages?.(sessionPath);
       }
 
-      // 捕获文本输出
       let capturedText = "";
-      const unsub = session.subscribe((event) => {
-        if (event.type === "message_update") {
-          const sub = event.assistantMessageEvent;
-          if (sub?.type === "text_delta") {
-            const delta = sub.delta || "";
+      const unsub = runtime.subscribe((event) => {
+        if (event?.type === "stream_event") {
+          const raw = event.event;
+          if (raw?.type === "content_block_delta" && raw?.delta?.type === "text_delta") {
+            const delta = raw.delta.text || "";
             capturedText += delta;
             try { opts.onDelta?.(delta, capturedText); } catch {}
           }
+        } else if (event?.type === "assistant") {
+          const finalText = extractAssistantTextFromSdkMessage(event);
+          if (finalText) capturedText = finalText;
+        } else if (event?.type === "result" && typeof event.result === "string" && event.result.trim()) {
+          capturedText = event.result.trim();
         }
       });
 
       try {
         const promptOpts = opts.images?.length ? { images: opts.images } : undefined;
-        await session.prompt(prompt, promptOpts);
+        await runtime.prompt(prompt, promptOpts);
       } finally {
         unsub?.();
         this._activeSessions.delete(sessionKey);
+        try { await runtime.close(); } catch {}
       }
 
-      // 更新索引 + 元数据
-      if (sessionPath) {
-        const fileName = `${subDir}/${path.basename(sessionPath)}`;
-        if (!existingFile) {
-          index[sessionKey] = { file: fileName, ...(meta || {}) };
-        } else if (meta) {
-          const entry = typeof index[sessionKey] === "string"
-            ? { file: index[sessionKey] }
-            : index[sessionKey];
-          Object.assign(entry, meta);
-          index[sessionKey] = entry;
-        }
-        this.writeIndex(index, agent);
-      }
+      const fileName = `${subDir}/${path.basename(sessionPath)}`;
+      const entry = typeof index[sessionKey] === "string"
+        ? { file: index[sessionKey] }
+        : { ...(index[sessionKey] || {}) };
+      entry.file = fileName;
+      if (meta && typeof meta === "object") Object.assign(entry, meta);
+      index[sessionKey] = entry;
+      this.writeIndex(index, agent);
+      patchSessionMetadata(sessionPath, { bridge: meta || entry.bridge || null });
 
       return capturedText.trim() || null;
     } catch (err) {
@@ -334,61 +333,45 @@ export class BridgeSessionManager {
     }
   }
 
-  /**
-   * 向正在 streaming 的 bridge session 注入 steer 消息
-   * @param {string} sessionKey
-   * @param {string} text
-   * @returns {boolean} 是否成功注入
-   */
   steerSession(sessionKey, text) {
     const session = this._activeSessions.get(sessionKey);
     if (!session?.isStreaming) return false;
-    session.steer(getSteerPrefix() + text);
-    return true;
+    return session.steer(getSteerPrefix() + text);
   }
 
-  /**
-   * 往指定 bridge session 追加一条 assistant 消息（不触发 LLM）
-   * @param {string} sessionKey - bridge session 标识
-   * @param {string} text - 要追加的 assistant 消息文本
-   * @returns {boolean}
-   */
   injectMessage(sessionKey, text) {
     try {
       const index = this.readIndex();
       const raw = index[sessionKey];
       const existingFile = typeof raw === "string" ? raw : raw?.file || null;
-      if (!existingFile) {
-        console.warn(`[bridge-session] injectMessage: sessionKey "${sessionKey}" 不存在`);
-        return false;
-      }
+      if (!existingFile) return false;
 
       const bridgeDir = path.join(this._deps.getAgent().sessionDir, "bridge");
       const sessionPath = path.join(bridgeDir, existingFile);
-      if (!fs.existsSync(sessionPath)) {
-        console.warn(`[bridge-session] injectMessage: session 文件不存在: ${sessionPath}`);
-        return false;
+      if (!fs.existsSync(sessionPath)) return false;
+
+      const metadata = readSessionMetadata(sessionPath);
+      const transcriptPath = resolveClaudeTranscriptPath(metadata.sessionId, metadata.cwd);
+      if (!transcriptPath || !fs.existsSync(transcriptPath)) return false;
+
+      const rawTranscript = fs.readFileSync(transcriptPath, "utf-8");
+      const lines = rawTranscript.split(/\r?\n/).filter(Boolean);
+      let parentUuid = null;
+      if (lines.length > 0) {
+        try {
+          parentUuid = JSON.parse(lines.at(-1))?.uuid || null;
+        } catch {
+          parentUuid = null;
+        }
       }
 
-      const mgr = SessionManager.open(sessionPath, path.dirname(sessionPath));
-      mgr.appendMessage({
-        role: "assistant",
-        content: [{ type: "text", text }],
-      });
-
+      const entry = buildBridgeAssistantTranscriptEntry({ metadata, text, parentUuid });
+      fs.appendFileSync(transcriptPath, JSON.stringify(entry) + "\n", "utf-8");
       debugLog()?.log("bridge-session", `injected message to ${sessionKey} (${text.length} chars)`);
       return true;
     } catch (err) {
       console.error(`[bridge-session] injectMessage failed: ${err.message}`);
       return false;
     }
-  }
-
-  /** 创建 bridge 专用 settings（按模型 contextWindow 动态计算压缩阈值） */
-  _createSettings(model) {
-    const contextWindow = model?.contextWindow || 200_000;
-    return SettingsManager.inMemory({
-      compaction: buildCompactionSettings(contextWindow),
-    });
   }
 }

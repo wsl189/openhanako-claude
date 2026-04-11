@@ -218,6 +218,12 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     () => buildChainGroupMeta(path, items, isPathStreaming),
     [path, items, isPathStreaming],
   );
+  const lastAssistantIndex = useMemo(() => {
+    for (let idx = items.length - 1; idx >= 0; idx--) {
+      if (isAssistantMessageItem(items[idx])) return idx;
+    }
+    return -1;
+  }, [items]);
   const [chainCollapsedByKey, setChainCollapsedByKey] = useState<Record<string, boolean>>({});
   const chainEligibleByKeyRef = useRef<Record<string, boolean>>({});
 
@@ -331,13 +337,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             key={item.type === 'message' ? item.data.id : `c-${i}`}
             item={item}
             prevItem={i > 0 ? items[i - 1] : undefined}
-            chainMeta={chainMetaByIndex[i]}
-            chainCollapsed={!!(chainMetaByIndex[i] && chainCollapsedByKey[chainMetaByIndex[i].key])}
-            onToggleChain={() => {
-              const meta = chainMetaByIndex[i];
-              if (!meta) return;
-              setChainCollapsedByKey(prev => ({ ...prev, [meta.key]: !prev[meta.key] }));
-            }}
+            isStreamingMessage={isPathStreaming && i === lastAssistantIndex}
           />
         ))}
         <div className="chat-session-footer" />
@@ -375,15 +375,11 @@ function ScrollToBottomBtn() {
 const ItemView = memo(function ItemView({
   item,
   prevItem,
-  chainMeta,
-  chainCollapsed = false,
-  onToggleChain,
+  isStreamingMessage,
 }: {
   item: ChatListItem;
   prevItem?: ChatListItem;
-  chainMeta?: ChainGroupMeta;
-  chainCollapsed?: boolean;
-  onToggleChain?: () => void;
+  isStreamingMessage?: boolean;
 }) {
   if (item.type === 'compaction') {
     return <CompactionNotice yuan={item.yuan} />;
@@ -397,29 +393,11 @@ const ItemView = memo(function ItemView({
   if (msg.role === 'user') {
     return <UserMessage message={msg} showAvatar={showAvatar} />;
   }
-  if (chainMeta && chainCollapsed && !chainMeta.isOwner) {
-    const hasVisibleBlocks = (msg.blocks || []).some((block) => {
-      if (isChainBlock(block)) return false;
-      if (block.type === 'text' && chainMeta.hideTextWhenCollapsed) return false;
-      return true;
-    });
-    if (!hasVisibleBlocks) return null;
-  }
   return (
     <AssistantMessage
       message={msg}
       showAvatar={showAvatar}
-      chainGroup={chainMeta ? {
-        isOwner: chainMeta.isOwner,
-        hideTextWhenCollapsed: chainMeta.hideTextWhenCollapsed,
-        totalThinking: chainMeta.totalThinking,
-        totalTools: chainMeta.totalTools,
-        allCompleted: chainMeta.allCompleted,
-        allSuccessful: chainMeta.allSuccessful,
-        isSettled: chainMeta.isSettled,
-        collapsed: chainCollapsed,
-        onToggle: onToggleChain || (() => {}),
-      } : undefined}
+      isStreaming={!!isStreamingMessage}
     />
   );
 });

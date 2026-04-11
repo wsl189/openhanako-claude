@@ -49,7 +49,7 @@ export default async function providersRoute(app, { engine }) {
     const favorites = engine.readFavorites();
     const favSet = new Set(favorites);
 
-    // OAuth provider 登录状态（Pi SDK AuthStorage，key 是 authJsonKey 如 minimax）
+    // OAuth provider 登录状态（key 是 authJsonKey，如 minimax）
     const oauthProviders = engine.authStorage?.getOAuthProviders?.() || [];
     const oauthLoginMap = new Map();
     for (const p of oauthProviders) {
@@ -245,7 +245,7 @@ export default async function providersRoute(app, { engine }) {
       } catch {}
     }
 
-    // Anthropic 格式没有 /models 端点，从 Pi SDK + ProviderRegistry builtinModels 返回
+    // Anthropic 格式没有 /models 端点，从模型目录 + ProviderRegistry builtinModels 返回
     if (api === "anthropic-messages") {
       const registryModels = engine.modelRegistry
         ? engine.modelRegistry.getAll().filter((m) => m.provider === name)
