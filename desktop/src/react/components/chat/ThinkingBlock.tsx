@@ -2,36 +2,57 @@
  * ThinkingBlock — 可折叠的思考过程区块
  */
 
-import { memo, useState, useCallback } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 
 interface Props {
   content: string;
   sealed: boolean;
+  dimmed?: boolean;
 }
 
-export const ThinkingBlock = memo(function ThinkingBlock({ content, sealed }: Props) {
+const THINKING_COLLAPSE_LINE_THRESHOLD = 4;
+
+export const ThinkingBlock = memo(function ThinkingBlock({ content, sealed, dimmed = false }: Props) {
   const t = window.t ?? ((p: string) => p);
-  const [open, setOpen] = useState(false);
-  const toggle = useCallback(() => setOpen(v => !v), []);
+  const [expanded, setExpanded] = useState(true);
+  const [shouldCollapse, setShouldCollapse] = useState(false);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const stateText = sealed ? t('thinking.done') : t('thinking.active');
 
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight || '22') || 22;
+    const maxHeight = lineHeight * THINKING_COLLAPSE_LINE_THRESHOLD;
+    setShouldCollapse(el.scrollHeight > maxHeight + 10);
+  }, [content]);
+
   return (
-    <details
-      className={`thinking-block${open ? ' open' : ''}${sealed ? ' sealed' : ' running'}`}
-      open={open}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-    >
-      <summary className="thinking-block-summary" onClick={(e) => { e.preventDefault(); toggle(); }}>
-        <span className={`thinking-block-arrow${open ? ' open' : ''}`}>›</span>
+    <div className={`thinking-block proma-like${dimmed ? ' dimmed' : ''}${sealed ? ' sealed' : ' running'}`}>
+      <div className="thinking-block-summary">
         <span className="thinking-block-title">THINKING</span>
         {!sealed && <span className="thinking-dots"><span /><span /><span /></span>}
         <span className={`thinking-block-state${sealed ? ' done' : ' running'}`}>{stateText}</span>
-      </summary>
-      {open && content && (
-        <div className="thinking-block-panel">
-          <div className="thinking-block-body">{content}</div>
+      </div>
+      {!!content && (
+        <div className={`thinking-block-panel${shouldCollapse && !expanded ? ' collapsed' : ''}`}>
+          <div
+            ref={contentRef}
+            className={`thinking-block-body${shouldCollapse && !expanded ? ' clamp' : ''}`}
+          >
+            {content}
+          </div>
+          {shouldCollapse && (
+            <button
+              type="button"
+              className="thinking-block-toggle"
+              onClick={() => setExpanded((prev) => !prev)}
+            >
+              {expanded ? '收起' : '展开思考'}
+            </button>
+          )}
         </div>
       )}
-    </details>
+    </div>
   );
 });

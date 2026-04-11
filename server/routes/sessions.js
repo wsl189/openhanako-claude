@@ -33,6 +33,12 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "search_query", "weather", "finance", "sports", "open", "click", "find", "image_query",
   "tool_uses",
 ];
+const TOOL_RESULT_DETAIL_SUMMARY_KEYS = [
+  "error", "summary", "message", "action", "status",
+  "url", "count", "filePath", "label", "ext",
+  "artifactId", "type", "title", "language", "running",
+];
+const TOOL_RESULT_TEXT_MAX_LEN = 12_000;
 const SESSION_TITLES_FILE = "session-titles.json";
 const AUTO_WORKSPACE_TRACK_FILE = "auto-workspace-whitelist.json";
 const TRACK_STATE_ACTIVE = "active";
@@ -98,6 +104,56 @@ function compactToolArgsForHistory(rawArgs) {
   return Object.keys(args).length ? args : undefined;
 }
 
+function clipToolResultText(raw) {
+  const text = String(raw || "")
+    .replace(/\r/g, "")
+    .trim();
+  if (!text) return "";
+  if (text.length <= TOOL_RESULT_TEXT_MAX_LEN) return text;
+  return `${text.slice(0, TOOL_RESULT_TEXT_MAX_LEN - 1)}…`;
+}
+
+function pickToolResultPart(block) {
+  if (typeof block === "string") return block;
+  if (!block || typeof block !== "object") return "";
+  if (typeof block.text === "string") return block.text;
+  if (typeof block.content === "string") return block.content;
+  if (typeof block.output_text === "string") return block.output_text;
+  if (typeof block.result === "string") return block.result;
+  return "";
+}
+
+function extractToolResultTextForHistory(content) {
+  if (typeof content === "string") return clipToolResultText(content);
+  if (!Array.isArray(content)) return "";
+  let text = "";
+  for (const block of content) {
+    const part = pickToolResultPart(block);
+    if (part) text += part;
+  }
+  return clipToolResultText(text);
+}
+
+function compactToolDetailsForHistory(details) {
+  if (!details || typeof details !== "object") return undefined;
+  const out = {};
+  for (const key of TOOL_RESULT_DETAIL_SUMMARY_KEYS) {
+    if (details[key] !== undefined) out[key] = details[key];
+  }
+  if (Array.isArray(details.files) && details.files.length > 0) {
+    out.files = details.files
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        filePath: item.filePath,
+        label: item.label,
+        ext: item.ext,
+      }))
+      .filter((item) => typeof item.filePath === "string" && item.filePath.trim());
+    if (!out.files.length) delete out.files;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 function compactAssistantHistoryBlocks(content) {
   if (!Array.isArray(content)) return [];
   const out = [];
@@ -145,10 +201,15 @@ function toAssistantHistoryToolResult(message) {
   if (!message || typeof message !== "object") return null;
   const name = String(message.toolName || "").trim();
   if (!name) return null;
+  const details = compactToolDetailsForHistory(message.details);
+  const resultText = extractToolResultTextForHistory(message.content)
+    || (typeof details?.error === "string" ? clipToolResultText(details.error) : "");
   return {
     name,
     toolUseId: message.toolUseId ? String(message.toolUseId) : undefined,
     args: compactToolArgsForHistory(message.args),
+    details,
+    resultText: resultText || undefined,
     success: isToolMessageSuccess(message),
   };
 }
@@ -169,6 +230,8 @@ function appendAssistantToolResult(targetMessage, result) {
       ...prev,
       ...result,
       args: result.args || prev.args,
+      details: result.details || prev.details,
+      resultText: result.resultText || prev.resultText,
     };
   } else {
     list.push(result);

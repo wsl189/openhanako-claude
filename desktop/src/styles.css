@@ -4480,6 +4480,14 @@ html[data-platform="darwin"] .sv-topbar-title {
     overflow: visible;
 }
 
+.tool-group.dimmed .tool-indicator {
+    color: color-mix(in oklab, var(--text-muted) 92%, var(--text) 8%);
+}
+
+.tool-group.dimmed .tool-indicator .tool-desc {
+    color: color-mix(in oklab, var(--text-muted) 92%, var(--text) 8%);
+}
+
 .tool-group-summary {
     display: flex;
     align-items: center;
@@ -4531,6 +4539,10 @@ html[data-platform="darwin"] .sv-topbar-title {
 /* ========================================
    工具调用指示器（组内每条）
    ======================================== */
+.tool-item {
+    width: 100%;
+}
+
 .tool-indicator {
     display: flex;
     align-items: center;
@@ -4541,6 +4553,32 @@ html[data-platform="darwin"] .sv-topbar-title {
     line-height: 1.4;
     border-bottom: 0;
     max-width: 100%;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    font: inherit;
+}
+
+.tool-indicator.expandable {
+    cursor: pointer;
+    border-radius: 10px;
+    padding: 0.25rem 0.35rem;
+    margin-left: -0.35rem;
+    margin-right: -0.35rem;
+    transition: background 0.15s ease;
+}
+
+.tool-indicator.expandable:hover {
+    background: color-mix(in oklab, var(--overlay-subtle) 70%, transparent);
+}
+
+.tool-item.expanded .tool-indicator.expandable {
+    background: color-mix(in oklab, var(--tool-bg) 76%, transparent);
+}
+
+.tool-indicator:disabled {
+    cursor: default;
 }
 
 .tool-indicator:last-child {
@@ -4636,6 +4674,45 @@ html[data-platform="darwin"] .sv-topbar-title {
     color: var(--coral);
 }
 
+.tool-expand {
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    margin-left: 0.2rem;
+    flex-shrink: 0;
+}
+
+.tool-panel {
+    margin: 0.18rem 0 0.34rem 1.2rem;
+    padding: 0.45rem 0.55rem;
+    border-radius: 10px;
+    border: 1px solid color-mix(in oklab, var(--overlay-light) 82%, transparent);
+    background: color-mix(in oklab, var(--overlay-subtle) 58%, transparent);
+}
+
+.tool-panel-row + .tool-panel-row {
+    margin-top: 0.42rem;
+}
+
+.tool-panel-label {
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 0.14rem;
+}
+
+.tool-panel-pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: color-mix(in oklab, var(--text) 90%, var(--text-muted) 10%);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 18rem;
+    overflow: auto;
+}
+
 /* 消息级执行链折叠摘要 */
 .chain-summary {
     display: inline-flex;
@@ -4673,24 +4750,18 @@ html[data-platform="darwin"] .sv-topbar-title {
 
 /* 思考折叠块 */
 .thinking-block {
-    margin: var(--space-xs) 0;
+    margin: 0.32rem 0 0.42rem;
     max-width: min(100%, 900px);
     font-size: 0.8rem;
 }
 
 .thinking-block-summary {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: 0.42rem;
-    padding: 0.1rem 0;
-    cursor: pointer;
+    padding: 0.05rem 0;
     color: var(--text-muted);
     user-select: none;
-    list-style: none;
-}
-
-.thinking-block-summary::-webkit-details-marker {
-    display: none;
 }
 
 .thinking-block-summary .thinking-dots {
@@ -4709,17 +4780,6 @@ html[data-platform="darwin"] .sv-topbar-title {
 
 .thinking-block-summary .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
 .thinking-block-summary .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
-
-.thinking-block-arrow {
-    display: inline-block;
-    font-size: 0.74rem;
-    transition: transform 0.15s ease, color 0.15s ease;
-    color: color-mix(in oklab, var(--text-muted) 84%, var(--accent) 16%);
-}
-
-.thinking-block-arrow.open {
-    transform: rotate(90deg);
-}
 
 .thinking-block-title {
     font-size: 0.74rem;
@@ -4743,7 +4803,7 @@ html[data-platform="darwin"] .sv-topbar-title {
 }
 
 .thinking-block-panel {
-    margin-top: 0.28rem;
+    margin-top: 0.25rem;
     border: 1px dashed color-mix(in oklab, var(--accent) 34%, transparent);
     border-radius: 12px;
     background: linear-gradient(
@@ -4751,11 +4811,16 @@ html[data-platform="darwin"] .sv-topbar-title {
         color-mix(in oklab, var(--tool-bg) 78%, transparent),
         color-mix(in oklab, var(--bg-card, var(--bg)) 88%, var(--tool-bg) 12%)
     );
-    padding: 0.7rem 0.82rem;
+    padding: 0.64rem 0.82rem 0.6rem;
 }
 
 .thinking-block.running .thinking-block-panel {
     box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 14%, transparent) inset;
+}
+
+.thinking-block.dimmed .thinking-block-panel {
+    border-color: color-mix(in oklab, var(--text-muted) 36%, transparent);
+    background: color-mix(in oklab, var(--tool-bg) 62%, transparent);
 }
 
 .thinking-block-body {
@@ -4763,6 +4828,26 @@ html[data-platform="darwin"] .sv-topbar-title {
     font-size: 0.84rem;
     line-height: 1.7;
     white-space: pre-wrap;
+}
+
+.thinking-block-body.clamp {
+    max-height: 6.8em;
+    overflow: hidden;
+}
+
+.thinking-block-toggle {
+    margin-top: 0.42rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: color-mix(in oklab, var(--text-muted) 84%, var(--text) 16%);
+    font-size: 0.74rem;
+    line-height: 1.2;
+    cursor: pointer;
+}
+
+.thinking-block-toggle:hover {
+    color: color-mix(in oklab, var(--text-muted) 64%, var(--text) 36%);
 }
 
 /* ========================================

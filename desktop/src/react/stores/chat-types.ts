@@ -13,6 +13,8 @@ export interface ToolCall {
   name: string;
   toolUseId?: string;
   args?: Record<string, unknown>;
+  details?: Record<string, unknown>;
+  resultText?: string;
   done: boolean;
   success: boolean;
 }

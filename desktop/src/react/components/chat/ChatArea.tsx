@@ -10,7 +10,7 @@ import { useStore } from '../../stores';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { CompactionNotice, CompactionDoneDivider } from './CompactionNotice';
-import type { ChatListItem, ContentBlock, ChatMessage } from '../../stores/chat-types';
+import type { ChatListItem } from '../../stores/chat-types';
 
 const MAX_ALIVE = 5;
 
@@ -66,145 +66,8 @@ function PanelHost() {
 
 const SCROLL_THRESHOLD = 300;
 
-type ChainGroupMeta = {
-  key: string;
-  isOwner: boolean;
-  hideTextWhenCollapsed: boolean;
-  totalThinking: number;
-  totalTools: number;
-  allCompleted: boolean;
-  allSuccessful: boolean;
-  isSettled: boolean;
-};
-
-function isChainBlock(block: ContentBlock): boolean {
-  return block.type === 'thinking' || block.type === 'tool_group';
-}
-
 function isAssistantMessageItem(item: ChatListItem | undefined): item is Extract<ChatListItem, { type: 'message' }> {
   return !!item && item.type === 'message' && item.data.role === 'assistant';
-}
-
-function hasTextBlock(msg: ChatMessage): boolean {
-  return (msg.blocks || []).some((block) => block.type === 'text');
-}
-
-function getMessageChainStats(msg: ChatMessage): {
-  hasChain: boolean;
-  thinkingCount: number;
-  toolCount: number;
-  allCompleted: boolean;
-  allSuccessful: boolean;
-  onlyChainBlocks: boolean;
-} {
-  const blocks = msg.blocks || [];
-  let hasChain = false;
-  let thinkingCount = 0;
-  let toolCount = 0;
-  let allCompleted = true;
-  let allSuccessful = true;
-  let nonChainCount = 0;
-
-  for (const block of blocks) {
-    if (!isChainBlock(block)) {
-      nonChainCount += 1;
-      continue;
-    }
-    hasChain = true;
-    if (block.type === 'thinking') {
-      thinkingCount += 1;
-      if (!block.sealed) {
-        allCompleted = false;
-        allSuccessful = false;
-      }
-    } else if (block.type === 'tool_group') {
-      toolCount += block.tools.length;
-      const doneAll = block.tools.every(t => t.done);
-      const successAll = block.tools.every(t => t.done && t.success);
-      if (!doneAll) allCompleted = false;
-      if (!successAll) allSuccessful = false;
-    }
-  }
-
-  return {
-    hasChain,
-    thinkingCount,
-    toolCount,
-    allCompleted,
-    allSuccessful,
-    onlyChainBlocks: hasChain && nonChainCount === 0,
-  };
-}
-
-function buildChainGroupMeta(path: string, items: ChatListItem[], isStreaming: boolean): Record<number, ChainGroupMeta> {
-  const map: Record<number, ChainGroupMeta> = {};
-  let lastAssistantIndex = -1;
-  for (let idx = items.length - 1; idx >= 0; idx--) {
-    if (isAssistantMessageItem(items[idx])) {
-      lastAssistantIndex = idx;
-      break;
-    }
-  }
-  let i = 0;
-
-  while (i < items.length) {
-    const item = items[i];
-    if (!isAssistantMessageItem(item)) {
-      i += 1;
-      continue;
-    }
-
-    const runStart = i;
-    let runEnd = i;
-    while (runEnd + 1 < items.length && isAssistantMessageItem(items[runEnd + 1])) {
-      runEnd += 1;
-    }
-
-    const memberIndices: number[] = [];
-    let totalThinking = 0;
-    let totalTools = 0;
-    let allCompleted = true;
-    let allSuccessful = true;
-    let finalTextIndex = -1;
-
-    for (let j = runStart; j <= runEnd; j++) {
-      const runItem = items[j];
-      if (!isAssistantMessageItem(runItem)) continue;
-      if (hasTextBlock(runItem.data)) finalTextIndex = j;
-      const stats = getMessageChainStats(runItem.data);
-      if (!stats.hasChain) continue;
-      memberIndices.push(j);
-      totalThinking += stats.thinkingCount;
-      totalTools += stats.toolCount;
-      if (!stats.allCompleted) allCompleted = false;
-      if (!stats.allSuccessful) allSuccessful = false;
-    }
-
-    if (memberIndices.length > 0) {
-      const ownerIndex = memberIndices[0];
-      const ownerMessageId = isAssistantMessageItem(items[ownerIndex])
-        ? items[ownerIndex].data.id
-        : `${runStart}`;
-      const key = `${path}:${ownerMessageId}`;
-      const isSettled = !(isStreaming && runEnd === lastAssistantIndex);
-      for (const idx of memberIndices) {
-        map[idx] = {
-          key,
-          isOwner: idx === ownerIndex,
-          hideTextWhenCollapsed: finalTextIndex >= 0 && idx !== finalTextIndex,
-          totalThinking,
-          totalTools,
-          allCompleted,
-          allSuccessful,
-          isSettled,
-        };
-      }
-    }
-
-    i = runEnd + 1;
-  }
-
-  return map;
 }
 
 const Panel = memo(function Panel({ path, active }: { path: string; active: boolean }) {
@@ -214,54 +77,12 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
-  const chainMetaByIndex = useMemo(
-    () => buildChainGroupMeta(path, items, isPathStreaming),
-    [path, items, isPathStreaming],
-  );
   const lastAssistantIndex = useMemo(() => {
     for (let idx = items.length - 1; idx >= 0; idx--) {
       if (isAssistantMessageItem(items[idx])) return idx;
     }
     return -1;
   }, [items]);
-  const [chainCollapsedByKey, setChainCollapsedByKey] = useState<Record<string, boolean>>({});
-  const chainEligibleByKeyRef = useRef<Record<string, boolean>>({});
-
-  useEffect(() => {
-    const unique = new Map<string, ChainGroupMeta>();
-    for (const meta of Object.values(chainMetaByIndex)) {
-      if (!unique.has(meta.key)) unique.set(meta.key, meta);
-    }
-
-    setChainCollapsedByKey(prev => {
-      const next: Record<string, boolean> = {};
-      const nextEligible: Record<string, boolean> = {};
-      for (const [key, meta] of unique) {
-        // 折叠稳定性：执行链完成（thinking 封口 + tools done）即可折叠，
-        // 不再要求“全部成功”，避免失败分支永不自动折叠。
-        // 对于仍在流式进行中的尾部 run，延迟显示摘要，避免中途闪烁。
-        const eligible = meta.allCompleted && meta.isSettled;
-        const wasEligible = !!chainEligibleByKeyRef.current[key];
-        nextEligible[key] = eligible;
-
-        if (Object.prototype.hasOwnProperty.call(prev, key)) {
-          // 在“回复完成”这个状态跃迁点，自动折叠一次。
-          next[key] = (!wasEligible && eligible) ? true : prev[key];
-        } else {
-          next[key] = eligible;
-        }
-      }
-      chainEligibleByKeyRef.current = nextEligible;
-      const prevKeys = Object.keys(prev);
-      const nextKeys = Object.keys(next);
-      if (prevKeys.length !== nextKeys.length) return next;
-      for (const k of nextKeys) {
-        if (!Object.prototype.hasOwnProperty.call(prev, k)) return next;
-        if (prev[k] !== next[k]) return next;
-      }
-      return prev;
-    });
-  }, [chainMetaByIndex]);
 
   // 判断是否在底部
   const checkAtBottom = () => {

@@ -66,6 +66,10 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
 
   const blocks = message.blocks || [];
   const displayBlocks = blocks;
+  const hasPrimaryText = useMemo(
+    () => displayBlocks.some((block) => block.type === 'text'),
+    [displayBlocks],
+  );
 
   const finalTextIndex = useMemo(() => {
     for (let i = displayBlocks.length - 1; i >= 0; i--) {
@@ -158,7 +162,15 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
               </div>
             );
           }
-          return <ContentBlockView key={i} block={block} agentName={displayName} yuan={displayYuan} />;
+          return (
+            <ContentBlockView
+              key={i}
+              block={block}
+              agentName={displayName}
+              yuan={displayYuan}
+              dimmed={hasPrimaryText && block.type !== 'text'}
+            />
+          );
         })}
       </div>
     </div>
@@ -167,18 +179,19 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
 
 // ── ContentBlock 分发 ──
 
-const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan }: {
+const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan, dimmed }: {
   block: ContentBlock;
   agentName: string;
   yuan: string;
+  dimmed?: boolean;
 }) {
   switch (block.type) {
     case 'thinking':
-      return <ThinkingBlock content={block.content} sealed={block.sealed} />;
+      return <ThinkingBlock content={block.content} sealed={block.sealed} dimmed={!!dimmed} />;
     case 'mood':
       return <MoodBlock yuan={block.yuan} text={block.text} />;
     case 'tool_group':
-      return <ToolGroupBlock tools={block.tools} agentName={agentName} />;
+      return <ToolGroupBlock tools={block.tools} agentName={agentName} dimmed={!!dimmed} />;
     case 'text':
       return <MarkdownContent html={block.html} />;
     case 'xing':

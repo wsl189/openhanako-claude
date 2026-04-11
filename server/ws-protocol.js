@@ -13,7 +13,7 @@
  *   { type: "thinking_delta", delta: "..." }
  *   { type: "thinking_end" }
  *   { type: "tool_start", name: "..." }
- *   { type: "tool_end", name: "...", success: bool, details?: object }
+ *   { type: "tool_end", name: "...", success: bool, details?: object, resultText?: string }
  *   { type: "turn_end" }
  *   { type: "error", message: "..." }
  *   { type: "status", isStreaming: bool }

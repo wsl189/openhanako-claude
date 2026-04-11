@@ -55,4 +55,52 @@ describe('buildItemsFromHistory', () => {
       success: true,
     });
   });
+
+  it('keeps tool result text and details from history payload', () => {
+    const blocks = getFirstAssistantBlocks({
+      messages: [{
+        id: 'a-3',
+        role: 'assistant',
+        content: 'ok',
+        toolResults: [
+          {
+            name: 'bash',
+            toolUseId: 'tool-4',
+            args: { command: 'ls' },
+            resultText: 'a.txt\nb.txt',
+            details: { summary: 'listed files' },
+            success: true,
+          },
+        ],
+      }],
+    });
+
+    const group = blocks.find((block) => block.type === 'tool_group') as Extract<ContentBlock, { type: 'tool_group' }>;
+    expect(group.tools[0]).toMatchObject({
+      name: 'bash',
+      toolUseId: 'tool-4',
+      resultText: 'a.txt\nb.txt',
+      details: { summary: 'listed files' },
+      done: true,
+      success: true,
+    });
+  });
+
+  it('places trailing tool results before text when structured blocks miss tool_use', () => {
+    const blocks = getFirstAssistantBlocks({
+      messages: [{
+        id: 'a-4',
+        role: 'assistant',
+        content: '最终回答',
+        contentBlocks: [
+          { type: 'text', text: '最终回答' },
+        ],
+        toolResults: [
+          { name: 'web_fetch', toolUseId: 'tool-x', resultText: 'ok', success: true },
+        ],
+      }],
+    });
+
+    expect(blocks.map((b) => b.type)).toEqual(['tool_group', 'text']);
+  });
 });

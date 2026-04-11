@@ -4,6 +4,7 @@ import type { ContentBlock, ToolCall } from '../stores/chat-types';
 
 type StreamEvent = any;
 type CronConfirmBlock = Extract<ContentBlock, { type: 'cron_confirm' }>;
+const TOOL_RESULT_TEXT_MAX_LEN = 12_000;
 
 function mergeToolArgs(
   currentArgs: Record<string, unknown> | undefined,
@@ -12,6 +13,60 @@ function mergeToolArgs(
   if (!nextArgs || typeof nextArgs !== 'object') return currentArgs;
   if (!currentArgs || typeof currentArgs !== 'object') return nextArgs;
   return { ...currentArgs, ...nextArgs };
+}
+
+function mergeToolDetails(
+  currentDetails: Record<string, unknown> | undefined,
+  nextDetails: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!nextDetails || typeof nextDetails !== 'object') return currentDetails;
+  if (!currentDetails || typeof currentDetails !== 'object') return nextDetails;
+  return { ...currentDetails, ...nextDetails };
+}
+
+function clipToolResultText(raw: unknown): string | undefined {
+  const text = String(raw ?? '')
+    .replace(/\r/g, '')
+    .trim();
+  if (!text) return undefined;
+  if (text.length <= TOOL_RESULT_TEXT_MAX_LEN) return text;
+  return `${text.slice(0, TOOL_RESULT_TEXT_MAX_LEN - 1)}…`;
+}
+
+function pickToolResultPart(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (!raw || typeof raw !== 'object') return '';
+  if (typeof (raw as any).text === 'string') return String((raw as any).text);
+  if (typeof (raw as any).content === 'string') return String((raw as any).content);
+  if (typeof (raw as any).output_text === 'string') return String((raw as any).output_text);
+  if (typeof (raw as any).result === 'string') return String((raw as any).result);
+  return '';
+}
+
+function extractToolResultText(raw: unknown): string | undefined {
+  if (typeof raw === 'string') return clipToolResultText(raw);
+  if (Array.isArray(raw)) {
+    let text = '';
+    for (const block of raw) {
+      const part = pickToolResultPart(block);
+      if (!part) continue;
+      text += part;
+    }
+    return clipToolResultText(text);
+  }
+  return clipToolResultText(pickToolResultPart(raw));
+}
+
+function extractToolResultTextFromDetails(details: Record<string, unknown> | undefined): string | undefined {
+  if (!details || typeof details !== 'object') return undefined;
+  const keys = ['error', 'summary', 'message', 'output', 'result'];
+  for (const key of keys) {
+    const value = details[key];
+    if (typeof value === 'string' && value.trim()) {
+      return clipToolResultText(value);
+    }
+  }
+  return undefined;
 }
 
 function findToolLocation(
@@ -179,6 +234,8 @@ export function applyChatStreamLiveEvent(
           name: msg.name,
           toolUseId: toolCallId || current.toolUseId,
           args: mergeToolArgs(current.args, msg.args),
+          details: undefined,
+          resultText: undefined,
           done: false,
           success: false,
         };
@@ -190,6 +247,8 @@ export function applyChatStreamLiveEvent(
         name: msg.name,
         toolUseId: toolCallId,
         args: msg.args,
+        details: undefined,
+        resultText: undefined,
         done: false,
         success: false,
       };
@@ -232,10 +291,17 @@ export function applyChatStreamLiveEvent(
       const group = next[location.blockIndex] as Extract<ContentBlock, { type: 'tool_group' }>;
       const tools = [...group.tools];
       const current = tools[location.toolIndex]!;
+      const mergedDetails = mergeToolDetails(current.details, msg.details);
+      const resultText = clipToolResultText(msg.resultText)
+        || extractToolResultText(msg.content)
+        || extractToolResultTextFromDetails(mergedDetails)
+        || current.resultText;
       tools[location.toolIndex] = {
         ...current,
         toolUseId: current.toolUseId || (String(msg.toolCallId || '').trim() || undefined),
         args: mergeToolArgs(current.args, msg.args),
+        details: mergedDetails,
+        resultText,
         done: true,
         success: !!msg.success,
       };

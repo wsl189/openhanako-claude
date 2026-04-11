@@ -51,4 +51,31 @@ describe('applyChatStreamLiveEvent', () => {
       args: { file_path: 'README.md', offset: 20 },
     });
   });
+
+  it('stores tool result text and details on tool_end', () => {
+    let blocks: ContentBlock[] = [];
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'bash',
+      toolCallId: 'tool-9',
+      args: { command: 'ls' },
+    });
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_end',
+      name: 'bash',
+      toolCallId: 'tool-9',
+      success: true,
+      resultText: 'a.txt\nb.txt',
+      details: { summary: 'listed 2 files' },
+    });
+
+    const group = blocks[0] as Extract<ContentBlock, { type: 'tool_group' }>;
+    expect(group.tools[0]).toMatchObject({
+      toolUseId: 'tool-9',
+      done: true,
+      success: true,
+      resultText: 'a.txt\nb.txt',
+      details: { summary: 'listed 2 files' },
+    });
+  });
 });

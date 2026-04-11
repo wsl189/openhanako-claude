@@ -18,11 +18,19 @@ export interface HistoryApiResponse {
     role: string;
     content: string;
     thinking?: string;
-    toolCalls?: Array<{ name: string; toolUseId?: string; args?: Record<string, unknown> }>;
+    toolCalls?: Array<{
+      name: string;
+      toolUseId?: string;
+      args?: Record<string, unknown>;
+      details?: Record<string, unknown>;
+      resultText?: string;
+    }>;
     toolResults?: Array<{
       name: string;
       toolUseId?: string;
       args?: Record<string, unknown>;
+      details?: Record<string, unknown>;
+      resultText?: string;
       success?: boolean;
     }>;
     contentBlocks?: Array<
@@ -57,12 +65,24 @@ function buildAssistantBlocksFromStructuredContent(
   contentBlocks: Array<any>,
 ): {
   thinking: string;
-  toolCalls: Array<{ name: string; toolUseId?: string; args?: Record<string, unknown> }>;
+  toolCalls: Array<{
+    name: string;
+    toolUseId?: string;
+    args?: Record<string, unknown>;
+    details?: Record<string, unknown>;
+    resultText?: string;
+  }>;
   text: string;
 } {
   let thinking = '';
   let text = '';
-  const toolCalls: Array<{ name: string; toolUseId?: string; args?: Record<string, unknown> }> = [];
+  const toolCalls: Array<{
+    name: string;
+    toolUseId?: string;
+    args?: Record<string, unknown>;
+    details?: Record<string, unknown>;
+    resultText?: string;
+  }> = [];
 
   for (const block of contentBlocks) {
     if (!block || typeof block !== 'object') continue;
@@ -90,9 +110,22 @@ function buildAssistantBlocksFromStructuredContent(
 }
 
 function findToolResultMatch(
-  toolResults: Array<{ name: string; toolUseId?: string; args?: Record<string, unknown>; success?: boolean }>,
+  toolResults: Array<{
+    name: string;
+    toolUseId?: string;
+    args?: Record<string, unknown>;
+    details?: Record<string, unknown>;
+    resultText?: string;
+    success?: boolean;
+  }>,
   used: Set<number>,
-  call: { name: string; toolUseId?: string; args?: Record<string, unknown> },
+  call: {
+    name: string;
+    toolUseId?: string;
+    args?: Record<string, unknown>;
+    details?: Record<string, unknown>;
+    resultText?: string;
+  },
 ): number {
   if (call.toolUseId) {
     const byId = toolResults.findIndex((result, idx) => (
@@ -114,6 +147,45 @@ function appendAssistantTextBlocks(blocks: ContentBlock[], text: string): void {
   for (const xb of xingBlocks) {
     blocks.push({ type: 'xing', title: xb.title, content: xb.content, sealed: true });
   }
+}
+
+function insertToolEntriesBeforeText(
+  blocks: ContentBlock[],
+  toolEntries: Array<{
+    name: string;
+    toolUseId?: string;
+    args?: Record<string, unknown>;
+    details?: Record<string, unknown>;
+    resultText?: string;
+    done: boolean;
+    success: boolean;
+  }>,
+): void {
+  if (!toolEntries.length) return;
+  const firstTextLikeIdx = blocks.findIndex((block) => block.type === 'text' || block.type === 'xing');
+  if (firstTextLikeIdx < 0) {
+    const prev = blocks[blocks.length - 1];
+    if (prev?.type === 'tool_group') {
+      prev.tools = [...prev.tools, ...toolEntries];
+      prev.collapsed = false;
+    } else {
+      blocks.push({ type: 'tool_group', tools: toolEntries, collapsed: false });
+    }
+    return;
+  }
+
+  const prev = blocks[firstTextLikeIdx - 1];
+  if (prev?.type === 'tool_group') {
+    prev.tools = [...prev.tools, ...toolEntries];
+    prev.collapsed = false;
+    return;
+  }
+
+  blocks.splice(firstTextLikeIdx, 0, {
+    type: 'tool_group',
+    tools: toolEntries,
+    collapsed: false,
+  });
 }
 
 // ── 构建 ──
@@ -168,6 +240,15 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         let hasThinkingBlock = false;
         const usedToolResults = new Set<number>();
         let hasTextLikeBlock = false;
+        const trailingToolEntries: Array<{
+          name: string;
+          toolUseId?: string;
+          args?: Record<string, unknown>;
+          details?: Record<string, unknown>;
+          resultText?: string;
+          done: boolean;
+          success: boolean;
+        }> = [];
 
         for (const sb of structuredBlocks) {
           if (!sb || typeof sb !== 'object') continue;
@@ -196,6 +277,8 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
               name: call.name,
               toolUseId: call.toolUseId || matched?.toolUseId,
               args: call.args || matched?.args,
+              details: (matched?.details && typeof matched.details === 'object') ? matched.details : undefined,
+              resultText: typeof matched?.resultText === 'string' ? matched.resultText : undefined,
               done: true,
               success: matched ? matched.success !== false : true,
             };
@@ -223,25 +306,18 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
           if (usedToolResults.has(idx)) continue;
           const result = toolResults[idx];
           if (!result?.name) continue;
-          const toolEntry = {
+          trailingToolEntries.push({
             name: result.name,
             toolUseId: result.toolUseId,
             args: (result.args && typeof result.args === 'object') ? result.args : undefined,
+            details: (result.details && typeof result.details === 'object') ? result.details : undefined,
+            resultText: typeof result.resultText === 'string' ? result.resultText : undefined,
             done: true,
             success: result.success !== false,
-          };
-          const prev = blocks[blocks.length - 1];
-          if (prev?.type === 'tool_group') {
-            prev.tools = [...prev.tools, toolEntry];
-            prev.collapsed = false;
-          } else {
-            blocks.push({
-              type: 'tool_group',
-              tools: [toolEntry],
-              collapsed: false,
-            });
-          }
+          });
         }
+
+        insertToolEntriesBeforeText(blocks, trailingToolEntries);
 
         if (!hasThinkingBlock && mergedThinking) {
           blocks.unshift({ type: 'thinking', content: mergedThinking, sealed: true });
@@ -276,6 +352,8 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
               name: tc.name,
               toolUseId: tc.toolUseId || matched?.toolUseId,
               args: mergedArgs,
+              details: (matched?.details && typeof matched.details === 'object') ? matched.details : undefined,
+              resultText: typeof matched?.resultText === 'string' ? matched.resultText : undefined,
               done: true,
               success: matched ? matched.success !== false : true,
             };
@@ -316,6 +394,8 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
               name: result.name,
               toolUseId: result.toolUseId,
               args: (result.args && typeof result.args === 'object') ? result.args : undefined,
+              details: (result.details && typeof result.details === 'object') ? result.details : undefined,
+              resultText: typeof result.resultText === 'string' ? result.resultText : undefined,
               done: true,
               success: result.success !== false,
             });

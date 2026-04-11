@@ -174,4 +174,79 @@ describe('mergeDelta', () => {
       }
     }
   });
+
+  it('does not overwrite previous thinking when multiple thinking segments occur', () => {
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '第一段思考' });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '第二段思考' });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const thinking = (only.data.blocks || []).find((b) => b.type === 'thinking');
+      expect(thinking?.type).toBe('thinking');
+      if (thinking?.type === 'thinking') {
+        expect(thinking.content).toContain('第一段思考');
+        expect(thinking.content).toContain('第二段思考');
+      }
+    }
+  });
+
+  it('keeps a single thinking block when snapshot repeats finished thinking', () => {
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '先分析问题。' });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        { type: 'thinking', thinking: '先分析问题。' },
+        { type: 'text', text: '给你结论。' },
+      ],
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'text']);
+      const thinkingBlocks = blocks.filter((b) => b.type === 'thinking');
+      expect(thinkingBlocks).toHaveLength(1);
+      const thinking = thinkingBlocks[0];
+      if (thinking?.type === 'thinking') {
+        expect(thinking.content).toContain('先分析问题');
+      }
+    }
+  });
+
+  it('renders snapshot-only thinking before text', () => {
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        { type: 'thinking', thinking: '我先搜索再汇总。' },
+        { type: 'text', text: '这是最终回答。' },
+      ],
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'text']);
+    }
+  });
 });

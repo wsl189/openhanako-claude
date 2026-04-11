@@ -264,6 +264,55 @@ function finalizeBufferedTextSegment(buf: Buffer): void {
   ];
 }
 
+function finalizeBufferedThinkingSegment(buf: Buffer): void {
+  const thinking = stripSdkDiagnosticLines(String(buf.thinkingAcc || ''));
+  buf.thinkingAcc = '';
+  if (!thinking.trim()) return;
+
+  const last = buf.liveBlocks[buf.liveBlocks.length - 1];
+  if (last?.type === 'thinking' && last.sealed) {
+    const glue = last.content && !last.content.endsWith('\n') ? '\n' : '';
+    last.content = `${last.content}${glue}${thinking}`;
+    return;
+  }
+
+  buf.liveBlocks.push({
+    type: 'thinking',
+    content: thinking,
+    sealed: true,
+  });
+}
+
+function upsertSealedThinkingFromSnapshot(buf: Buffer, snapshotThinking: string): void {
+  const thinking = stripSdkDiagnosticLines(String(snapshotThinking || ''));
+  if (!thinking.trim()) return;
+
+  const existingIdx = buf.liveBlocks.findIndex((block) => block.type === 'thinking' && block.sealed);
+  if (existingIdx >= 0) {
+    const current = buf.liveBlocks[existingIdx] as Extract<ContentBlock, { type: 'thinking' }>;
+    current.content = mergeSnapshotText(current.content || '', thinking);
+    return;
+  }
+
+  const firstTextLikeIdx = buf.liveBlocks.findIndex((block) => (
+    block.type === 'text'
+    || block.type === 'tool_group'
+    || block.type === 'xing'
+    || block.type === 'file_output'
+    || block.type === 'artifact'
+    || block.type === 'browser_screenshot'
+    || block.type === 'skill'
+    || block.type === 'cron_confirm'
+    || block.type === 'settings_confirm'
+  ));
+  const insertAt = firstTextLikeIdx >= 0 ? firstTextLikeIdx : buf.liveBlocks.length;
+  buf.liveBlocks = [
+    ...buf.liveBlocks.slice(0, insertAt),
+    { type: 'thinking', content: thinking, sealed: true },
+    ...buf.liveBlocks.slice(insertAt),
+  ];
+}
+
 function isRenderableBlock(block: ContentBlock): boolean {
   if (!block) return false;
   switch (block.type) {
@@ -354,19 +403,6 @@ class StreamBufferManager {
 
     const store = useStore.getState();
     store.updateLastMessage(buf.sessionPath, (msg) => {
-      const blocks: ContentBlock[] = [];
-
-      // ── Thinking ──
-      const shouldKeepThinkingShell = buf.hadThinking && !buf.textAcc && !buf.xingAcc && buf.liveBlocks.length === 0;
-      if (buf.thinkingAcc || buf.inThinking || shouldKeepThinkingShell) {
-        const thinkingBlock: ContentBlock = {
-          type: 'thinking',
-          content: buf.thinkingAcc,
-          sealed: !buf.inThinking,
-        };
-        blocks.push(thinkingBlock);
-      }
-
       // ── Ordered content (text + tools + files + artifacts ...) ──
       const orderedLiveBlocks = [...buf.liveBlocks];
       if (buf.textAcc) {
@@ -379,6 +415,16 @@ class StreamBufferManager {
         }
       }
 
+      // ── Thinking (active segment / empty shell) ──
+      const shouldKeepThinkingShell = buf.hadThinking && !buf.textAcc && !buf.xingAcc && orderedLiveBlocks.length === 0;
+      if (buf.inThinking || shouldKeepThinkingShell) {
+        orderedLiveBlocks.push({
+          type: 'thinking',
+          content: buf.thinkingAcc,
+          sealed: !buf.inThinking,
+        });
+      }
+
       // ── Xing ──
       if (buf.xingAcc || buf.inXing) {
         const xingBlock: ContentBlock = {
@@ -387,12 +433,10 @@ class StreamBufferManager {
           content: buf.xingAcc,
           sealed: !buf.inXing,
         };
-        blocks.push(xingBlock);
+        orderedLiveBlocks.push(xingBlock);
       }
 
-      blocks.push(...orderedLiveBlocks);
-
-      return { ...msg, blocks };
+      return { ...msg, blocks: orderedLiveBlocks };
     });
   }
 
@@ -412,8 +456,13 @@ class StreamBufferManager {
           this.ensureMessage(buf);
           const snapshotThinking = stripSdkDiagnosticLines(extractSnapshotThinkingContent(content));
           if (snapshotThinking) {
-            buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, snapshotThinking);
             buf.hadThinking = true;
+            if (buf.inThinking) {
+              buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, snapshotThinking);
+            } else {
+              upsertSealedThinkingFromSnapshot(buf, snapshotThinking);
+              buf.thinkingAcc = '';
+            }
           } else if (!buf.inThinking) {
             buf.thinkingAcc = '';
           }
@@ -466,8 +515,13 @@ class StreamBufferManager {
 
         const snapshotThinking = stripSdkDiagnosticLines(extractSnapshotThinkingContent(content));
         if (snapshotThinking) {
-          buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, snapshotThinking);
           buf.hadThinking = true;
+          if (buf.inThinking) {
+            buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, snapshotThinking);
+          } else {
+            upsertSealedThinkingFromSnapshot(buf, snapshotThinking);
+            buf.thinkingAcc = '';
+          }
         } else if (!buf.inThinking) {
           buf.thinkingAcc = '';
         }
@@ -507,6 +561,7 @@ class StreamBufferManager {
 
       case 'thinking_start':
         finalizeBufferedTextSegment(buf);
+        finalizeBufferedThinkingSegment(buf);
         this.ensureMessage(buf);
         buf.inThinking = true;
         buf.hadThinking = true;
@@ -522,6 +577,7 @@ class StreamBufferManager {
 
       case 'thinking_end':
         buf.inThinking = false;
+        finalizeBufferedThinkingSegment(buf);
         this.flush(buf);
         break;
 

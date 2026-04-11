@@ -29,6 +29,7 @@ const TOOL_ARG_SUMMARY_KEYS = [
 ];
 const DESK_MUTATING_TOOL_NAMES = new Set(["write", "edit", "bash", "generate_images"]);
 const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]\b/i;
+const TOOL_RESULT_TEXT_MAX_LEN = 12_000;
 
 function compactToolArgs(rawArgs) {
   if (!rawArgs || typeof rawArgs !== "object") return undefined;
@@ -86,6 +87,29 @@ function extractContentParts(content) {
 
 function extractText(content) {
   return extractContentParts(content).text;
+}
+
+function clipToolResultText(raw) {
+  const text = String(raw || "")
+    .replace(/\r/g, "")
+    .trim();
+  if (!text) return "";
+  if (text.length <= TOOL_RESULT_TEXT_MAX_LEN) return text;
+  return `${text.slice(0, TOOL_RESULT_TEXT_MAX_LEN - 1)}…`;
+}
+
+function extractToolResultText(content, details) {
+  const fromContent = clipToolResultText(extractText(content));
+  if (fromContent) return fromContent;
+  if (!details || typeof details !== "object") return "";
+  const keys = ["error", "summary", "message", "output", "result"];
+  for (const key of keys) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim()) {
+      return clipToolResultText(value);
+    }
+  }
+  return "";
 }
 
 function extractTitleSourceText(content) {
@@ -536,6 +560,7 @@ export default async function chatRoute(app, { engine, hub }) {
       const details = event.details;
       const hasDetailsError = typeof details?.error === "string" && details.error.trim().length > 0;
       const args = compactToolArgs(event.args);
+      const resultText = extractToolResultText(event.content, details);
       emitStreamEvent(sessionPath, ss, {
         type: "tool_end",
         name: event.name || "",
@@ -543,6 +568,7 @@ export default async function chatRoute(app, { engine, hub }) {
         success: event.success !== false && !hasDetailsError,
         args,
         details,
+        resultText,
       });
 
       if (event.name === "present_files") {
