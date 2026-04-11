@@ -5,7 +5,7 @@
  * 通过 portal 渲染到 #sessionList，从 Zustand sessions 状态驱动。
  */
 
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
@@ -58,6 +58,14 @@ function groupSessionsByDate(sessions: Session[]): GroupedSessions[] {
     .map(key => ({ key, items: groups[key] }));
 }
 
+function formatRunningDuration(ms: number): string {
+  const sec = Math.max(0, ms) / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec - minutes * 60;
+  return `${minutes}m ${seconds.toFixed(1)}s`;
+}
+
 // ── 内部组件 ──
 
 function SessionListInner() {
@@ -69,6 +77,27 @@ function SessionListInner() {
   const streamingSessions = useStore(s => s.streamingSessions);
 
   const [browserSessions, setBrowserSessions] = useState<Record<string, string>>({});
+  const [streamingSince, setStreamingSince] = useState<Record<string, number>>({});
+  const [streamingNow, setStreamingNow] = useState<number>(Date.now());
+
+  useEffect(() => {
+    const now = Date.now();
+    setStreamingSince((prev) => {
+      const next: Record<string, number> = {};
+      for (const path of streamingSessions) {
+        next[path] = prev[path] ?? now;
+      }
+      return next;
+    });
+  }, [streamingSessions]);
+
+  useEffect(() => {
+    if (streamingSessions.length === 0) return undefined;
+    const timer = window.setInterval(() => {
+      setStreamingNow(Date.now());
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [streamingSessions.length]);
   const refreshBrowserSessions = useCallback(() => {
     if (sessions.length === 0) {
       setBrowserSessions({});
@@ -97,6 +126,11 @@ function SessionListInner() {
   }
 
   const grouped = groupSessionsByDate(sessions);
+  const runningLabel = useMemo(() => {
+    const key = 'session.agentRunning';
+    const text = t(key);
+    return text && text !== key ? text : 'Agent Running';
+  }, [t]);
 
   return (
     <>
@@ -109,6 +143,10 @@ function SessionListInner() {
               session={s}
               isActive={!pendingNewSession && s.path === currentSessionPath}
               isStreaming={streamingSessions.includes(s.path)}
+              runningMs={streamingSessions.includes(s.path)
+                ? Math.max(0, streamingNow - (streamingSince[s.path] ?? streamingNow))
+                : 0}
+              runningLabel={runningLabel}
               agents={agents}
               browserUrl={browserSessions[s.path] || null}
             />
@@ -121,10 +159,12 @@ function SessionListInner() {
 
 // ── Session Item ──
 
-function SessionItem({ session: s, isActive, isStreaming, agents, browserUrl }: {
+function SessionItem({ session: s, isActive, isStreaming, runningMs, runningLabel, agents, browserUrl }: {
   session: Session;
   isActive: boolean;
   isStreaming: boolean;
+  runningMs: number;
+  runningLabel: string;
   agents: Agent[];
   browserUrl: string | null;
 }) {
@@ -175,6 +215,12 @@ function SessionItem({ session: s, isActive, isStreaming, agents, browserUrl }: 
       <div className="session-item-meta">
         {parts.join(' · ')}
       </div>
+      {isStreaming && (
+        <div className="session-item-running">
+          <span className="session-running-icon" aria-hidden>⋮</span>
+          <span>{runningLabel} {formatRunningDuration(runningMs)}</span>
+        </div>
+      )}
 
       {browserUrl && (
         <span className="session-browser-badge" title={browserUrl}>

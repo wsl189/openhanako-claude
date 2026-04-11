@@ -711,6 +711,30 @@ html[data-platform="linux"] .tb-toggle-right {
     opacity: 0.8;
 }
 
+.session-item-running {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.66rem;
+    color: var(--text-muted);
+    margin-top: 1px;
+    opacity: 0.85;
+}
+
+.session-running-icon {
+    width: 0.7rem;
+    text-align: center;
+    font-size: 0.74rem;
+    line-height: 1;
+    opacity: 0.8;
+    animation: session-running-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes session-running-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.9; }
+}
+
 /* 归档按钮（session 右上角） */
 .session-item {
     position: relative;
