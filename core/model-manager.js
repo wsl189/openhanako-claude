@@ -306,11 +306,15 @@ export class ModelManager {
       throw new Error(t("error.providerMissingCreds", { provider }));
     }
     return {
+      id: entry.id,
+      name: entry.name,
       model: normalizeAnthropicThinkingModelId(entry.id, creds.api),
       provider,
       api: creds.api,
       api_key: creds.api_key,
       base_url: creds.base_url,
+      contextWindow: entry.contextWindow || null,
+      maxTokens: entry.maxTokens || null,
     };
   }
 

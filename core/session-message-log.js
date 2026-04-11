@@ -31,6 +31,22 @@ export function appendSessionMessageLog(sessionPath, message, timestamp = new Da
   return logPath;
 }
 
+export function appendSessionContextReset(sessionPath, messages = [], timestamp = new Date().toISOString()) {
+  const logPath = messageLogPathForSession(sessionPath);
+  if (!logPath) throw new Error("sessionPath is required");
+  fs.mkdirSync(requireDirname(logPath), { recursive: true });
+  fs.appendFileSync(
+    logPath,
+    JSON.stringify({
+      type: "context_reset",
+      timestamp,
+      messages: Array.isArray(messages) ? messages : [],
+    }) + "\n",
+    "utf-8",
+  );
+  return logPath;
+}
+
 export function readSessionMessageEntries(sessionPath, { limit = null } = {}) {
   const logPath = messageLogPathForSession(sessionPath);
   if (!logPath || !fs.existsSync(logPath)) return [];
@@ -51,9 +67,18 @@ export function readSessionMessageEntries(sessionPath, { limit = null } = {}) {
 }
 
 export function readSessionMessagesFromLog(sessionPath, { limit = null } = {}) {
-  return readSessionMessageEntries(sessionPath, { limit })
-    .map((entry) => entry?.message || null)
-    .filter(Boolean);
+  const entries = readSessionMessageEntries(sessionPath, { limit });
+  let messages = [];
+  for (const entry of entries) {
+    if (entry?.type === "context_reset" && Array.isArray(entry.messages)) {
+      messages = entry.messages.filter(Boolean);
+      continue;
+    }
+    if (entry?.message) {
+      messages.push(entry.message);
+    }
+  }
+  return messages;
 }
 
 function requireDirname(filePath) {

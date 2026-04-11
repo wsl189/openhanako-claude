@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { extractTextFromContent } from "./claude-transcript.js";
 import {
+  appendSessionContextReset,
   appendSessionMessageLog,
   readSessionMessagesFromLog,
 } from "./session-message-log.js";
@@ -15,6 +16,10 @@ const PROVIDER_STREAM_MAX_DELAY_MS = 4000;
 const PROVIDER_OVERLOAD_MAX_RETRIES = 4;
 const PROVIDER_OVERLOAD_BASE_DELAY_MS = 1500;
 const PROVIDER_OVERLOAD_MAX_DELAY_MS = 12000;
+const PROVIDER_CONTEXT_WINDOW_FALLBACK = 128_000;
+const PROVIDER_COMPACT_MIN_MESSAGES = 10;
+const PROVIDER_COMPACT_KEEP_MESSAGES = 24;
+const PROVIDER_COMPACT_SUMMARY_MARKER = "[[hanako:provider-compacted]]";
 
 function deferred() {
   let resolve;
@@ -160,6 +165,70 @@ function mergeRuntimeText(acc = "", next = "") {
   return a + b;
 }
 
+function toPositiveInt(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n);
+}
+
+function messageToPlainText(message) {
+  if (!message || typeof message !== "object") return "";
+  const role = String(message.role || "").trim();
+  if (role === "user" || role === "assistant" || role === "system") {
+    return extractTextFromContent(message.content || "");
+  }
+  if (role === "tool") {
+    const toolName = message.toolName ? `[${message.toolName}] ` : "";
+    const args = message.args && typeof message.args === "object"
+      ? JSON.stringify(message.args)
+      : "";
+    const content = toolContentToText(message.content || "");
+    return `${toolName}${args} ${content}`.trim();
+  }
+  return extractTextFromContent(message.content || "");
+}
+
+function estimateTokensFromMessages(messages = []) {
+  let chars = 0;
+  for (const message of messages || []) {
+    const role = String(message?.role || "");
+    const body = messageToPlainText(message);
+    chars += role.length + body.length + 12;
+  }
+  return Math.max(1, Math.round(chars / 4));
+}
+
+function compactLine(text = "", limit = 220) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, limit - 1)}…`;
+}
+
+function buildCompactedSummary(messages = []) {
+  const rows = [];
+  let budget = 4800;
+  for (const message of messages) {
+    const role = String(message?.role || "").toLowerCase();
+    if (role !== "user" && role !== "assistant" && role !== "tool") continue;
+    const raw = compactLine(messageToPlainText(message));
+    if (!raw) continue;
+    const tag = role === "user" ? "User"
+      : role === "assistant" ? "Assistant"
+        : `Tool(${String(message?.toolName || "unknown")})`;
+    const line = `${tag}: ${raw}`;
+    if (line.length + 1 > budget) break;
+    rows.push(line);
+    budget -= line.length + 1;
+  }
+  if (rows.length === 0) return "";
+  return [
+    PROVIDER_COMPACT_SUMMARY_MARKER,
+    "Compacted conversation summary (earlier turns):",
+    ...rows,
+  ].join("\n");
+}
+
 export class ProviderSessionRuntime {
   constructor({
     sessionId = null,
@@ -186,6 +255,8 @@ export class ProviderSessionRuntime {
     this._subscribers = new Set();
     this._pendingTurn = null;
     this._abortController = null;
+    this._lastContextUsage = null;
+    this.refreshContextUsage();
     this.sessionManager = {
       getSessionId: () => this.sessionId,
       getSessionFile: () => this.sessionPath,
@@ -216,6 +287,7 @@ export class ProviderSessionRuntime {
   _appendMessage(message, timestamp = nowIso()) {
     this.messages.push(message);
     appendSessionMessageLog(this.sessionPath, message, timestamp);
+    this.refreshContextUsage();
     try {
       patchSessionMetadata(this.sessionPath, {});
     } catch {
@@ -564,6 +636,7 @@ export class ProviderSessionRuntime {
       content: accumulatedText,
       toolCalls: accumulatedToolCalls,
     });
+    this.refreshContextUsage();
     this._emit({ type: "turn_end" });
   }
 
@@ -595,6 +668,7 @@ export class ProviderSessionRuntime {
       model: nextModel,
       id: nextModel,
     };
+    this.refreshContextUsage();
   }
 
   setThinkingLevel(level) {
@@ -602,14 +676,82 @@ export class ProviderSessionRuntime {
   }
 
   async refreshContextUsage() {
-    return null;
+    const contextWindow = toPositiveInt(this.resolvedModel?.contextWindow)
+      || toPositiveInt(this.resolvedModel?.context)
+      || PROVIDER_CONTEXT_WINDOW_FALLBACK;
+    const tokens = estimateTokensFromMessages(this.messages || []);
+    this._lastContextUsage = {
+      tokens,
+      contextWindow,
+      percent: contextWindow
+        ? Math.min(100, Math.round((tokens / contextWindow) * 100))
+        : null,
+    };
+    return this._lastContextUsage;
   }
 
   getContextUsage() {
-    return null;
+    if (!this._lastContextUsage) {
+      const contextWindow = toPositiveInt(this.resolvedModel?.contextWindow)
+        || toPositiveInt(this.resolvedModel?.context)
+        || PROVIDER_CONTEXT_WINDOW_FALLBACK;
+      const tokens = estimateTokensFromMessages(this.messages || []);
+      return {
+        tokens,
+        contextWindow,
+        percent: contextWindow
+          ? Math.min(100, Math.round((tokens / contextWindow) * 100))
+          : null,
+      };
+    }
+    return this._lastContextUsage;
   }
 
   async compact() {
-    throw new Error("Provider runtime does not support compaction");
+    if (this.isStreaming) {
+      throw new Error("Provider session is still streaming");
+    }
+    if (this.isCompacting) {
+      throw new Error("Provider session is already compacting");
+    }
+    this.isCompacting = true;
+    try {
+      if (!Array.isArray(this.messages) || this.messages.length < PROVIDER_COMPACT_MIN_MESSAGES) {
+        throw new Error("Nothing to compact");
+      }
+
+      const keepCount = Math.min(
+        PROVIDER_COMPACT_KEEP_MESSAGES,
+        Math.max(8, Math.floor(this.messages.length * 0.45)),
+      );
+      const splitAt = this.messages.length - keepCount;
+      if (splitAt <= 1) {
+        throw new Error("Nothing to compact");
+      }
+
+      const older = this.messages.slice(0, splitAt);
+      const recent = this.messages.slice(splitAt);
+      const summaryText = buildCompactedSummary(older);
+      if (!summaryText) {
+        throw new Error("Nothing to compact");
+      }
+
+      const summaryMessage = {
+        role: "assistant",
+        content: [{ type: "text", text: summaryText }],
+      };
+      this.messages = [summaryMessage, ...recent];
+      appendSessionContextReset(this.sessionPath, this.messages, nowIso());
+      this.refreshContextUsage();
+
+      try {
+        patchSessionMetadata(this.sessionPath, {});
+      } catch {
+        // ignore metadata patch failures
+      }
+      return this.getContextUsage();
+    } finally {
+      this.isCompacting = false;
+    }
   }
 }

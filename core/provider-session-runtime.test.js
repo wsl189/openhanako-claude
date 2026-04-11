@@ -482,4 +482,65 @@ describe("ProviderSessionRuntime", () => {
       .join("\n");
     expect(snapshotText).toContain("工具调用已触发，但未拿到可展示的最终回复。请重试一次。");
   });
+
+  it("tracks context usage and persists compaction for provider runtime sessions", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-provider-runtime-compact-"));
+    const sessionPath = path.join(tempDir, "demo7.session.json");
+
+    const runtime = new ProviderSessionRuntime({
+      sessionId: "session-test-7",
+      cwd: tempDir,
+      sessionPath,
+      resolvedModel: {
+        api: "openai-completions",
+        base_url: "https://example.invalid",
+        api_key: "test",
+        model: "demo-model",
+        contextWindow: 1_000,
+      },
+      systemPrompt: "You are a test agent.",
+      tools: [],
+    });
+
+    for (let i = 0; i < 18; i += 1) {
+      runtime._appendMessage({
+        role: "user",
+        content: [{ type: "text", text: `用户问题 ${i}: ${"A".repeat(160)}` }],
+      });
+      runtime._appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: `助手回答 ${i}: ${"B".repeat(180)}` }],
+      });
+    }
+
+    const before = await runtime.refreshContextUsage();
+    expect(before.contextWindow).toBe(1_000);
+    expect(before.tokens).toBeGreaterThan(0);
+
+    await runtime.compact();
+    const after = runtime.getContextUsage();
+    expect(after.tokens).toBeLessThan(before.tokens);
+
+    await runtime.close();
+
+    const reloaded = new ProviderSessionRuntime({
+      sessionId: "session-test-7-reloaded",
+      cwd: tempDir,
+      sessionPath,
+      resolvedModel: {
+        api: "openai-completions",
+        base_url: "https://example.invalid",
+        api_key: "test",
+        model: "demo-model",
+        contextWindow: 1_000,
+      },
+      systemPrompt: "You are a test agent.",
+      tools: [],
+    });
+
+    const firstContent = JSON.stringify(reloaded.messages?.[0]?.content || "");
+    expect(firstContent).toContain("[[hanako:provider-compacted]]");
+    expect(reloaded.getContextUsage().tokens).toBeLessThan(before.tokens);
+    await reloaded.close();
+  });
 });
