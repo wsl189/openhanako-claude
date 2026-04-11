@@ -4767,6 +4767,12 @@ html[data-platform="darwin"] .sv-topbar-title {
     white-space: nowrap;
 }
 
+.chain-summary .chain-summary-arrow {
+    width: 0.85em;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
 .chain-summary .chain-summary-status {
     color: var(--green);
     margin-left: 0.25rem;

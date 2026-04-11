@@ -121,16 +121,17 @@ function SessionListInner() {
     return () => window.removeEventListener('hana-browser-sessions-changed', onBrowserSessionsChanged);
   }, [refreshBrowserSessions]);
 
-  if (sessions.length === 0) {
-    return <div className="session-empty">{t('sidebar.empty')}</div>;
-  }
-
-  const grouped = groupSessionsByDate(sessions);
   const runningLabel = useMemo(() => {
     const key = 'session.agentRunning';
     const text = t(key);
     return text && text !== key ? text : 'Agent Running';
   }, [t]);
+
+  if (sessions.length === 0) {
+    return <div className="session-empty">{t('sidebar.empty')}</div>;
+  }
+
+  const grouped = groupSessionsByDate(sessions);
 
   return (
     <>

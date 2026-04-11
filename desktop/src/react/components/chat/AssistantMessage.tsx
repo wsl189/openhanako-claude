@@ -26,6 +26,44 @@ interface Props {
   isStreaming?: boolean;
 }
 
+function normalizeToolName(name: string): string {
+  return String(name || '').trim().toLowerCase();
+}
+
+function removeRedundantOutputToolLines(blocks: ContentBlock[]): ContentBlock[] {
+  if (!Array.isArray(blocks) || blocks.length === 0) return blocks;
+
+  const hasCronCard = blocks.some((block) => block.type === 'cron_confirm');
+  const hasFileCard = blocks.some((block) => block.type === 'file_output');
+  const hasArtifactCard = blocks.some((block) => block.type === 'artifact');
+  const hasImageCard = blocks.some((block) => block.type === 'browser_screenshot');
+
+  const shouldHideToolLine = (toolName: string): boolean => {
+    const name = normalizeToolName(toolName);
+    if (name === 'cron') return hasCronCard;
+    if (name === 'present_files') return hasFileCard;
+    if (name === 'create_artifact') return hasArtifactCard;
+    if (name === 'generate_images') return hasImageCard;
+    return false;
+  };
+
+  const next: ContentBlock[] = [];
+  for (const block of blocks) {
+    if (block.type !== 'tool_group') {
+      next.push(block);
+      continue;
+    }
+    const tools = block.tools.filter((tool) => !shouldHideToolLine(tool.name));
+    if (tools.length === 0) continue;
+    next.push({ ...block, tools });
+  }
+  return next;
+}
+
+function isAutoCollapsibleChainBlock(block: ContentBlock): boolean {
+  return block.type === 'thinking' || block.type === 'tool_group';
+}
+
 export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, isStreaming = false }: Props) {
   const agentName = useStore(s => s.agentName) || 'Hanako';
   const agentYuan = useStore(s => s.agentYuan) || 'hanako';
@@ -65,20 +103,50 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   }, [sessionAgent?.avatarUrl, agentAvatarUrl, fallbackAvatar]);
 
   const blocks = message.blocks || [];
-  const displayBlocks = blocks;
+  const displayBlocks = useMemo(() => removeRedundantOutputToolLines(blocks), [blocks]);
   const hasPrimaryText = useMemo(
     () => displayBlocks.some((block) => block.type === 'text'),
     [displayBlocks],
   );
+  const chainBlocks = useMemo(() => displayBlocks.filter(isAutoCollapsibleChainBlock), [displayBlocks]);
+  const hasCollapsibleChain = hasPrimaryText && chainBlocks.length > 0;
+  const [chainExpanded, setChainExpanded] = useState(false);
+
+  useEffect(() => {
+    setChainExpanded(false);
+  }, [message.id, hasCollapsibleChain]);
+
+  const renderedBlocks = useMemo(() => {
+    if (!hasCollapsibleChain || chainExpanded) return displayBlocks;
+    return displayBlocks.filter((block) => !isAutoCollapsibleChainBlock(block));
+  }, [displayBlocks, hasCollapsibleChain, chainExpanded]);
+
+  const chainThinkingCount = useMemo(
+    () => chainBlocks.filter((block) => block.type === 'thinking').length,
+    [chainBlocks],
+  );
+  const chainToolCount = useMemo(
+    () => chainBlocks.reduce((sum, block) => (
+      block.type === 'tool_group' ? sum + block.tools.length : sum
+    ), 0),
+    [chainBlocks],
+  );
+  const chainSummaryText = useMemo(() => {
+    const parts: string[] = [];
+    if (chainThinkingCount > 0) parts.push(`${chainThinkingCount}次思考`);
+    if (chainToolCount > 0) parts.push(`${chainToolCount}次工具执行`);
+    const detail = parts.length ? parts.join(' · ') : '详情';
+    return `思考和执行链（${detail}）`;
+  }, [chainThinkingCount, chainToolCount]);
 
   const finalTextIndex = useMemo(() => {
-    for (let i = displayBlocks.length - 1; i >= 0; i--) {
-      if (displayBlocks[i].type === 'text') return i;
+    for (let i = renderedBlocks.length - 1; i >= 0; i--) {
+      if (renderedBlocks[i].type === 'text') return i;
     }
     return -1;
-  }, [displayBlocks]);
-  const finalTextHtml = finalTextIndex >= 0 && displayBlocks[finalTextIndex].type === 'text'
-    ? displayBlocks[finalTextIndex].html
+  }, [renderedBlocks]);
+  const finalTextHtml = finalTextIndex >= 0 && renderedBlocks[finalTextIndex].type === 'text'
+    ? renderedBlocks[finalTextIndex].html
     : '';
   const [smoothedFinalTextHtml, setSmoothedFinalTextHtml] = useState(finalTextHtml);
 
@@ -136,7 +204,19 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
         </div>
       )}
       <div className="message assistant">
-        {displayBlocks.map((block, i) => {
+        {hasCollapsibleChain && (
+          <button
+            type="button"
+            className="chain-summary"
+            onClick={() => setChainExpanded((prev) => !prev)}
+            aria-expanded={chainExpanded}
+          >
+            <span className="chain-summary-arrow">{chainExpanded ? '▾' : '▸'}</span>
+            <span className="chain-summary-text">{chainSummaryText}</span>
+            <span className="chain-summary-status">{chainExpanded ? '已展开' : '已折叠'}</span>
+          </button>
+        )}
+        {renderedBlocks.map((block, i) => {
           const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
           if (isFinalTextBlock) {
             return (
