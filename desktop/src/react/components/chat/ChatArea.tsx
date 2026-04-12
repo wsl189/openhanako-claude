@@ -111,6 +111,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
+  const suppressAutoScrollUntil = useRef(0);
   const lastAssistantIndex = useMemo(() => {
     for (let idx = items.length - 1; idx >= 0; idx--) {
       if (isAssistantMessageItem(items[idx])) return idx;
@@ -145,6 +146,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     const content = contentRef.current;
     if (!content) return;
     const ro = new ResizeObserver(() => {
+      if (Date.now() < suppressAutoScrollUntil.current) return;
       if (active && isAtBottom.current) {
         scrollToBottom();
       }
@@ -152,6 +154,38 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     ro.observe(content);
     return () => ro.disconnect();
   }, [active]);
+
+  // 点击执行链/思考链的展开收起时，锁定点击锚点位置并临时禁用自动吸底
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const toggleAnchorSelector = '.tool-indicator.expandable, .chain-summary, .thinking-block-toggle';
+
+    const preserveToggleAnchor = (anchor: HTMLElement) => {
+      const beforeTop = anchor.getBoundingClientRect().top;
+      suppressAutoScrollUntil.current = Date.now() + 700;
+      // 等待 React 更新 + CSS 动画首帧后再补偿，保持点击位置稳定
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!anchor.isConnected) return;
+          const afterTop = anchor.getBoundingClientRect().top;
+          const delta = afterTop - beforeTop;
+          if (Math.abs(delta) < 0.5) return;
+          el.scrollTop += delta;
+        });
+      });
+    };
+
+    const onClickCapture = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const anchor = target.closest(toggleAnchorSelector) as HTMLElement | null;
+      if (!anchor) return;
+      preserveToggleAnchor(anchor);
+    };
+    el.addEventListener('click', onClickCapture, true);
+    return () => el.removeEventListener('click', onClickCapture, true);
+  }, []);
 
   // 首次有内容 → 滚到底
   const scrolledOnce = useRef(false);
