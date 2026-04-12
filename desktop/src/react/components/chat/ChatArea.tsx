@@ -1,7 +1,7 @@
 /**
  * ChatArea — 聊天消息列表（干净重写版）
  *
- * 原理：每个 session 一个原生滚动 div，visibility:hidden 保持 scrollTop。
+ * 原理：每个 session 一个原生滚动 div，使用 opacity 切换可见性以保持 scrollTop。
  * 不用 Virtuoso，不用 Activity，不用快照，不用任何花活。
  */
 
@@ -192,8 +192,9 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     <div
       ref={ref}
       className="chat-session-panel"
+      aria-hidden={!active}
       style={{
-        visibility: active ? 'visible' : 'hidden',
+        opacity: active ? 1 : 0,
         zIndex: active ? 1 : 0,
         pointerEvents: active ? 'auto' : 'none',
       }}
