@@ -230,4 +230,27 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     });
     expect(translated).toContainEqual({ type: "turn_end" });
   });
+
+  it("does not surface abort-like runtime errors", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "runtime_error",
+      error: {
+        message: "Error: Request was aborted.\n    at ML.makeRequest (file:///tmp/cli.js:47:3448)",
+      },
+    }, "/tmp/session-abort-runtime");
+
+    expect(translated).toEqual([{ type: "turn_end" }]);
+  });
+
+  it("does not surface abort-like result errors", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: true,
+      errors: ["Error: Request was aborted."],
+    }, "/tmp/session-abort-result");
+
+    expect(translated).toEqual([{ type: "turn_end" }]);
+  });
 });

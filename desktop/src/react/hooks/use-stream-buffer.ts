@@ -275,30 +275,8 @@ function buildTextBlockFromBufferedText(text: string): Extract<ContentBlock, { t
   return { type: 'text', html: renderMarkdown(displayText) };
 }
 
-function finalizeBufferedTextSegment(buf: Buffer): void {
-  if (!buf.textAcc) {
-    buf.textAnchorIndex = null;
-    return;
-  }
-  const block = buildTextBlockFromBufferedText(buf.textAcc);
-  const anchor = buf.textAnchorIndex;
-  buf.textAcc = '';
-  buf.textAnchorIndex = null;
-  if (!block) return;
-
-  const insertAt = Number.isInteger(anchor)
-    ? Math.max(0, Math.min(Number(anchor), buf.liveBlocks.length))
-    : buf.liveBlocks.length;
-  buf.liveBlocks = [
-    ...buf.liveBlocks.slice(0, insertAt),
-    block,
-    ...buf.liveBlocks.slice(insertAt),
-  ];
-}
-
-function finalizeBufferedThinkingSegment(buf: Buffer): void {
-  const thinking = sanitizeBufferedThinkingText(String(buf.thinkingAcc || ''));
-  buf.thinkingAcc = '';
+function appendSealedThinkingBlock(buf: Buffer, rawThinking: string): void {
+  const thinking = sanitizeBufferedThinkingText(String(rawThinking || ''));
   if (!thinking.trim()) return;
 
   const last = buf.liveBlocks[buf.liveBlocks.length - 1];
@@ -313,6 +291,42 @@ function finalizeBufferedThinkingSegment(buf: Buffer): void {
     content: thinking,
     sealed: true,
   });
+}
+
+function finalizeBufferedTextSegment(
+  buf: Buffer,
+  opts: { asThinking?: boolean } = {},
+): void {
+  if (!buf.textAcc) {
+    buf.textAnchorIndex = null;
+    return;
+  }
+  const rawText = buf.textAcc;
+  const anchor = buf.textAnchorIndex;
+  buf.textAcc = '';
+  buf.textAnchorIndex = null;
+  if (opts.asThinking) {
+    appendSealedThinkingBlock(buf, rawText);
+    return;
+  }
+
+  const block = buildTextBlockFromBufferedText(rawText);
+  if (!block) return;
+
+  const insertAt = Number.isInteger(anchor)
+    ? Math.max(0, Math.min(Number(anchor), buf.liveBlocks.length))
+    : buf.liveBlocks.length;
+  buf.liveBlocks = [
+    ...buf.liveBlocks.slice(0, insertAt),
+    block,
+    ...buf.liveBlocks.slice(insertAt),
+  ];
+}
+
+function finalizeBufferedThinkingSegment(buf: Buffer): void {
+  const thinking = String(buf.thinkingAcc || '');
+  buf.thinkingAcc = '';
+  appendSealedThinkingBlock(buf, thinking);
 }
 
 function upsertSealedThinkingFromSnapshot(buf: Buffer, snapshotThinking: string): void {
@@ -517,7 +531,7 @@ class StreamBufferManager {
 
           const toolUses = extractSnapshotToolUses(content);
           if (toolUses.length > 0) {
-            finalizeBufferedTextSegment(buf);
+            finalizeBufferedTextSegment(buf, { asThinking: true });
           }
           for (const toolUse of toolUses) {
             buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
@@ -579,7 +593,7 @@ class StreamBufferManager {
 
         const toolUses = extractSnapshotToolUses(content);
         if (toolUses.length > 0) {
-          finalizeBufferedTextSegment(buf);
+          finalizeBufferedTextSegment(buf, { asThinking: true });
         }
         for (const toolUse of toolUses) {
           buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
@@ -648,7 +662,7 @@ class StreamBufferManager {
         break;
 
       case 'tool_start':
-        finalizeBufferedTextSegment(buf);
+        finalizeBufferedTextSegment(buf, { asThinking: true });
         this.ensureMessage(buf);
         buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
         this.flush(buf);

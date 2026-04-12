@@ -168,7 +168,7 @@ describe('mergeDelta', () => {
     }
   });
 
-  it('preserves streaming order between text segments and tool chain', () => {
+  it('folds pre-tool narration into thinking while keeping post-tool text visible', () => {
     streamBufferManager.handle({
       type: 'text_delta',
       sessionPath,
@@ -201,16 +201,108 @@ describe('mergeDelta', () => {
     expect(only?.type).toBe('message');
     if (only?.type === 'message') {
       const blocks = only.data.blocks || [];
-      expect(blocks.map((b) => b.type)).toEqual(['text', 'tool_group', 'text']);
-      const firstText = blocks[0];
+      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'tool_group', 'text']);
+      const firstThinking = blocks[0];
       const secondText = blocks[2];
-      expect(firstText?.type).toBe('text');
+      expect(firstThinking?.type).toBe('thinking');
       expect(secondText?.type).toBe('text');
-      if (firstText?.type === 'text') {
-        expect(firstText.html).toContain('先给你同步一下进展');
+      if (firstThinking?.type === 'thinking') {
+        expect(firstThinking.content).toContain('先给你同步一下进展');
       }
       if (secondText?.type === 'text') {
         expect(secondText.html).toContain('继续抓更可靠的来源');
+      }
+    }
+  });
+
+  it('folds inter-tool narration into thinking when another tool starts', () => {
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '我先尝试调用图片工具。',
+    });
+    streamBufferManager.handle({
+      type: 'tool_start',
+      sessionPath,
+      name: 'generate_images',
+      toolCallId: 'tool-a',
+      args: { prompt: 'cute puppy' },
+    });
+    streamBufferManager.handle({
+      type: 'tool_end',
+      sessionPath,
+      name: 'generate_images',
+      toolCallId: 'tool-a',
+      success: false,
+      details: { error: 'No such tool available' },
+    });
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '图片工具不可用，我换个方式继续找图。',
+    });
+    streamBufferManager.handle({
+      type: 'tool_start',
+      sessionPath,
+      name: 'WebSearch',
+      toolCallId: 'tool-b',
+      args: { q: 'cute puppy photo' },
+    });
+    streamBufferManager.handle({
+      type: 'tool_end',
+      sessionPath,
+      name: 'WebSearch',
+      toolCallId: 'tool-b',
+      success: true,
+    });
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '找到一张图片，给你链接。',
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual([
+        'thinking',
+        'tool_group',
+        'thinking',
+        'tool_group',
+        'text',
+      ]);
+
+      const thinking = blocks[0];
+      expect(thinking?.type).toBe('thinking');
+      if (thinking?.type === 'thinking') {
+        expect(thinking.content).toContain('我先尝试调用图片工具');
+      }
+
+      const midThinking = blocks[2];
+      expect(midThinking?.type).toBe('thinking');
+      if (midThinking?.type === 'thinking') {
+        expect(midThinking.content).toContain('图片工具不可用');
+      }
+
+      const toolGroupA = blocks[1];
+      const toolGroupB = blocks[3];
+      expect(toolGroupA?.type).toBe('tool_group');
+      expect(toolGroupB?.type).toBe('tool_group');
+      if (toolGroupA?.type === 'tool_group') {
+        expect(toolGroupA.tools).toHaveLength(1);
+      }
+      if (toolGroupB?.type === 'tool_group') {
+        expect(toolGroupB.tools).toHaveLength(1);
+      }
+
+      const finalText = blocks[4];
+      expect(finalText?.type).toBe('text');
+      if (finalText?.type === 'text') {
+        expect(finalText.html).toContain('找到一张图片');
       }
     }
   });

@@ -314,6 +314,7 @@ export default async function chatRoute(app, { engine, hub }) {
         hasToolCall: false,
         hadError: false,
         userAborted: false,
+        abortingStreamId: null,
         titleRequested: false,
         lastAssistantContent: null,
         ...createSessionStreamState(),
@@ -418,6 +419,42 @@ export default async function chatRoute(app, { engine, hub }) {
     return entry;
   }
 
+  function resetTurnState(ss, opts = {}) {
+    if (!ss) return;
+    ss.hasOutput = false;
+    ss.hasToolCall = false;
+    ss.hadError = false;
+    if (!opts.preserveUserAborted) ss.userAborted = false;
+    if (!opts.preserveAbortingStreamId) ss.abortingStreamId = null;
+    ss.thinkingHadDelta = false;
+    ss.structuredStream = false;
+    ss.lastAssistantSnapshotSig = "";
+    ss.lastAssistantContent = null;
+    ss.thinkTagParser.reset();
+    ss.xingParser.reset();
+  }
+
+  function finalizeAbortedTurn(sessionPath, ss) {
+    if (!ss || !ss.isStreaming) return false;
+    const abortedStreamId = ss.streamId || null;
+    if (ss.isThinking) {
+      ss.isThinking = false;
+      emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+    }
+    emitStreamEvent(sessionPath, ss, { type: "turn_end" });
+    finishSessionStream(ss);
+    if (sessionPath) {
+      engine.clearSessionPendingImages(sessionPath);
+    }
+    ss.abortingStreamId = abortedStreamId;
+    resetTurnState(ss, {
+      preserveUserAborted: true,
+      preserveAbortingStreamId: true,
+    });
+    broadcast({ type: "status", isStreaming: false, sessionPath });
+    return true;
+  }
+
   function maybeGenerateFirstTurnTitle(sessionPath, ss) {
     if (!sessionPath || !ss || ss.titleRequested) return;
 
@@ -450,6 +487,15 @@ export default async function chatRoute(app, { engine, hub }) {
   hub.subscribe(async (event, sessionPath) => {
     const isActive = sessionPath === engine.currentSessionPath;
     const ss = sessionPath ? getState(sessionPath) : null;
+
+    if (ss?.abortingStreamId) {
+      if (event.type === "turn_end") {
+        finishSessionStream(ss);
+        resetTurnState(ss);
+        return;
+      }
+      return;
+    }
 
     if (event.type === "sdk_message") {
       if (!ss) return;
@@ -858,16 +904,7 @@ export default async function chatRoute(app, { engine, hub }) {
       if (sessionPath) {
         engine.clearSessionPendingImages(sessionPath);
       }
-      ss.hasOutput = false;
-      ss.hasToolCall = false;
-      ss.hadError = false;
-      ss.userAborted = false;
-      ss.thinkingHadDelta = false;
-      ss.structuredStream = false;
-      ss.lastAssistantSnapshotSig = "";
-      ss.lastAssistantContent = null;
-      ss.thinkTagParser.reset();
-      ss.xingParser.reset();
+      resetTurnState(ss);
 
       if (isActive) {
         debugLog()?.log("ws", "assistant reply done");
@@ -917,6 +954,7 @@ export default async function chatRoute(app, { engine, hub }) {
         const abortPath = msg.sessionPath || engine.currentSessionPath;
         const ss = abortPath ? getState(abortPath) : null;
         if (ss) ss.userAborted = true;
+        if (ss) finalizeAbortedTurn(abortPath, ss);
         if (engine.isSessionStreaming(abortPath)) {
           try { await hub.abort(abortPath); } catch {}
         }
@@ -1079,6 +1117,7 @@ export default async function chatRoute(app, { engine, hub }) {
           ss.thinkTagParser.reset();
           ss.xingParser.reset();
           ss.userAborted = false;
+          ss.abortingStreamId = null;
           ss.thinkingHadDelta = false;
           ss.hadError = false;
           ss.structuredStream = shouldUseStructuredStreamForSession(engine, promptSessionPath);

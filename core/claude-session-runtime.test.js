@@ -265,4 +265,106 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     expect(runtime.sessionId).toBe("recovered-session");
     expect(runtime.messages.filter((m) => m?.role === "assistant").length).toBe(1);
   });
+
+  it("does not emit runtime_error when a turn is aborted", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    let rejectActiveTurn = null;
+    let enteredTurnResolve;
+    const enteredTurn = new Promise((resolve) => {
+      enteredTurnResolve = resolve;
+    });
+
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          enteredTurnResolve?.();
+          await new Promise((_, reject) => {
+            rejectActiveTurn = reject;
+          });
+        }
+      }
+      const iterator = stream();
+      iterator.close = vi.fn();
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.interrupt = vi.fn(async () => {
+        rejectActiveTurn?.(new Error("Request was aborted."));
+      });
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "abort-session",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-abort.json",
+      options: {},
+    });
+
+    const errors = [];
+    const unsub = runtime.subscribe((event) => {
+      if (event?.type === "runtime_error") errors.push(event);
+    });
+
+    const pending = runtime.prompt("please abort");
+    await enteredTurn;
+    await runtime.abort();
+    await expect(pending).rejects.toThrow("Request was aborted.");
+
+    unsub();
+    await runtime.close();
+
+    expect(errors).toEqual([]);
+  });
+
+  it("closes the active query when aborting so the turn stops promptly", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    let rejectActiveTurn = null;
+    let enteredTurnResolve;
+    const enteredTurn = new Promise((resolve) => {
+      enteredTurnResolve = resolve;
+    });
+
+    const close = vi.fn();
+    const interrupt = vi.fn(async () => {
+      rejectActiveTurn?.(new Error("Request was aborted."));
+    });
+
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          enteredTurnResolve?.();
+          await new Promise((_, reject) => {
+            rejectActiveTurn = reject;
+          });
+        }
+      }
+      const iterator = stream();
+      iterator.close = close;
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.interrupt = interrupt;
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "abort-close-session",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-abort-close.json",
+      options: {},
+    });
+
+    const pending = runtime.prompt("stop quickly");
+    await enteredTurn;
+    await expect(runtime.abort()).resolves.toBe(true);
+    await expect(pending).rejects.toThrow("Request was aborted.");
+
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+
+    await runtime.close();
+  });
 });

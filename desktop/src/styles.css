@@ -4917,10 +4917,10 @@ html[data-platform="darwin"] .sv-topbar-title {
     visibility: hidden;
     pointer-events: none;
     transition:
-        grid-template-rows 0.24s cubic-bezier(0.22, 1, 0.36, 1),
-        opacity 0.2s ease,
-        transform 0.24s ease,
-        visibility 0s linear 0.24s;
+        grid-template-rows 0.62s cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 0.46s ease,
+        transform 0.62s ease,
+        visibility 0s linear 0.62s;
 }
 
 .chain-collapsible.expanded {
@@ -4930,9 +4930,9 @@ html[data-platform="darwin"] .sv-topbar-title {
     visibility: visible;
     pointer-events: auto;
     transition:
-        grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1),
-        opacity 0.24s ease,
-        transform 0.3s ease,
+        grid-template-rows 0.52s cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 0.4s ease,
+        transform 0.52s ease,
         visibility 0s linear 0s;
 }
 

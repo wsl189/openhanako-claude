@@ -100,6 +100,17 @@ function isSessionNotFoundError(error) {
   return /no conversation found with session id/i.test(message);
 }
 
+function isAbortError(error) {
+  const name = String(error?.name || "").trim();
+  const message = String(error?.message || error || "").trim();
+  return (
+    name === "AbortError"
+    || /^aborted$/i.test(message)
+    || /request was aborted/i.test(message)
+    || /fetchrequestcanceledexception/i.test(message)
+  );
+}
+
 function extractResultErrorMessage(message) {
   if (!message?.is_error) return "";
   if (Array.isArray(message?.errors) && message.errors.length > 0) {
@@ -170,6 +181,7 @@ export class ClaudeSessionRuntime {
     this._lastAssistantResponseId = null;
     this._activeCompactionTrigger = null;
     this._allowSessionNotFoundRetry = false;
+    this._abortRequested = false;
   }
 
   _syncSessionId(nextSessionId) {
@@ -212,6 +224,7 @@ export class ClaudeSessionRuntime {
       this._query = null;
       this._pumpPromise = null;
     }
+    this._abortRequested = false;
     this._query = query({
       prompt: this._queue,
       options: {
@@ -354,7 +367,10 @@ export class ClaudeSessionRuntime {
       const compaction = this._pendingCompaction;
       this._pendingCompaction = null;
       compaction?.reject(error);
-      if (!(this._allowSessionNotFoundRetry && isSessionNotFoundError(error))) {
+      if (
+        !(this._allowSessionNotFoundRetry && isSessionNotFoundError(error))
+        && !isAbortError(error)
+      ) {
         this._emit({ type: "runtime_error", error });
       }
     } finally {
@@ -365,12 +381,12 @@ export class ClaudeSessionRuntime {
       if (this._pendingTurn) {
         const turn = this._pendingTurn;
         this._pendingTurn = null;
-        turn.reject(new Error("Claude runtime stream closed"));
+        turn.reject(new Error(this._abortRequested ? "aborted" : "Claude runtime stream closed"));
       }
       if (this._pendingCompaction) {
         const compaction = this._pendingCompaction;
         this._pendingCompaction = null;
-        compaction.reject(new Error("Claude runtime stream closed"));
+        compaction.reject(new Error(this._abortRequested ? "aborted" : "Claude runtime stream closed"));
       }
 
       if (this._query === activeQuery) {
@@ -378,10 +394,12 @@ export class ClaudeSessionRuntime {
         this._pumpPromise = null;
       }
       this._pumpActive = false;
+      this._abortRequested = false;
     }
   }
 
   _enqueueUserPrompt(text, opts = {}, { recordLocalMessage = true } = {}) {
+    this._abortRequested = false;
     this.isStreaming = true;
     this._pendingTurn = deferred();
     if (recordLocalMessage) {
@@ -438,7 +456,15 @@ export class ClaudeSessionRuntime {
 
   async abort() {
     if (!this._query?.interrupt || !this.isStreaming) return false;
-    await this._query.interrupt();
+    this._abortRequested = true;
+    const activeQuery = this._query;
+    try {
+      await activeQuery.interrupt();
+    } catch (error) {
+      if (!isAbortError(error)) throw error;
+    } finally {
+      activeQuery?.close?.();
+    }
     return true;
   }
 

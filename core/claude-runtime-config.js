@@ -1,5 +1,6 @@
 import path from "path";
 import { createCustomToolsMcpServer } from "../lib/claude/custom-tool-adapter.js";
+import { extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
 
 export const CLAUDE_BUILTIN_TOOL_NAMES = [
   "Task",
@@ -67,15 +68,28 @@ function resolveClaudeBuiltinTools(enabledBuiltin = []) {
   );
 }
 
-function buildSandboxConfig(mode, pathRules) {
+function normalizeAbsolutePath(rawPath) {
+  const p = String(rawPath || "").trim();
+  if (!p || !path.isAbsolute(p)) return null;
+  return p;
+}
+
+function buildSandboxConfig(mode, workspace, pathRules) {
   if (mode === "full-access") {
     return {
       enabled: false,
     };
   }
 
-  const allowRead = uniq(pathRules.map((rule) => rule.path));
-  const allowWrite = uniq(pathRules.filter((rule) => rule.access === "read_write").map((rule) => rule.path));
+  const workspacePath = normalizeAbsolutePath(workspace);
+  const allowRead = uniq([
+    workspacePath,
+    ...pathRules.map((rule) => rule.path),
+  ].filter(Boolean));
+  const allowWrite = uniq([
+    workspacePath,
+    ...pathRules.filter((rule) => rule.access === "read_write").map((rule) => rule.path),
+  ].filter(Boolean));
 
   return {
     enabled: true,
@@ -140,12 +154,79 @@ function resolvePermissionStrategy(agent) {
   return "auto_allow";
 }
 
-function buildCanUseToolHandler(permissionStrategy) {
+function isPathInside(target, base) {
+  return target === base || target.startsWith(base + path.sep);
+}
+
+function resolveAllowedRoots(workspace, pathRules = []) {
+  return uniq([
+    normalizeAbsolutePath(workspace),
+    ...(Array.isArray(pathRules) ? pathRules : []).map((rule) => normalizeAbsolutePath(rule?.path)),
+  ].filter(Boolean)).map((p) => path.resolve(p));
+}
+
+function findDisallowedBashPath(command, cwd, allowedRoots = []) {
+  const roots = Array.isArray(allowedRoots) ? allowedRoots : [];
+  if (roots.length === 0) return null;
+  const guardPaths = extractGuardPaths(String(command || ""), cwd);
+  for (const rawPath of guardPaths) {
+    const resolved = path.resolve(String(rawPath || ""));
+    const allowed = roots.some((root) => isPathInside(resolved, root));
+    if (!allowed) return resolved;
+  }
+  return null;
+}
+
+function detectBashBypassAttempt(toolName, input = {}, opts = {}) {
+  if (toolName !== "Bash") return null;
+  const payload = (input && typeof input === "object") ? input : {};
+  const command = String(payload.command || "");
+  const strictSandbox = opts.strictSandbox === true;
+  const cwd = normalizeAbsolutePath(opts.cwd || process.cwd()) || process.cwd();
+  const allowedRoots = Array.isArray(opts.allowedRoots) ? opts.allowedRoots : [];
+
+  // Prevent explicit sandbox escape attempts through Bash tool input.
+  if (payload.dangerouslyDisableSandbox === true) {
+    return "Bash command denied: disabling sandbox is not allowed.";
+  }
+
+  const privilegeEscalationPatterns = [
+    /\bsudo\b/i,
+    /\bsu(?:\s|$)/i,
+    /\bdoas\b/i,
+    /\bpkexec\b/i,
+  ];
+  if (privilegeEscalationPatterns.some((pattern) => pattern.test(command))) {
+    return "Bash command denied: privileged escalation commands are not allowed.";
+  }
+
+  if (strictSandbox) {
+    const disallowedPath = findDisallowedBashPath(command, cwd, allowedRoots);
+    if (disallowedPath) {
+      return `Bash command denied: path is outside strict sandbox scope (${disallowedPath}).`;
+    }
+  }
+
+  return null;
+}
+
+function buildCanUseToolHandler(permissionStrategy, opts = {}) {
   if (permissionStrategy !== "auto_allow") return undefined;
-  return async (_toolName, input = {}) => ({
-    behavior: "allow",
-    updatedInput: (input && typeof input === "object") ? input : {},
-  });
+  const strictSandbox = opts.sandboxMode === "standard";
+  const allowedRoots = strictSandbox ? resolveAllowedRoots(opts.workspace, opts.pathRules) : [];
+  const cwd = opts.cwd;
+  return async (toolName, input = {}) => {
+    const denyReason = detectBashBypassAttempt(toolName, input, {
+      strictSandbox,
+      allowedRoots,
+      cwd,
+    });
+    if (denyReason) return { behavior: "deny", message: denyReason };
+    return {
+      behavior: "allow",
+      updatedInput: (input && typeof input === "object") ? input : {},
+    };
+  };
 }
 
 export function buildClaudeRuntimeConfig({
@@ -168,10 +249,16 @@ export function buildClaudeRuntimeConfig({
     ...process.env,
     ...(env || {}),
   };
-  const permissionStrategy = resolvePermissionStrategy(agent);
-  const canUseTool = buildCanUseToolHandler(permissionStrategy);
-  const settingSources = resolveSettingSources(agent);
+  const sandboxMode = toolProfile?.sandbox?.mode || "standard";
   const pathRules = normalizePathRules(toolProfile?.sandbox?.path_rules);
+  const permissionStrategy = resolvePermissionStrategy(agent);
+  const canUseTool = buildCanUseToolHandler(permissionStrategy, {
+    sandboxMode,
+    workspace,
+    pathRules,
+    cwd,
+  });
+  const settingSources = resolveSettingSources(agent);
   const builtinEnabled = noTools
     ? []
     : resolveClaudeBuiltinTools(builtinEnabledOverride || toolProfile?.tools?.builtin_enabled || []);
@@ -194,7 +281,7 @@ export function buildClaudeRuntimeConfig({
 
   const baseAppend = noMemory ? agent?.personality : agent?.buildSystemAppendPrompt?.();
   const append = [baseAppend, systemAppend].filter(Boolean).join("\n\n");
-  const sandboxMode = toolProfile?.sandbox?.mode || "standard";
+  const strictSandbox = sandboxMode === "standard";
   const additionalDirectories = buildAdditionalDirectories(cwd, workspace, pathRules);
   const shouldForceTools = shouldForceToolsOption();
   const options = {
@@ -210,9 +297,9 @@ export function buildClaudeRuntimeConfig({
       preset: "claude_code",
       append,
     },
-    sandbox: buildSandboxConfig(sandboxMode, pathRules),
+    sandbox: buildSandboxConfig(sandboxMode, workspace, pathRules),
     permissionMode: "acceptEdits",
-    allowDangerouslySkipPermissions: true,
+    allowDangerouslySkipPermissions: !strictSandbox,
     ...(canUseTool ? { canUseTool } : {}),
     settingSources,
     includePartialMessages: false,

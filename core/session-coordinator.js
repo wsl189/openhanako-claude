@@ -141,10 +141,22 @@ function isEdeDiagnosticErrorMessage(message) {
   return EDE_DIAGNOSTIC_RE.test(String(message || "").trim());
 }
 
+function isAbortLikeErrorMessage(message) {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  return (
+    /^aborted$/i.test(text)
+    || /request was aborted/i.test(text)
+    || /aborterror/i.test(text)
+    || /fetchrequestcanceledexception/i.test(text)
+  );
+}
+
 function pickUserFacingRuntimeErrorMessage(rawMessage, fallback = "") {
   const text = String(rawMessage || "").trim();
   if (!text) return fallback;
   if (isEdeDiagnosticErrorMessage(text)) return "";
+  if (isAbortLikeErrorMessage(text)) return "";
   return text;
 }
 
@@ -153,13 +165,20 @@ function pickUserFacingResultErrorMessage(event) {
     ? event.errors.map((item) => String(item || "").trim()).filter(Boolean)
     : [];
   if (errors.length > 0) {
-    const message = errors.find((item) => !isEdeDiagnosticErrorMessage(item));
+    const message = errors.find((item) =>
+      !isEdeDiagnosticErrorMessage(item) && !isAbortLikeErrorMessage(item)
+    );
     return message || "";
   }
   const resultText = String(event?.result || "").trim();
-  if (resultText && !isEdeDiagnosticErrorMessage(resultText)) {
+  if (
+    resultText
+    && !isEdeDiagnosticErrorMessage(resultText)
+    && !isAbortLikeErrorMessage(resultText)
+  ) {
     return resultText;
   }
+  if (resultText && isAbortLikeErrorMessage(resultText)) return "";
   return "Claude execution failed";
 }
 

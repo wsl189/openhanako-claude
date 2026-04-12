@@ -38,7 +38,31 @@ describe("buildClaudeRuntimeConfig env", () => {
     const config = createConfig();
     expect(config.options.includePartialMessages).toBe(false);
     expect(config.options.permissionMode).toBe("acceptEdits");
-    expect(config.options.allowDangerouslySkipPermissions).toBe(true);
+    expect(config.options.allowDangerouslySkipPermissions).toBe(false);
+  });
+
+  it("restricts strict sandbox filesystem to workspace and explicit whitelist rules", () => {
+    const config = createConfig({
+      workspace: "/tmp/workspace",
+      toolProfile: {
+        sandbox: {
+          mode: "standard",
+          path_rules: [
+            { path: "/tmp/ro", access: "read_only" },
+            { path: "/tmp/rw", access: "read_write" },
+          ],
+        },
+      },
+    });
+
+    expect(config.options.sandbox).toMatchObject({
+      enabled: true,
+      allowUnsandboxedCommands: false,
+      filesystem: {
+        allowRead: ["/tmp/workspace", "/tmp/ro", "/tmp/rw"],
+        allowWrite: ["/tmp/workspace", "/tmp/rw"],
+      },
+    });
   });
 
   it("uses Proma-aligned setting sources and does not force options.tools by default", () => {
@@ -94,6 +118,101 @@ describe("buildClaudeRuntimeConfig env", () => {
       if (original === undefined) delete process.env.HANAKO_CLAUDE_PERMISSION_STRATEGY;
       else process.env.HANAKO_CLAUDE_PERMISSION_STRATEGY = original;
     }
+  });
+
+  it("denies Bash calls that explicitly try to disable sandbox", async () => {
+    const config = createConfig();
+    const decision = await config.options.canUseTool("Bash", {
+      command: "ls",
+      dangerouslyDisableSandbox: true,
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-1",
+    });
+    expect(decision).toMatchObject({
+      behavior: "deny",
+    });
+    expect(decision.message).toContain("disabling sandbox");
+  });
+
+  it("denies Bash privilege escalation commands while allowing normal Bash commands", async () => {
+    const config = createConfig();
+    const denied = await config.options.canUseTool("Bash", {
+      command: "sudo ls /",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-2",
+    });
+    expect(denied).toMatchObject({
+      behavior: "deny",
+    });
+
+    const allowed = await config.options.canUseTool("Bash", {
+      command: "npm test",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-3",
+    });
+    expect(allowed).toMatchObject({
+      behavior: "allow",
+      updatedInput: { command: "npm test" },
+    });
+  });
+
+  it("denies Bash path access outside workspace/path_rules in strict mode", async () => {
+    const config = createConfig({
+      workspace: "/tmp/workspace",
+      toolProfile: {
+        sandbox: {
+          mode: "standard",
+          path_rules: [{ path: "/tmp/extra", access: "read_only" }],
+        },
+      },
+    });
+
+    const denied = await config.options.canUseTool("Bash", {
+      command: "ls -la /tmp/outside",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-4",
+    });
+    expect(denied).toMatchObject({ behavior: "deny" });
+    expect(denied.message).toContain("/tmp/outside");
+
+    const allowedWorkspace = await config.options.canUseTool("Bash", {
+      command: "ls -la /tmp/workspace",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-5",
+    });
+    expect(allowedWorkspace).toMatchObject({ behavior: "allow" });
+
+    const allowedWhitelist = await config.options.canUseTool("Bash", {
+      command: "cat /tmp/extra/readme.txt",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-6",
+    });
+    expect(allowedWhitelist).toMatchObject({ behavior: "allow" });
+  });
+
+  it("allows outside path inspection in balanced mode (sandbox policy governs runtime execution)", async () => {
+    const config = createConfig({
+      workspace: "/tmp/workspace",
+      toolProfile: {
+        sandbox: {
+          mode: "balanced",
+          path_rules: [{ path: "/tmp/extra", access: "read_only" }],
+        },
+      },
+    });
+    const decision = await config.options.canUseTool("Bash", {
+      command: "ls -la /tmp/outside",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-7",
+    });
+    expect(decision).toMatchObject({ behavior: "allow" });
   });
 
   it("supports disabling auto permission handler via env", () => {

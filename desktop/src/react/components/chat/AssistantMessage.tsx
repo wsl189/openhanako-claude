@@ -2,7 +2,7 @@
  * AssistantMessage — 助手消息，遍历 ContentBlock 按类型渲染
  */
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
 import { MoodBlock } from './MoodBlock';
 import { ThinkingBlock } from './ThinkingBlock';
@@ -73,6 +73,8 @@ function formatRunningDuration(ms: number): string {
   return `${minutes}m ${seconds.toFixed(1)}s`;
 }
 
+const CHAIN_AUTO_COLLAPSE_DELAY_MS = 1200;
+
 export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, isStreaming = false, runningMs }: Props) {
   const agentName = useStore(s => s.agentName) || 'Hanako';
   const agentYuan = useStore(s => s.agentYuan) || 'hanako';
@@ -119,15 +121,53 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   );
   const chainBlocks = useMemo(() => displayBlocks.filter(isAutoCollapsibleChainBlock), [displayBlocks]);
   const hasCollapsibleChain = hasPrimaryText && chainBlocks.length > 0;
-  const [chainExpanded, setChainExpanded] = useState(true);
+  const [chainExpanded, setChainExpanded] = useState(() => isStreaming);
+  const chainCollapseTimerRef = useRef<number | null>(null);
+  const prevStreamingRef = useRef(isStreaming);
+  const prevMessageIdRef = useRef(message.id);
+
+  const clearChainCollapseTimer = useCallback(() => {
+    if (chainCollapseTimerRef.current == null) return;
+    window.clearTimeout(chainCollapseTimerRef.current);
+    chainCollapseTimerRef.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    clearChainCollapseTimer();
+  }, [clearChainCollapseTimer]);
 
   useEffect(() => {
+    if (prevMessageIdRef.current === message.id) return;
+    prevMessageIdRef.current = message.id;
+    clearChainCollapseTimer();
+    prevStreamingRef.current = isStreaming;
+    setChainExpanded(hasCollapsibleChain ? isStreaming : false);
+  }, [message.id, hasCollapsibleChain, isStreaming, clearChainCollapseTimer]);
+
+  useEffect(() => {
+    clearChainCollapseTimer();
+
     if (!hasCollapsibleChain) {
       setChainExpanded(false);
+      prevStreamingRef.current = isStreaming;
       return;
     }
-    setChainExpanded(true);
-  }, [message.id, hasCollapsibleChain]);
+
+    if (isStreaming) {
+      setChainExpanded(true);
+      prevStreamingRef.current = true;
+      return;
+    }
+
+    const justFinishedStreaming = prevStreamingRef.current;
+    prevStreamingRef.current = false;
+    if (!justFinishedStreaming) return;
+
+    chainCollapseTimerRef.current = window.setTimeout(() => {
+      setChainExpanded(false);
+      chainCollapseTimerRef.current = null;
+    }, CHAIN_AUTO_COLLAPSE_DELAY_MS);
+  }, [hasCollapsibleChain, isStreaming, clearChainCollapseTimer]);
 
   const chainThinkingCount = useMemo(
     () => chainBlocks.filter((block) => block.type === 'thinking').length,
@@ -227,7 +267,10 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
           <button
             type="button"
             className="chain-summary"
-            onClick={() => setChainExpanded((prev) => !prev)}
+            onClick={() => {
+              clearChainCollapseTimer();
+              setChainExpanded((prev) => !prev);
+            }}
             aria-expanded={chainExpanded}
           >
             <span className="chain-summary-arrow">{chainExpanded ? '▾' : '▸'}</span>
