@@ -6,11 +6,10 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import { getSessionInfo, renameSession } from "@anthropic-ai/claude-agent-sdk";
+import { renameSession } from "@anthropic-ai/claude-agent-sdk";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { BrowserManager } from "../lib/browser/browser-manager.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
-import { extractTextToolCalls } from "./provider-tool-call-fallback.js";
 import { t, getLocale } from "../server/i18n.js";
 import {
   createSessionMetadata,
@@ -20,12 +19,12 @@ import {
   readSessionMetadata,
 } from "./claude-session-store.js";
 import { ClaudeSessionRuntime } from "./claude-session-runtime.js";
-import { ProviderSessionRuntime } from "./provider-session-runtime.js";
 import { buildClaudeRuntimeConfig, CLAUDE_BUILTIN_TOOL_NAMES } from "./claude-runtime-config.js";
 import { readSessionMessagesFromLog } from "./session-message-log.js";
 import { normalizeWorkspacePath } from "./path-utils.js";
 
 const log = createModuleLogger("session");
+const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]/i;
 
 export const PATROL_TOOLS_DEFAULT = [
   "search_memory", "pin_memory", "unpin_memory",
@@ -64,26 +63,6 @@ function extractToolUsesFromAssistantContent(content = []) {
       id: block.id,
       name: block.name || "",
       args: block.input,
-    }));
-}
-
-function extractTextToolUsesFromAssistantContent(content = [], availableToolNames = []) {
-  if (!Array.isArray(content) || content.length === 0) return [];
-  const rawText = content
-    .filter((block) => block?.type === "text" && typeof block.text === "string")
-    .map((block) => block.text)
-    .join("\n");
-  if (!rawText.trim()) return [];
-
-  const parsed = extractTextToolCalls(rawText, availableToolNames);
-  if (!Array.isArray(parsed?.toolCalls) || parsed.toolCalls.length === 0) return [];
-
-  return parsed.toolCalls
-    .filter((toolCall) => toolCall?.name)
-    .map((toolCall, idx) => ({
-      id: String(toolCall.id || `text_tool_use_${idx}`),
-      name: String(toolCall.name || ""),
-      args: (toolCall.arguments && typeof toolCall.arguments === "object") ? toolCall.arguments : undefined,
     }));
 }
 
@@ -158,25 +137,43 @@ function parseToolInputFromJsonDelta(rawInput = "") {
   }
 }
 
-const MAX_CACHED_SESSIONS = 20;
-const ANTHROPIC_PROVIDER_RUNTIME_ALLOWLIST = new Set([
-  "minimax",
-  "minimax-oauth",
-  "moonshot",
-  "kimi-coding",
-  "zhipu",
-]);
+function isEdeDiagnosticErrorMessage(message) {
+  return EDE_DIAGNOSTIC_RE.test(String(message || "").trim());
+}
 
-function isOfficialAnthropicBaseUrl(url = "") {
-  const raw = String(url || "").trim();
-  if (!raw) return false;
-  try {
-    const { hostname } = new URL(raw);
-    const host = String(hostname || "").toLowerCase();
-    return host === "api.anthropic.com" || host.endsWith(".anthropic.com");
-  } catch {
-    return false;
+function pickUserFacingRuntimeErrorMessage(rawMessage, fallback = "") {
+  const text = String(rawMessage || "").trim();
+  if (!text) return fallback;
+  if (isEdeDiagnosticErrorMessage(text)) return "";
+  return text;
+}
+
+function pickUserFacingResultErrorMessage(event) {
+  const errors = Array.isArray(event?.errors)
+    ? event.errors.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (errors.length > 0) {
+    const message = errors.find((item) => !isEdeDiagnosticErrorMessage(item));
+    return message || "";
   }
+  const resultText = String(event?.result || "").trim();
+  if (resultText && !isEdeDiagnosticErrorMessage(resultText)) {
+    return resultText;
+  }
+  return "Claude execution failed";
+}
+
+const MAX_CACHED_SESSIONS = 20;
+const TEXT_TOOL_MARKUP_RE = /<(?:glob|read|write|edit|bash|grep|function_call|function_calls|minimax:tool_call)\b|<assistant\b[^>]*\bto=|\[TOOL_CALL\]|\bfunction_call\s*\n\s*\{|\btool_call(?:_start|_end)?\s*:/i;
+
+function hasTextStyleToolMarkup(content = []) {
+  if (!Array.isArray(content) || content.length === 0) return false;
+  const text = content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n");
+  if (!text) return false;
+  return TEXT_TOOL_MARKUP_RE.test(text);
 }
 
 export class SessionCoordinator {
@@ -204,14 +201,18 @@ export class SessionCoordinator {
 
   _buildSessionEnv(models, agentConfig, modelRef) {
     const resolved = models.resolveModelWithCredentials(modelRef, agentConfig);
+    const cleanEnv = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (!key.startsWith("ANTHROPIC_")) cleanEnv[key] = value;
+    }
+    const normalizedBaseUrl = normalizeAnthropicBaseUrlForSdk(resolved.base_url);
     return {
       model: resolved.model,
       env: {
-        ...process.env,
-        ANTHROPIC_BASE_URL: resolved.api === "anthropic-messages"
-          ? (normalizeAnthropicBaseUrlForSdk(resolved.base_url) || undefined)
-          : (resolved.base_url || undefined),
+        ...cleanEnv,
+        ANTHROPIC_BASE_URL: normalizedBaseUrl || undefined,
         ANTHROPIC_API_KEY: resolved.api_key || undefined,
+        ANTHROPIC_AUTH_TOKEN: resolved.auth_token || undefined,
       },
       resolved,
     };
@@ -221,35 +222,15 @@ export class SessionCoordinator {
     this._d.emitEvent(event, sessionPath);
   }
 
-  _shouldUseProviderRuntime(resolved) {
-    if (!resolved?.api) return false;
-    if (resolved.api === "openai-completions") return true;
-    if (resolved.api !== "anthropic-messages") return false;
-
-    const providerId = String(resolved.provider || "").trim().toLowerCase();
-    if (ANTHROPIC_PROVIDER_RUNTIME_ALLOWLIST.has(providerId)) {
-      return true;
-    }
-
-    if (
-      providerId
-      && providerId !== "anthropic"
-      && !isOfficialAnthropicBaseUrl(resolved.base_url)
-    ) {
-      // 兼容 Anthropic 协议但非 Anthropic 官方网关的 provider，
-      // 常会产出伪工具调用文本（如 [TOOL_CALL]）而非结构化 tool_use。
-      // 这类场景走 ProviderSessionRuntime 可稳定执行 fallback 工具调用。
-      return true;
-    }
-    return false;
-  }
-
   _getStreamState(sessionPath, customToolNames = []) {
     if (!this._streamState.has(sessionPath)) {
       this._streamState.set(sessionPath, {
         blockTypes: new Map(),
         blockToolUseByIndex: new Map(),
         toolCalls: new Map(),
+        turnSawStructuredToolUse: false,
+        turnSawTextToolMarkup: false,
+        lastTurnProtocolMismatch: false,
         customToolNames: new Set(customToolNames),
         availableToolNames: new Set([...CLAUDE_BUILTIN_TOOL_NAMES, ...customToolNames]),
       });
@@ -272,9 +253,13 @@ export class SessionCoordinator {
         if (block?.type === "thinking") {
           translated.push({ type: "thinking_start" });
           if (typeof block.thinking === "string" && block.thinking) {
+            if (TEXT_TOOL_MARKUP_RE.test(block.thinking)) {
+              state.turnSawTextToolMarkup = true;
+            }
             translated.push({ type: "thinking_delta", delta: block.thinking });
           }
         } else if (block?.type === "tool_use" && block.id) {
+          state.turnSawStructuredToolUse = true;
           if (Number.isInteger(raw.index)) {
             state.blockToolUseByIndex.set(raw.index, block.id);
           }
@@ -295,8 +280,14 @@ export class SessionCoordinator {
         }
       } else if (raw?.type === "content_block_delta") {
         if (raw?.delta?.type === "text_delta") {
+          if (TEXT_TOOL_MARKUP_RE.test(raw.delta.text || "")) {
+            state.turnSawTextToolMarkup = true;
+          }
           translated.push({ type: "text_delta", delta: raw.delta.text || "" });
         } else if (raw?.delta?.type === "thinking_delta") {
+          if (TEXT_TOOL_MARKUP_RE.test(raw.delta.thinking || "")) {
+            state.turnSawTextToolMarkup = true;
+          }
           translated.push({ type: "thinking_delta", delta: raw.delta.thinking || "" });
         } else if (raw?.delta?.type === "input_json_delta") {
           const toolUseId = state.blockToolUseByIndex.get(raw.index);
@@ -336,10 +327,12 @@ export class SessionCoordinator {
         },
       });
       const structuredToolUses = extractToolUsesFromAssistantContent(content);
-      const fallbackTextToolUses = structuredToolUses.length
-        ? []
-        : extractTextToolUsesFromAssistantContent(content, [...state.availableToolNames]);
-      for (const toolUse of [...structuredToolUses, ...fallbackTextToolUses]) {
+      if (structuredToolUses.length > 0) {
+        state.turnSawStructuredToolUse = true;
+      } else if (hasTextStyleToolMarkup(content)) {
+        state.turnSawTextToolMarkup = true;
+      }
+      for (const toolUse of structuredToolUses) {
         if (state.toolCalls.has(toolUse.id)) {
           const prev = state.toolCalls.get(toolUse.id);
           const nextArgs = toolUse.args && typeof toolUse.args === "object" ? toolUse.args : prev?.args;
@@ -474,22 +467,39 @@ export class SessionCoordinator {
         translated.push({ type: "auto_compaction_end" });
       }
     } else if (event?.type === "result") {
+      state.lastTurnProtocolMismatch = state.turnSawTextToolMarkup && !state.turnSawStructuredToolUse;
       if (event._hanakoManualCompaction) {
+        state.turnSawStructuredToolUse = false;
+        state.turnSawTextToolMarkup = false;
         return translated;
       }
       if (event.is_error) {
-        translated.push({ type: "error", message: event.errors?.[0] || "Claude execution failed" });
+        const errorMessage = pickUserFacingResultErrorMessage(event);
+        if (errorMessage) {
+          translated.push({ type: "error", message: errorMessage });
+        }
       }
       translated.push({ type: "turn_end" });
       state.blockTypes.clear();
       state.blockToolUseByIndex.clear();
       state.toolCalls.clear();
+      state.turnSawStructuredToolUse = false;
+      state.turnSawTextToolMarkup = false;
     } else if (event?.type === "runtime_error") {
-      translated.push({ type: "error", message: event.error?.message || "Claude runtime error" });
+      const errorMessage = pickUserFacingRuntimeErrorMessage(
+        event.error?.message,
+        "Claude runtime error",
+      );
+      if (errorMessage) {
+        translated.push({ type: "error", message: errorMessage });
+      }
       translated.push({ type: "turn_end" });
       state.blockTypes.clear();
       state.blockToolUseByIndex.clear();
       state.toolCalls.clear();
+      state.turnSawStructuredToolUse = false;
+      state.turnSawTextToolMarkup = false;
+      state.lastTurnProtocolMismatch = false;
     }
 
     return translated;
@@ -515,49 +525,14 @@ export class SessionCoordinator {
       throw new Error(t("error.noAvailableModel"));
     }
     const { model, env, resolved } = this._buildSessionEnv(models, agent?.config, modelRef);
-    const builtTools = this._d.buildTools(normalizedCwd, agent?.tools || [], {
-      agent,
-      agentDir: agent?.agentDir,
-      noTools,
-      noMemory,
-      builtinEnabledOverride,
-      customEnabledOverride,
-    });
 
-    const useProviderRuntime = this._shouldUseProviderRuntime(resolved);
     log.log(
-      `[runtime-route] ${useProviderRuntime ? "provider-runtime" : "claude-sdk-runtime"} `
+      `[runtime-route] claude-sdk-runtime `
       + `provider=${resolved?.provider || "unknown"} api=${resolved?.api || "unknown"} `
       + `base=${resolved?.base_url || ""}`,
     );
 
     let runtime = null;
-    if (useProviderRuntime) {
-      const providerToolNames = [
-        ...(builtTools.tools || []).map((tool) => tool?.name),
-        ...(builtTools.customTools || []).map((tool) => tool?.name),
-      ].filter(Boolean);
-      const providerToolInstruction = [
-        "Provider-compatible tool mode is enabled for this session.",
-        `Only these API tools are callable: ${providerToolNames.length ? providerToolNames.join(", ") : "none"}.`,
-        "Use only the tool names listed above. Tools not listed there are unavailable in this session.",
-      ].join("\n");
-      runtime = new ProviderSessionRuntime({
-        sessionId: metadata?.sessionId || randomUUID(),
-        cwd: normalizedCwd,
-        sessionPath,
-        resolvedModel: resolved,
-        systemPrompt: [
-          agent?.buildSystemPrompt?.() || "",
-          systemAppend,
-          providerToolInstruction,
-        ].filter(Boolean).join("\n\n"),
-        tools: [...(builtTools.tools || []), ...(builtTools.customTools || [])],
-      });
-      await runtime.start();
-      return runtime;
-    }
-
     const runtimeConfig = buildClaudeRuntimeConfig({
       agent,
       cwd: normalizedCwd,
@@ -582,6 +557,15 @@ export class SessionCoordinator {
         runtime?._emit?.(event);
       },
     });
+    const runtimeTools = runtimeConfig?.diagnostics || {};
+    log.log(
+      `[runtime-tools] settings=${JSON.stringify(runtimeTools.settingSources || [])} `
+      + `allowed=${JSON.stringify(runtimeTools.builtinEnabled || [])} `
+      + `forcedToolsOption=${runtimeTools.forcedToolsOption === true} `
+      + `permissionStrategy=${runtimeTools.permissionStrategy || "unknown"} `
+      + `canUseTool=${runtimeTools.hasCanUseTool === true} `
+      + `customLoaded=${JSON.stringify(runtimeTools.customToolsLoaded || [])}`,
+    );
 
     runtime = new ClaudeSessionRuntime({
       sessionId: metadata?.sessionId || randomUUID(),
@@ -590,26 +574,19 @@ export class SessionCoordinator {
       sessionPath,
       options: runtimeConfig.options,
     });
-    await runtime.start();
     return runtime;
   }
 
   _bindRuntime(sessionPath, session, agentId, memoryEnabled) {
     // 显式打标：当前 runtime 统一输出结构化流事件，前端可跳过 legacy 标签解析链。
     session.hanakoStructuredStream = true;
-    session.hanakoRuntimeSource = session?.eventProtocol === "hanako"
-      ? "provider-runtime"
-      : "claude-sdk-runtime";
+    session.hanakoRuntimeSource = "claude-sdk-runtime";
     const customToolNames = (
       this._d.getAgentById(agentId)?.tools
       || this._d.getAgent()?.tools
       || []
     ).map((tool) => tool?.name).filter(Boolean);
     const unsub = session.subscribe((event) => {
-      if (session?.eventProtocol === "hanako") {
-        this._emitRuntimeEvent(event, sessionPath);
-        return;
-      }
       for (const translatedEvent of this._translateClaudeEvent(event, sessionPath, customToolNames)) {
         this._emitRuntimeEvent(translatedEvent, sessionPath);
       }
@@ -773,6 +750,14 @@ export class SessionCoordinator {
     this._refreshSessionPrompt(promptAgent);
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await this._session.prompt(text, promptOpts);
+    const streamState = sp ? this._streamState.get(sp) : null;
+    if (streamState?.lastTurnProtocolMismatch) {
+      streamState.lastTurnProtocolMismatch = false;
+      log.warn(
+        "[tool-protocol] detected text-style tool markup without structured tool_use; "
+        + "keeping current session without auto-replay (Proma-aligned behavior)",
+      );
+    }
     if (sp) {
       const entry = this._sessions.get(sp);
       const agent = entry ? this._d.getAgentById(entry.agentId) : this._d.getAgent();
@@ -805,6 +790,14 @@ export class SessionCoordinator {
     this._refreshSessionPrompt(promptAgent);
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await entry.session.prompt(text, promptOpts);
+    const streamState = this._streamState.get(sessionPath);
+    if (streamState?.lastTurnProtocolMismatch) {
+      streamState.lastTurnProtocolMismatch = false;
+      log.warn(
+        "[tool-protocol] detected text-style tool markup without structured tool_use; "
+        + "keeping current session without auto-replay (Proma-aligned behavior)",
+      );
+    }
     promptAgent?._memoryTicker?.notifyTurn(sessionPath);
   }
 
@@ -896,13 +889,7 @@ export class SessionCoordinator {
       });
       for (const item of listed) {
         const meta = item.metadata;
-        let info = null;
         let historyMessages = [];
-        try {
-          info = await getSessionInfo(meta.sessionId, { dir: meta.cwd });
-        } catch {
-          info = null;
-        }
         try {
           historyMessages = readSessionMessagesFromLog(item.sessionPath, { limit: 200 });
         } catch {
@@ -923,11 +910,11 @@ export class SessionCoordinator {
         ).length;
         allSessions.push({
           path: item.sessionPath,
-          title: meta.title || info?.customTitle || info?.summary || null,
-          firstMessage: info?.firstPrompt || firstMessage || "",
-          modified: new Date(info?.lastModified || meta.updatedAt || Date.now()),
+          title: meta.title || null,
+          firstMessage: firstMessage || "",
+          modified: new Date(meta.updatedAt || meta.createdAt || Date.now()),
           messageCount,
-          cwd: meta.cwd || info?.cwd || null,
+          cwd: meta.cwd || null,
           agentId: agent.id,
           agentName: agent.name,
         });

@@ -24,6 +24,7 @@ interface Props {
   message: ChatMessage;
   showAvatar: boolean;
   isStreaming?: boolean;
+  runningMs?: number;
 }
 
 function normalizeToolName(name: string): string {
@@ -64,7 +65,15 @@ function isAutoCollapsibleChainBlock(block: ContentBlock): boolean {
   return block.type === 'thinking' || block.type === 'tool_group';
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, isStreaming = false }: Props) {
+function formatRunningDuration(ms: number): string {
+  const sec = Math.max(0, ms) / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec - minutes * 60;
+  return `${minutes}m ${seconds.toFixed(1)}s`;
+}
+
+export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, isStreaming = false, runningMs }: Props) {
   const agentName = useStore(s => s.agentName) || 'Hanako';
   const agentYuan = useStore(s => s.agentYuan) || 'hanako';
   const agentAvatarUrl = useStore(s => s.agentAvatarUrl);
@@ -110,16 +119,15 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   );
   const chainBlocks = useMemo(() => displayBlocks.filter(isAutoCollapsibleChainBlock), [displayBlocks]);
   const hasCollapsibleChain = hasPrimaryText && chainBlocks.length > 0;
-  const [chainExpanded, setChainExpanded] = useState(false);
+  const [chainExpanded, setChainExpanded] = useState(true);
 
   useEffect(() => {
-    setChainExpanded(false);
+    if (!hasCollapsibleChain) {
+      setChainExpanded(false);
+      return;
+    }
+    setChainExpanded(true);
   }, [message.id, hasCollapsibleChain]);
-
-  const renderedBlocks = useMemo(() => {
-    if (!hasCollapsibleChain || chainExpanded) return displayBlocks;
-    return displayBlocks.filter((block) => !isAutoCollapsibleChainBlock(block));
-  }, [displayBlocks, hasCollapsibleChain, chainExpanded]);
 
   const chainThinkingCount = useMemo(
     () => chainBlocks.filter((block) => block.type === 'thinking').length,
@@ -140,13 +148,13 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   }, [chainThinkingCount, chainToolCount]);
 
   const finalTextIndex = useMemo(() => {
-    for (let i = renderedBlocks.length - 1; i >= 0; i--) {
-      if (renderedBlocks[i].type === 'text') return i;
+    for (let i = displayBlocks.length - 1; i >= 0; i--) {
+      if (displayBlocks[i].type === 'text') return i;
     }
     return -1;
-  }, [renderedBlocks]);
-  const finalTextHtml = finalTextIndex >= 0 && renderedBlocks[finalTextIndex].type === 'text'
-    ? renderedBlocks[finalTextIndex].html
+  }, [displayBlocks]);
+  const finalTextHtml = finalTextIndex >= 0 && displayBlocks[finalTextIndex].type === 'text'
+    ? displayBlocks[finalTextIndex].html
     : '';
   const [smoothedFinalTextHtml, setSmoothedFinalTextHtml] = useState(finalTextHtml);
 
@@ -163,6 +171,11 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
 
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
+  const runningLabel = useMemo(() => {
+    const key = 'chat.agentRunning';
+    const text = t(key);
+    return text && text !== key ? text : 'Agent Running';
+  }, [t]);
 
   const handleCopy = useCallback(() => {
     if (!finalTextHtml) return;
@@ -201,6 +214,12 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
             <span className="avatar user-avatar">🌸</span>
           )}
           <span className="avatar-name">{displayName}</span>
+          {typeof runningMs === 'number' && runningMs >= 0 && (
+            <span className="agent-running-inline">
+              <span className="agent-running-inline-icon" aria-hidden>⋮</span>
+              <span>{runningLabel} {formatRunningDuration(runningMs)}</span>
+            </span>
+          )}
         </div>
       )}
       <div className="message assistant">
@@ -216,7 +235,27 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
             <span className="chain-summary-status">{chainExpanded ? '已展开' : '已折叠'}</span>
           </button>
         )}
-        {renderedBlocks.map((block, i) => {
+        {displayBlocks.map((block, i) => {
+          if (isAutoCollapsibleChainBlock(block)) {
+            const chainVisible = !hasCollapsibleChain || chainExpanded;
+            return (
+              <div
+                key={i}
+                className={`chain-collapsible${chainVisible ? ' expanded' : ' collapsed'}`}
+                aria-hidden={hasCollapsibleChain ? !chainExpanded : undefined}
+              >
+                <div className="chain-collapsible-inner">
+                  <ContentBlockView
+                    block={block}
+                    agentName={displayName}
+                    yuan={displayYuan}
+                    dimmed={hasPrimaryText && block.type !== 'text'}
+                  />
+                </div>
+              </div>
+            );
+          }
+
           const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
           if (isFinalTextBlock) {
             return (

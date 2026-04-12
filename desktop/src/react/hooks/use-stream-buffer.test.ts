@@ -69,6 +69,31 @@ describe('mergeDelta', () => {
     expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\n结束。');
   });
 
+  it('hides singular function_call markup from streamed text', () => {
+    const raw = '开始。\n<function_call>{"tool":"Glob","input":{"pattern":"*"}}</function_call>\n结束。';
+    expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\n结束。');
+  });
+
+  it('hides malformed singular function_call block without opening tag from streamed text', () => {
+    const raw = '开始。\nfunction_call\n{"tool":"Glob","input":{"AbsolutePathPattern":"/Users/tc/Desktop/*"}}\n</function_call>\n结束。';
+    expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\n结束。');
+  });
+
+  it('hides plain text tool_call trace lines from streamed text', () => {
+    const raw = '开始。\ntool_call: - id: "glob_1" depth: "1" dir: "/Users/tc/Desktop" Glob: null\ntool_call_end: glob_1\n结束。';
+    expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\n\n结束。');
+  });
+
+  it('hides named XML tool tag markup from streamed text', () => {
+    const raw = '开始。\n<Glob><path>/Users/tc/Desktop/*</path></Glob>\n结束。';
+    expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\n结束。');
+  });
+
+  it('hides lone closing named tool tags from streamed text', () => {
+    const raw = '好，先建目录。\n</bash>\n继续。';
+    expect(stripStreamToolMarkup(raw).trim()).toBe('好，先建目录。\n\n继续。');
+  });
+
   it('keeps trailing plain text when streamed function_calls parameter tag is malformed', () => {
     const raw = '开始。\n<function_calls><invoke name="Bash"><parameter name="command">ls -la\n我继续说明：目录是存在的。';
     expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\nls -la\n我继续说明：目录是存在的。');
@@ -97,6 +122,21 @@ describe('mergeDelta', () => {
     streamBufferManager.handle({ type: 'turn_end', sessionPath });
 
     const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(0);
+  });
+
+  it('creates assistant placeholder immediately on startTurn and drops it on empty turn_end', () => {
+    streamBufferManager.startTurn(sessionPath);
+    let items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    expect(items[0]?.type).toBe('message');
+    if (items[0]?.type === 'message') {
+      expect(items[0].data.role).toBe('assistant');
+      expect(items[0].data.blocks || []).toEqual([]);
+    }
+
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+    items = useStore.getState().chatSessions[sessionPath]?.items || [];
     expect(items).toHaveLength(0);
   });
 
@@ -197,6 +237,20 @@ describe('mergeDelta', () => {
         expect(thinking.content).toContain('第二段思考');
       }
     }
+  });
+
+  it('does not render tool_call trace text in thinking block', () => {
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({
+      type: 'thinking_delta',
+      sessionPath,
+      delta: 'tool_call: - id: "glob_1" depth: "1" dir: "/Users/tc/Desktop" Glob: null\ntool_call_end: glob_1',
+    });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(0);
   });
 
   it('keeps a single thinking block when snapshot repeats finished thinking', () => {

@@ -98,9 +98,13 @@ export async function switchSession(path: string): Promise<void> {
 
     // 同步 streamingSessions：切入的 session 可能正在 streaming
     let streamingSessions = state.streamingSessions;
+    let streamingSinceByPath = state.streamingSinceByPath || {};
     if (data.isStreaming && path) {
       if (!streamingSessions.includes(path)) {
         streamingSessions = [...streamingSessions, path];
+      }
+      if (!streamingSinceByPath[path]) {
+        streamingSinceByPath = { ...streamingSinceByPath, [path]: Date.now() };
       }
     }
 
@@ -127,6 +131,7 @@ export async function switchSession(path: string): Promise<void> {
       memoryEnabled: data.memoryEnabled !== false,
       isStreaming: !!data.isStreaming,
       streamingSessions,
+      streamingSinceByPath,
       sessionAgent,
       browserRunning: !!data.browserRunning,
       browserSessionPath: data.browserRunning ? path : null,

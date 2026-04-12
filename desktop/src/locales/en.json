@@ -108,6 +108,7 @@
     "send": "Send",
     "steer": "Steer",
     "stop": "Stop",
+    "agentRunning": "Agent Running",
     "browserScreenshot": "Browser screenshot",
     "compacting": "Compacting context",
     "compacted": "Context compacted"

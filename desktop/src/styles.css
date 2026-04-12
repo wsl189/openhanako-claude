@@ -1996,6 +1996,25 @@ html[data-platform="linux"] .tb-toggle-right {
     letter-spacing: 0.02em;
 }
 
+.agent-running-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    margin-left: 0.28rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    opacity: 0.9;
+}
+
+.agent-running-inline-icon {
+    width: 0.62rem;
+    text-align: center;
+    font-size: 0.72rem;
+    line-height: 1;
+    opacity: 0.8;
+    animation: session-running-pulse 1.6s ease-in-out infinite;
+}
+
 /* 单条消息 */
 .message {
     max-width: 92%;
@@ -4565,6 +4584,9 @@ html[data-platform="darwin"] .sv-topbar-title {
    ======================================== */
 .tool-item {
     width: 100%;
+    opacity: 0;
+    transform: translateY(2px);
+    animation: tool-item-enter 0.22s ease-out forwards;
 }
 
 .tool-indicator {
@@ -4694,6 +4716,17 @@ html[data-platform="darwin"] .sv-topbar-title {
 @keyframes dot-pulse {
     0%, 60%, 100% { opacity: 0.3; }
     30% { opacity: 1; }
+}
+
+@keyframes tool-item-enter {
+    from {
+        opacity: 0;
+        transform: translateY(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .tool-indicator .tool-status {
@@ -4868,6 +4901,7 @@ html[data-platform="darwin"] .sv-topbar-title {
     width: 0.85em;
     flex-shrink: 0;
     color: var(--text-muted);
+    transition: opacity 0.2s ease;
 }
 
 .chain-summary .chain-summary-status {
@@ -4875,11 +4909,61 @@ html[data-platform="darwin"] .sv-topbar-title {
     margin-left: 0.25rem;
 }
 
+.chain-collapsible {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(-3px);
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+        grid-template-rows 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 0.2s ease,
+        transform 0.24s ease,
+        visibility 0s linear 0.24s;
+}
+
+.chain-collapsible.expanded {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+    pointer-events: auto;
+    transition:
+        grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 0.24s ease,
+        transform 0.3s ease,
+        visibility 0s linear 0s;
+}
+
+.chain-collapsible-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tool-item,
+    .thinking-block {
+        animation: none;
+        opacity: 1;
+        transform: none;
+    }
+
+    .chain-collapsible,
+    .chain-collapsible.expanded {
+        transition: none;
+        transform: none;
+    }
+}
+
 /* 思考折叠块 */
 .thinking-block {
     margin: 0.32rem 0 0.42rem;
     max-width: min(100%, 900px);
     font-size: 0.8rem;
+    opacity: 0;
+    transform: translateY(2px);
+    animation: thinking-block-enter 0.24s ease-out forwards;
 }
 
 .thinking-block-summary {
@@ -4975,6 +5059,17 @@ html[data-platform="darwin"] .sv-topbar-title {
 
 .thinking-block-toggle:hover {
     color: color-mix(in oklab, var(--text-muted) 64%, var(--text) 36%);
+}
+
+@keyframes thinking-block-enter {
+    from {
+        opacity: 0;
+        transform: translateY(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 /* ========================================

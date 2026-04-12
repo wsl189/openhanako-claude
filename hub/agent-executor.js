@@ -209,14 +209,16 @@ export async function runAgentSession(agentId, rounds, {
     }
   } catch {}
 
-  const runtimeEnv = {
-    ...process.env,
-  };
+  const runtimeEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("ANTHROPIC_")) runtimeEnv[key] = value;
+  }
   if (resolvedModelWithCreds) {
-    runtimeEnv.ANTHROPIC_BASE_URL = resolvedModelWithCreds.api === "anthropic-messages"
-      ? (normalizeAnthropicBaseUrlForSdk(resolvedModelWithCreds.base_url) || undefined)
-      : (resolvedModelWithCreds.base_url || undefined);
+    runtimeEnv.ANTHROPIC_BASE_URL = normalizeAnthropicBaseUrlForSdk(
+      resolvedModelWithCreds.base_url,
+    ) || undefined;
     runtimeEnv.ANTHROPIC_API_KEY = resolvedModelWithCreds.api_key || undefined;
+    runtimeEnv.ANTHROPIC_AUTH_TOKEN = resolvedModelWithCreds.auth_token || undefined;
   }
 
   const model = applyRuntimeModelOverrides(

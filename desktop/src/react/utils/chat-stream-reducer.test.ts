@@ -78,4 +78,39 @@ describe('applyChatStreamLiveEvent', () => {
       details: { summary: 'listed 2 files' },
     });
   });
+
+  it('merges late tool_end output into already-done tool entry', () => {
+    let blocks: ContentBlock[] = [];
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'bash',
+      toolCallId: 'tool-late-1',
+      args: { command: 'ls -la' },
+    });
+    // 模拟 sdk_message(user tool_result) 先到：仅有 success，没有 resultText。
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_end',
+      name: 'bash',
+      toolCallId: 'tool-late-1',
+      success: true,
+    });
+    // 模拟随后的 tool_end 事件补齐可展示输出。
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_end',
+      name: 'bash',
+      toolCallId: 'tool-late-1',
+      success: true,
+      resultText: 'total 2\n-rw-r--r-- a.txt',
+      details: { summary: 'listed files' },
+    });
+
+    const group = blocks[0] as Extract<ContentBlock, { type: 'tool_group' }>;
+    expect(group.tools[0]).toMatchObject({
+      toolUseId: 'tool-late-1',
+      done: true,
+      success: true,
+      resultText: 'total 2\n-rw-r--r-- a.txt',
+      details: { summary: 'listed files' },
+    });
+  });
 });

@@ -32,4 +32,3 @@ export async function loadModels(): Promise<void> {
     });
   } catch { /* silent */ }
 }
-

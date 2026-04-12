@@ -95,6 +95,20 @@ function extractMessageText(message) {
     .join("");
 }
 
+function isSessionNotFoundError(error) {
+  const message = String(error?.message || error || "");
+  return /no conversation found with session id/i.test(message);
+}
+
+function extractResultErrorMessage(message) {
+  if (!message?.is_error) return "";
+  if (Array.isArray(message?.errors) && message.errors.length > 0) {
+    return String(message.errors[0] || "");
+  }
+  if (typeof message?.result === "string") return message.result;
+  return "";
+}
+
 function toContextUsageSnapshot(usage, fallbackUsage = null) {
   if (!usage && !fallbackUsage) return null;
   const fallbackTokens = fallbackUsage
@@ -128,7 +142,12 @@ export class ClaudeSessionRuntime {
     this.resumeSessionId = resumeSessionId;
     this.cwd = cwd;
     this.sessionPath = sessionPath;
-    this.options = { ...options, cwd, includePartialMessages: true, persistSession: true };
+    this.options = {
+      ...options,
+      cwd,
+      includePartialMessages: false,
+      persistSession: true,
+    };
     this.sessionManager = {
       getSessionId: () => this.sessionId,
       getSessionFile: () => this.sessionPath,
@@ -147,8 +166,10 @@ export class ClaudeSessionRuntime {
     this.isCompacting = false;
     this._query = null;
     this._pumpPromise = null;
+    this._pumpActive = false;
     this._lastAssistantResponseId = null;
     this._activeCompactionTrigger = null;
+    this._allowSessionNotFoundRetry = false;
   }
 
   _syncSessionId(nextSessionId) {
@@ -180,20 +201,25 @@ export class ClaudeSessionRuntime {
     this._query = null;
     this._pumpPromise = null;
     this.resumeSessionId = resume ? (this.sessionId || this.resumeSessionId) : null;
+    if (!resume) this.sessionId = null;
 
     await this.start();
   }
 
   async start() {
-    if (this._query) return;
+    if (this._query && this._pumpActive) return;
+    if (this._query && !this._pumpActive) {
+      this._query = null;
+      this._pumpPromise = null;
+    }
     this._query = query({
       prompt: this._queue,
       options: {
         ...this.options,
         ...(this.resumeSessionId ? { resume: this.resumeSessionId } : {}),
-        ...(!this.resumeSessionId && this.sessionId ? { sessionId: this.sessionId } : {}),
       },
     });
+    this._pumpActive = true;
     this._pumpPromise = this._pump();
     this.refreshContextUsage().catch(() => {});
   }
@@ -242,8 +268,9 @@ export class ClaudeSessionRuntime {
   }
 
   async _pump() {
+    const activeQuery = this._query;
     try {
-      for await (const message of this._query) {
+      for await (const message of activeQuery) {
         if (message?.session_id) {
           this._syncSessionId(message.session_id);
         }
@@ -264,6 +291,28 @@ export class ClaudeSessionRuntime {
           this.refreshContextUsage().catch(() => {});
         }
         if (message?.type === "result") {
+          const resultErrorMessage = extractResultErrorMessage(message);
+          const recoverableSessionNotFound = (
+            this._allowSessionNotFoundRetry
+            && message?.is_error
+            && isSessionNotFoundError(resultErrorMessage)
+          );
+          if (recoverableSessionNotFound) {
+            this.isStreaming = false;
+            if (this._activeCompactionTrigger) {
+              this._emit({ type: "compaction_end", trigger: this._activeCompactionTrigger });
+              this._activeCompactionTrigger = null;
+            }
+            this.isCompacting = false;
+            const turn = this._pendingTurn;
+            this._pendingTurn = null;
+            turn?.reject(new Error(resultErrorMessage || "No conversation found with session ID"));
+            const compaction = this._pendingCompaction;
+            this._pendingCompaction = null;
+            compaction?.reject(new Error(resultErrorMessage || "No conversation found with session ID"));
+            this.refreshContextUsage(message.usage).catch(() => {});
+            continue;
+          }
           const manualCompactionResult = Boolean(this._pendingCompaction);
           this._lastUsage = message.usage || null;
           this.isStreaming = false;
@@ -305,18 +354,39 @@ export class ClaudeSessionRuntime {
       const compaction = this._pendingCompaction;
       this._pendingCompaction = null;
       compaction?.reject(error);
-      this._emit({ type: "runtime_error", error });
+      if (!(this._allowSessionNotFoundRetry && isSessionNotFoundError(error))) {
+        this._emit({ type: "runtime_error", error });
+      }
+    } finally {
+      this.isStreaming = false;
+      this._activeCompactionTrigger = null;
+      this.isCompacting = false;
+
+      if (this._pendingTurn) {
+        const turn = this._pendingTurn;
+        this._pendingTurn = null;
+        turn.reject(new Error("Claude runtime stream closed"));
+      }
+      if (this._pendingCompaction) {
+        const compaction = this._pendingCompaction;
+        this._pendingCompaction = null;
+        compaction.reject(new Error("Claude runtime stream closed"));
+      }
+
+      if (this._query === activeQuery) {
+        this._query = null;
+        this._pumpPromise = null;
+      }
+      this._pumpActive = false;
     }
   }
 
-  async prompt(text, opts = {}) {
-    await this.start();
-    if (this._pendingTurn) {
-      throw new Error("Claude session is already running a turn");
-    }
+  _enqueueUserPrompt(text, opts = {}, { recordLocalMessage = true } = {}) {
     this.isStreaming = true;
     this._pendingTurn = deferred();
-    this.messages.push(toSessionUserMessage(text, opts.images || []));
+    if (recordLocalMessage) {
+      this.messages.push(toSessionUserMessage(text, opts.images || []));
+    }
     this._queue.push({
       type: "user",
       message: {
@@ -326,6 +396,30 @@ export class ClaudeSessionRuntime {
       parent_tool_use_id: null,
     });
     return this._pendingTurn.promise;
+  }
+
+  async _recoverFromInvalidResumeSession() {
+    // 历史 metadata 中残留的 sessionId 可能已在 SDK 侧不存在，清空后重新启动为新会话。
+    this.resumeSessionId = null;
+    this.sessionId = null;
+    await this._restartQuery({ resume: false });
+  }
+
+  async prompt(text, opts = {}) {
+    await this.start();
+    if (this._pendingTurn) {
+      throw new Error("Claude session is already running a turn");
+    }
+    this._allowSessionNotFoundRetry = true;
+    try {
+      return await this._enqueueUserPrompt(text, opts, { recordLocalMessage: true });
+    } catch (error) {
+      if (!isSessionNotFoundError(error)) throw error;
+      await this._recoverFromInvalidResumeSession();
+      return await this._enqueueUserPrompt(text, opts, { recordLocalMessage: false });
+    } finally {
+      this._allowSessionNotFoundRetry = false;
+    }
   }
 
   steer(text) {

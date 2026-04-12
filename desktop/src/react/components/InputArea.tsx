@@ -13,6 +13,7 @@ import { useI18n } from '../hooks/use-i18n';
 import { ensureSession, loadSessions } from '../stores/session-actions';
 import { loadDeskFiles } from '../stores/desk-actions';
 import { getWebSocket } from '../services/websocket';
+import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { SVG_ICONS } from '../utils/icons';
 import type { ThinkingLevel } from '../stores/model-slice';
 
@@ -147,6 +148,24 @@ function InputAreaInner() {
   const toggleDocContext = useStore(s => s.toggleDocContext);
   const setDocContextAttached = useStore(s => s.setDocContextAttached);
 
+  const beginOptimisticStreamingTurn = useCallback((sessionPath: string | null) => {
+    if (!sessionPath) return;
+    const now = Date.now();
+    useStore.setState((prev: any) => {
+      const list: string[] = Array.isArray(prev.streamingSessions) ? prev.streamingSessions : [];
+      const sinceMap: Record<string, number> = (prev.streamingSinceByPath || {}) as Record<string, number>;
+      return {
+        isStreaming: true,
+        streamingSessions: list.includes(sessionPath) ? list : [...list, sessionPath],
+        streamingSinceByPath: {
+          ...sinceMap,
+          [sessionPath]: sinceMap[sessionPath] ?? now,
+        },
+      };
+    });
+    streamBufferManager.startTurn(sessionPath);
+  }, []);
+
   // Doc context: current open artifact with filePath
   const currentDoc = useMemo(() => {
     if (!previewOpen || !currentArtifactId) return null;
@@ -180,10 +199,11 @@ function InputAreaInner() {
         data: { id: `user-${Date.now()}`, role: 'user', text: msgText, textHtml: renderMarkdown(msgText) },
       });
       useStore.setState({ welcomeVisible: false });
+      beginOptimisticStreamingTurn(sessionPath);
     }
     ws.send(JSON.stringify({ type: 'prompt', text, sessionPath: useStore.getState().currentSessionPath }));
     return true;
-  }, [pendingNewSession]);
+  }, [pendingNewSession, beginOptimisticStreamingTurn]);
 
   // ── 斜杠命令 ──
 
@@ -454,6 +474,7 @@ function InputAreaInner() {
           },
         });
         useStore.setState({ welcomeVisible: false });
+        beginOptimisticStreamingTurn(sessionPath);
       }
 
       setInputText('');
@@ -466,7 +487,7 @@ function InputAreaInner() {
     } finally {
       setSending(false);
     }
-  }, [inputText, attachedFiles, docContextAttached, connected, isStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, setDocContextAttached, slashMenuOpen, filteredCommands, slashSelected]);
+  }, [inputText, attachedFiles, docContextAttached, connected, isStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, setDocContextAttached, slashMenuOpen, filteredCommands, slashSelected, beginOptimisticStreamingTurn]);
 
   // ── Steer (插话) ──
   const handleSteer = useCallback(async () => {

@@ -419,16 +419,31 @@ export function handleServerMessage(msg: any): void {
       // 元数据层：维护所有 session 的 streaming 状态
       const sp = msg.sessionPath;
       if (sp) {
-        const list: string[] = state.streamingSessions || [];
-        if (msg.isStreaming) {
-          if (!list.includes(sp)) useStore.setState({ streamingSessions: [...list, sp] });
-        } else {
-          useStore.setState({ streamingSessions: list.filter((p: string) => p !== sp) });
-        }
+        useStore.setState((prev: any) => {
+          const list: string[] = Array.isArray(prev.streamingSessions) ? prev.streamingSessions : [];
+          const sinceMap: Record<string, number> = (prev.streamingSinceByPath || {}) as Record<string, number>;
+          if (msg.isStreaming) {
+            return {
+              streamingSessions: list.includes(sp) ? list : [...list, sp],
+              streamingSinceByPath: {
+                ...sinceMap,
+                [sp]: sinceMap[sp] ?? Date.now(),
+              },
+            };
+          }
+          const { [sp]: _removed, ...restSince } = sinceMap;
+          return {
+            streamingSessions: list.filter((p: string) => p !== sp),
+            streamingSinceByPath: restSince,
+          };
+        });
       }
       // 渲染层：只有焦点 session 才影响 UI
       if (!sp || sp === state.currentSessionPath) {
         applyStreamingStatus(msg.isStreaming);
+        if (msg.isStreaming && sp) {
+          streamBufferManager.startTurn(sp);
+        }
       }
 
       // 浏览器自动收尾：

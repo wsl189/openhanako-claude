@@ -10,7 +10,7 @@ import { useStore } from '../../stores';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { CompactionNotice, CompactionDoneDivider } from './CompactionNotice';
-import type { ChatListItem } from '../../stores/chat-types';
+import type { ChatListItem, ChatMessage, ContentBlock } from '../../stores/chat-types';
 
 const MAX_ALIVE = 5;
 
@@ -70,10 +70,44 @@ function isAssistantMessageItem(item: ChatListItem | undefined): item is Extract
   return !!item && item.type === 'message' && item.data.role === 'assistant';
 }
 
+function mergeAssistantMessages(prev: ChatMessage, next: ChatMessage): ChatMessage {
+  const prevBlocks: ContentBlock[] = Array.isArray(prev.blocks) ? prev.blocks : [];
+  const nextBlocks: ContentBlock[] = Array.isArray(next.blocks) ? next.blocks : [];
+  return {
+    ...prev,
+    blocks: [...prevBlocks, ...nextBlocks],
+    // 保留更晚的时间戳，头像行上“Agent Running”计时和时序更贴近当前状态
+    timestamp: typeof next.timestamp === 'number' ? next.timestamp : prev.timestamp,
+  };
+}
+
+function coalesceAssistantItems(items: ChatListItem[]): ChatListItem[] {
+  const merged: ChatListItem[] = [];
+  for (const item of items) {
+    if (!item || item.type !== 'message' || item.data.role !== 'assistant') {
+      merged.push(item);
+      continue;
+    }
+    const last = merged[merged.length - 1];
+    if (last && last.type === 'message' && last.data.role === 'assistant') {
+      merged[merged.length - 1] = {
+        type: 'message',
+        data: mergeAssistantMessages(last.data, item.data),
+      };
+      continue;
+    }
+    merged.push(item);
+  }
+  return merged;
+}
+
 const Panel = memo(function Panel({ path, active }: { path: string; active: boolean }) {
-  const items = useStore(s => s.chatSessions[path]?.items || []);
+  const rawItems = useStore(s => s.chatSessions[path]?.items || []);
+  const items = useMemo(() => coalesceAssistantItems(rawItems), [rawItems]);
   const streamingSessions = useStore(s => s.streamingSessions);
+  const streamingSinceByPath = useStore(s => s.streamingSinceByPath);
   const isPathStreaming = streamingSessions.includes(path);
+  const [streamingNow, setStreamingNow] = useState<number>(Date.now());
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
@@ -140,7 +174,19 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     prevLen.current = items.length;
   }, [items.length, active]);
 
+  useEffect(() => {
+    if (!isPathStreaming) return undefined;
+    const timer = window.setInterval(() => {
+      setStreamingNow(Date.now());
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [isPathStreaming]);
+
   if (items.length === 0) return null;
+
+  const runningMs = isPathStreaming
+    ? Math.max(0, streamingNow - (streamingSinceByPath[path] ?? streamingNow))
+    : 0;
 
   return (
     <div
@@ -159,6 +205,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             item={item}
             prevItem={i > 0 ? items[i - 1] : undefined}
             isStreamingMessage={isPathStreaming && i === lastAssistantIndex}
+            runningMs={isPathStreaming && i === lastAssistantIndex ? runningMs : undefined}
           />
         ))}
         <div className="chat-session-footer" />
@@ -197,10 +244,12 @@ const ItemView = memo(function ItemView({
   item,
   prevItem,
   isStreamingMessage,
+  runningMs,
 }: {
   item: ChatListItem;
   prevItem?: ChatListItem;
   isStreamingMessage?: boolean;
+  runningMs?: number;
 }) {
   if (item.type === 'compaction') {
     return <CompactionNotice yuan={item.yuan} />;
@@ -219,6 +268,7 @@ const ItemView = memo(function ItemView({
       message={msg}
       showAvatar={showAvatar}
       isStreaming={!!isStreamingMessage}
+      runningMs={runningMs}
     />
   );
 });

@@ -108,6 +108,7 @@
     "send": "发送",
     "steer": "插话",
     "stop": "停止",
+    "agentRunning": "运行中",
     "browserScreenshot": "浏览器截图",
     "compacting": "上下文压缩中",
     "compacted": "已压缩上下文"

@@ -213,13 +213,15 @@ export class BridgeSessionManager {
 
   _buildRuntimeEnv(mm, agent, modelRef) {
     const resolved = mm.resolveModelWithCredentials(modelRef, agent?.config);
+    const cleanEnv = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (!key.startsWith("ANTHROPIC_")) cleanEnv[key] = value;
+    }
     return {
       model: resolved.model,
       env: {
-        ...process.env,
-        ANTHROPIC_BASE_URL: resolved.api === "anthropic-messages"
-          ? (normalizeAnthropicBaseUrlForSdk(resolved.base_url) || undefined)
-          : (resolved.base_url || undefined),
+        ...cleanEnv,
+        ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrlForSdk(resolved.base_url) || undefined,
         ANTHROPIC_API_KEY: resolved.api_key || undefined,
         ANTHROPIC_AUTH_TOKEN: resolved.auth_token || undefined,
       },
@@ -273,6 +275,16 @@ export class BridgeSessionManager {
           runtime?._emit?.(event);
         },
       });
+      const runtimeTools = runtimeConfig?.diagnostics || {};
+      debugLog()?.log(
+        "bridge-session",
+        `[runtime-tools] settings=${JSON.stringify(runtimeTools.settingSources || [])} `
+        + `allowed=${JSON.stringify(runtimeTools.builtinEnabled || [])} `
+        + `forcedToolsOption=${runtimeTools.forcedToolsOption === true} `
+        + `permissionStrategy=${runtimeTools.permissionStrategy || "unknown"} `
+        + `canUseTool=${runtimeTools.hasCanUseTool === true} `
+        + `customLoaded=${JSON.stringify(runtimeTools.customToolsLoaded || [])}`,
+      );
 
       runtime = new ClaudeSessionRuntime({
         sessionId: metadata.sessionId,

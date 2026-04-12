@@ -281,11 +281,26 @@ export function applyChatStreamLiveEvent(
     }
 
     case 'tool_end': {
-      const location = findToolLocation(next, {
+      let location = findToolLocation(next, {
         toolCallId: msg.toolCallId,
         name: msg.name,
         onlyPending: true,
       });
+      if (!location) {
+        const hasResultPayload = (
+          !!clipToolResultText(msg.resultText)
+          || !!extractToolResultText(msg.content)
+          || (msg.details && typeof msg.details === 'object')
+        );
+        if (hasResultPayload) {
+          // 兼容 "sdk_message(user tool_result) 先置 done，随后 tool_end 才带 resultText/details" 的顺序。
+          location = findToolLocation(next, {
+            toolCallId: msg.toolCallId,
+            name: msg.name,
+            onlyPending: false,
+          });
+        }
+      }
       if (!location) return blocks;
 
       const group = next[location.blockIndex] as Extract<ContentBlock, { type: 'tool_group' }>;
@@ -303,7 +318,7 @@ export function applyChatStreamLiveEvent(
         details: mergedDetails,
         resultText,
         done: true,
-        success: !!msg.success,
+        success: msg.success == null ? current.success : !!msg.success,
       };
       const allDone = tools.every((item) => item.done);
       next[location.blockIndex] = {

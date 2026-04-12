@@ -35,8 +35,8 @@ import { SimpleResourceLoader } from "./skill-loader.js";
 import { CLAUDE_BUILTIN_TOOL_NAMES, HANAKO_TO_CLAUDE_BUILTIN } from "./claude-runtime-config.js";
 import { createSandboxedTools } from "../lib/sandbox/index.js";
 
-const REQUIRED_BUILTIN_TOOLS = [];
-const OPTIONAL_BUILTIN_TOOLS = [...CLAUDE_BUILTIN_TOOL_NAMES];
+const REQUIRED_BUILTIN_TOOLS = ["Read", "Glob", "Grep"];
+const OPTIONAL_BUILTIN_TOOLS = CLAUDE_BUILTIN_TOOL_NAMES.filter((name) => !REQUIRED_BUILTIN_TOOLS.includes(name));
 const ALL_BUILTIN_TOOL_NAMES = [...REQUIRED_BUILTIN_TOOLS, ...OPTIONAL_BUILTIN_TOOLS];
 const PATH_RULE_ACCESS = new Set(["read_only", "read_write"]);
 

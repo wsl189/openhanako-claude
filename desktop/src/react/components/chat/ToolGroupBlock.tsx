@@ -5,6 +5,7 @@
 import { memo, useMemo, useState } from 'react';
 import { extractToolDetail } from '../../utils/message-parser';
 import type { ToolCall } from '../../stores/chat-types';
+import { useSmoothStream } from '../../hooks/use-smooth-stream';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -312,6 +313,12 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
   const phase = (tool.done ? (tool.success ? 'done' : 'failed') : 'running') as 'running' | 'done' | 'failed';
   const label = getToolLabel(tool.name, phase, agentName, tool.args);
   const actionLine = buildToolActionLine(tool.name, phase, detail);
+  const { displayedContent: smoothActionLine } = useSmoothStream({
+    content: actionLine,
+    isStreaming: !tool.done,
+    minDelay: 14,
+    startFromEmptyWhenStreaming: true,
+  });
   const t = (window as any).t;
   const doneText = stripLeadingEmoji(t?.('tool._line.done') || '完成');
   const failedText = stripLeadingEmoji(t?.('tool._line.failed') || '失败');
@@ -335,7 +342,7 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
         title={label}
       >
         <span className="tool-leading">{phase === 'failed' ? '!' : (phase === 'done' ? '✓' : '›')}</span>
-        <span className="tool-desc">{renderActionLineWithDiffColors(actionLine)}</span>
+        <span className="tool-desc">{renderActionLineWithDiffColors(smoothActionLine || actionLine)}</span>
         {tag && <span className="tool-tag">{tag}</span>}
         {tool.done ? (
           <span className={`tool-status ${tool.success ? 'done' : 'failed'}`}>

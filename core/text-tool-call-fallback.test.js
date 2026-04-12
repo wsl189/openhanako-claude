@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractTextToolCalls } from "./provider-tool-call-fallback.js";
+import { extractTextToolCalls } from "./text-tool-call-fallback.js";
 
 describe("extractTextToolCalls", () => {
   it("extracts assistant-to markup and cleans the visible text", () => {

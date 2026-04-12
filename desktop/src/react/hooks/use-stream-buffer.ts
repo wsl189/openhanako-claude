@@ -17,6 +17,24 @@ import { applyChatStreamLiveEvent, upsertCronConfirmation } from '../utils/chat-
 
 // 更高刷新频率，让前端流式文字更接近连续输出观感
 const FLUSH_INTERVAL = 90;
+const NAMED_TOOL_TAGS = [
+  'glob',
+  'read',
+  'read_file',
+  'write',
+  'write_file',
+  'edit',
+  'edit_file',
+  'bash',
+  'grep',
+  'find',
+  'find_files',
+  'list_files',
+  'ls',
+  'exec',
+  'exec_command',
+  'command',
+];
 
 export function stripSdkDiagnosticLines(text: string): string {
   return String(text || '')
@@ -30,17 +48,28 @@ export function stripSdkDiagnosticLines(text: string): string {
 
 export function stripStreamToolMarkup(text: string): string {
   return String(text || '')
-    .replace(/```[\s\S]*?(?:<assistant\b[^>]*\bto=|<tool_use\b|<minimax:tool_call\b|<function_calls\b)[\s\S]*?```/gi, ' ')
+    .replace(/```[\s\S]*?(?:<assistant\b[^>]*\bto=|<tool_use\b|<minimax:tool_call\b|<function_call\b|<function_calls\b)[\s\S]*?```/gi, ' ')
     .replace(/```[\s\S]*?\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\][\s\S]*?```/gi, ' ')
     .replace(/<assistant\b[^>]*\bto\s*=\s*(?:"[^"]+"|'[^']+'|“[^”]+”|‘[^’]+’|[^\s>]+)[^>]*>[\s\S]*?<\/assistant>\s*/gi, ' ')
     .replace(/<tool_use\b[^>]*\bname\s*=\s*(?:"[^"]+"|'[^']+'|“[^”]+”|‘[^’]+’|[^\s>]+)[^>]*>[\s\S]*?<\/tool_use>\s*/gi, ' ')
     .replace(/<minimax:tool_call\b[^>]*>[\s\S]*?<\/minimax:tool_call>\s*/gi, ' ')
+    .replace(/<function_call\b[^>]*>[\s\S]*?<\/function_call>\s*/gi, ' ')
     .replace(/<function_calls\b[^>]*>[\s\S]*?<\/function_calls>\s*/gi, ' ')
+    .replace(/(?:^|\n)\s*function_call\s*\n[\s\S]*?<\/function_call>\s*/gi, '\n')
+    .replace(new RegExp(
+      `<(?:${NAMED_TOOL_TAGS.join('|')})\\b[^>]*>[\\s\\S]*?<\\/(?:${NAMED_TOOL_TAGS.join('|')})>\\s*`,
+      'gi',
+    ), ' ')
+    .replace(new RegExp(`</(?:${NAMED_TOOL_TAGS.join('|')})\\s*>`, 'gi'), ' ')
+    .replace(new RegExp(`<(?:${NAMED_TOOL_TAGS.join('|')})\\b[^>]*>`, 'gi'), ' ')
+    .replace(/<\/?function_call\b[^>]*>\s*/gi, ' ')
     .replace(/<\/?function_calls\b[^>]*>\s*/gi, ' ')
     .replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>\s*/gi, ' ')
     .replace(/<\/?parameter\b[^>]*>\s*/gi, ' ')
     .replace(/<\/?invoke\b[^>]*>\s*/gi, ' ')
     .replace(/\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]\s*/gi, ' ')
+    .replace(/(?:^|\n)\s*tool_call\s*:?[^\n]*(?:\n(?!\s*tool_call_end\b)[^\n]*)*\n\s*tool_call_end\s*:?[^\n]*(?=\n|$)/gi, '\n')
+    .replace(/^\s*tool_call(?:_start|_end)?\s*:?[^\n]*$/gim, '')
     .replace(/\bto\s*=\s*[A-Za-z_][\w-]*\b/gi, ' ')
     .replace(/\bcode omitted\b/gi, ' ')
     .replace(/[ \t]+\n/g, '\n')
@@ -125,7 +154,7 @@ function extractSnapshotToolUses(content: any[]): Array<{ id: string; name: stri
 function hasRenderableAssistantSnapshot(content: any[]): boolean {
   if (!Array.isArray(content) || content.length === 0) return false;
   if (extractSnapshotToolUses(content).length > 0) return true;
-  if (stripSdkDiagnosticLines(extractSnapshotTextContent(content)).trim()) return true;
+  if (stripStreamToolMarkup(stripSdkDiagnosticLines(extractSnapshotTextContent(content))).trim()) return true;
   if (stripSdkDiagnosticLines(extractSnapshotThinkingContent(content)).trim()) return true;
   return false;
 }
@@ -210,12 +239,11 @@ function createBuffer(sessionPath: string): Buffer {
 
 function hasBufferedRenderableState(buf: Buffer): boolean {
   const hasText = !!String(buf.textAcc || '').trim();
-  const hasThinking = !!String(buf.thinkingAcc || '').trim();
+  const hasThinking = !!sanitizeBufferedThinkingText(String(buf.thinkingAcc || '')).trim();
   const hasXing = !!String(buf.xingAcc || '').trim();
   return !!(
     hasText
     || hasThinking
-    || buf.hadThinking
     || hasXing
     || buf.liveBlocks.length > 0
     || buf.inThinking
@@ -235,6 +263,10 @@ function hasRenderableTextHtml(html: string): boolean {
 function sanitizeBufferedStreamText(text: string): string {
   return stripStreamToolMarkup(stripSdkDiagnosticLines(text))
     .replace(/<tool_code>[\s\S]*?<\/tool_code>\s*/g, '');
+}
+
+function sanitizeBufferedThinkingText(text: string): string {
+  return stripStreamToolMarkup(stripSdkDiagnosticLines(text));
 }
 
 function buildTextBlockFromBufferedText(text: string): Extract<ContentBlock, { type: 'text' }> | null {
@@ -265,7 +297,7 @@ function finalizeBufferedTextSegment(buf: Buffer): void {
 }
 
 function finalizeBufferedThinkingSegment(buf: Buffer): void {
-  const thinking = stripSdkDiagnosticLines(String(buf.thinkingAcc || ''));
+  const thinking = sanitizeBufferedThinkingText(String(buf.thinkingAcc || ''));
   buf.thinkingAcc = '';
   if (!thinking.trim()) return;
 
@@ -284,7 +316,7 @@ function finalizeBufferedThinkingSegment(buf: Buffer): void {
 }
 
 function upsertSealedThinkingFromSnapshot(buf: Buffer, snapshotThinking: string): void {
-  const thinking = stripSdkDiagnosticLines(String(snapshotThinking || ''));
+  const thinking = sanitizeBufferedThinkingText(String(snapshotThinking || ''));
   if (!thinking.trim()) return;
 
   const existingIdx = buf.liveBlocks.findIndex((block) => block.type === 'thinking' && block.sealed);
@@ -356,6 +388,13 @@ class StreamBufferManager {
     buf.messageAppended = true;
   }
 
+  /** 外部可调用：当前轮开始时立即创建 assistant 占位消息（头像/名称可即时显示） */
+  startTurn(sessionPath: string): void {
+    if (!sessionPath) return;
+    const buf = this.getBuffer(sessionPath);
+    this.ensureMessage(buf);
+  }
+
   /** 调度节流 flush */
   private scheduleFlush(buf: Buffer): void {
     const now = Date.now();
@@ -415,12 +454,12 @@ class StreamBufferManager {
         }
       }
 
-      // ── Thinking (active segment / empty shell) ──
-      const shouldKeepThinkingShell = buf.hadThinking && !buf.textAcc && !buf.xingAcc && orderedLiveBlocks.length === 0;
-      if (buf.inThinking || shouldKeepThinkingShell) {
+      // ── Thinking ──
+      const liveThinking = sanitizeBufferedThinkingText(buf.thinkingAcc);
+      if (buf.inThinking || !!liveThinking.trim()) {
         orderedLiveBlocks.push({
           type: 'thinking',
-          content: buf.thinkingAcc,
+          content: liveThinking,
           sealed: !buf.inThinking,
         });
       }
@@ -455,19 +494,22 @@ class StreamBufferManager {
           if (!hasRenderableAssistantSnapshot(content) && !buf.messageAppended) break;
           this.ensureMessage(buf);
           const snapshotThinking = stripSdkDiagnosticLines(extractSnapshotThinkingContent(content));
-          if (snapshotThinking) {
+          const sanitizedSnapshotThinking = sanitizeBufferedThinkingText(snapshotThinking);
+          if (sanitizedSnapshotThinking) {
             buf.hadThinking = true;
             if (buf.inThinking) {
-              buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, snapshotThinking);
+              buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, sanitizedSnapshotThinking);
             } else {
-              upsertSealedThinkingFromSnapshot(buf, snapshotThinking);
+              upsertSealedThinkingFromSnapshot(buf, sanitizedSnapshotThinking);
               buf.thinkingAcc = '';
             }
           } else if (!buf.inThinking) {
             buf.thinkingAcc = '';
           }
 
-          const snapshotText = stripSdkDiagnosticLines(extractSnapshotTextContent(content));
+          const snapshotText = stripStreamToolMarkup(
+            stripSdkDiagnosticLines(extractSnapshotTextContent(content)),
+          );
           if (snapshotText) {
             if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
             buf.textAcc = mergeSnapshotText(buf.textAcc, snapshotText);
@@ -514,19 +556,22 @@ class StreamBufferManager {
         this.ensureMessage(buf);
 
         const snapshotThinking = stripSdkDiagnosticLines(extractSnapshotThinkingContent(content));
-        if (snapshotThinking) {
+        const sanitizedSnapshotThinking = sanitizeBufferedThinkingText(snapshotThinking);
+        if (sanitizedSnapshotThinking) {
           buf.hadThinking = true;
           if (buf.inThinking) {
-            buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, snapshotThinking);
+            buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, sanitizedSnapshotThinking);
           } else {
-            upsertSealedThinkingFromSnapshot(buf, snapshotThinking);
+            upsertSealedThinkingFromSnapshot(buf, sanitizedSnapshotThinking);
             buf.thinkingAcc = '';
           }
         } else if (!buf.inThinking) {
           buf.thinkingAcc = '';
         }
 
-        const snapshotText = stripSdkDiagnosticLines(extractSnapshotTextContent(content));
+        const snapshotText = stripStreamToolMarkup(
+          stripSdkDiagnosticLines(extractSnapshotTextContent(content)),
+        );
         if (snapshotText) {
           if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
           buf.textAcc = mergeSnapshotText(buf.textAcc, snapshotText);
@@ -570,8 +615,11 @@ class StreamBufferManager {
         break;
 
       case 'thinking_delta':
-        if (msg.delta) buf.hadThinking = true;
-        buf.thinkingAcc = mergeDelta(buf.thinkingAcc, msg.delta);
+        {
+          const sanitizedDelta = sanitizeBufferedThinkingText(String(msg.delta || ''));
+          if (sanitizedDelta) buf.hadThinking = true;
+          buf.thinkingAcc = mergeDelta(buf.thinkingAcc, sanitizedDelta);
+        }
         // thinking 内容不频繁 flush，等 end 或下一个 text_delta
         break;
 

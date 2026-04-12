@@ -1,44 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SessionCoordinator } from "./session-coordinator.js";
 
-describe("SessionCoordinator._shouldUseProviderRuntime", () => {
-  it("uses provider runtime for openai-compatible APIs", () => {
-    const coordinator = new SessionCoordinator({});
-    expect(coordinator._shouldUseProviderRuntime({
-      api: "openai-completions",
-      provider: "openai",
-      base_url: "https://api.openai.com/v1",
-    })).toBe(true);
-  });
-
-  it("keeps official Anthropic endpoints on Claude SDK runtime", () => {
-    const coordinator = new SessionCoordinator({});
-    expect(coordinator._shouldUseProviderRuntime({
-      api: "anthropic-messages",
-      provider: "anthropic",
-      base_url: "https://api.anthropic.com/v1/messages",
-    })).toBe(false);
-  });
-
-  it("routes known anthropic-compatible providers to provider runtime", () => {
-    const coordinator = new SessionCoordinator({});
-    expect(coordinator._shouldUseProviderRuntime({
-      api: "anthropic-messages",
-      provider: "minimax",
-      base_url: "https://api.minimaxi.com/anthropic",
-    })).toBe(true);
-  });
-
-  it("routes non-anthropic unofficial anthropic gateways to provider runtime", () => {
-    const coordinator = new SessionCoordinator({});
-    expect(coordinator._shouldUseProviderRuntime({
-      api: "anthropic-messages",
-      provider: "vendor-x",
-      base_url: "https://api.vendor.example/anthropic",
-    })).toBe(true);
-  });
-});
-
 describe("SessionCoordinator._translateClaudeEvent", () => {
   it("emits sdk_message for assistant content blocks", () => {
     const coordinator = new SessionCoordinator({});
@@ -107,7 +69,7 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     }));
   });
 
-  it("falls back to parse text tool markup in assistant content", () => {
+  it("does not parse text tool markup fallback in assistant content", () => {
     const coordinator = new SessionCoordinator({});
     const content = [{
       type: "text",
@@ -119,12 +81,93 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
       message: { content },
     }, "/tmp/session-c");
 
-    expect(translated).toContainEqual({
-      type: "tool_start",
-      name: "Bash",
-      toolCallId: expect.any(String),
-      args: { command: "ls -la" },
-    });
+    expect(translated.some((event) => event.type === "tool_start")).toBe(false);
+  });
+
+  it("marks text-style tool markup turn as protocol mismatch", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-markup";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "<Glob><path>/Users/tc/Desktop/*</path></Glob>" }],
+      },
+    }, sessionPath);
+
+    coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: false,
+    }, sessionPath);
+
+    const state = coordinator._streamState.get(sessionPath);
+    expect(state?.lastTurnProtocolMismatch).toBe(true);
+  });
+
+  it("marks singular function_call text block as protocol mismatch", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-markup-function-call";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "text",
+          text: "function_call\n{\"tool\":\"Glob\",\"input\":{\"AbsolutePathPattern\":\"/Users/tc/Desktop/*\"}}\n</function_call>",
+        }],
+      },
+    }, sessionPath);
+
+    coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: false,
+    }, sessionPath);
+
+    const state = coordinator._streamState.get(sessionPath);
+    expect(state?.lastTurnProtocolMismatch).toBe(true);
+  });
+
+  it("marks plain tool_call trace text as protocol mismatch", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-markup-tool-call-trace";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "text",
+          text: "tool_call: - id: \"glob_1\" depth: \"1\" dir: \"/Users/tc/Desktop\" Glob: null\ntool_call_end: glob_1",
+        }],
+      },
+    }, sessionPath);
+
+    coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: false,
+    }, sessionPath);
+
+    const state = coordinator._streamState.get(sessionPath);
+    expect(state?.lastTurnProtocolMismatch).toBe(true);
+  });
+
+  it("does not mark protocol mismatch when structured tool_use exists", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-structured-tool";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "tool-9", name: "Glob", input: { path: "/Users/tc/Desktop/*" } }],
+      },
+    }, sessionPath);
+
+    coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: false,
+    }, sessionPath);
+
+    const state = coordinator._streamState.get(sessionPath);
+    expect(state?.lastTurnProtocolMismatch).toBe(false);
   });
 
   it("falls back to latest pending tool when tool_result id mismatches", () => {
@@ -133,8 +176,10 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
       type: "assistant",
       message: {
         content: [{
-          type: "text",
-          text: "<function_calls><invoke name=\"Bash\"><parameter name=\"command\">pwd</parameter></invoke></function_calls>",
+          type: "tool_use",
+          id: "tool-structured-1",
+          name: "Bash",
+          input: { command: "pwd" },
         }],
       },
     }, "/tmp/session-d");
@@ -155,5 +200,34 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
       name: "Bash",
       success: true,
     }));
+  });
+
+  it("does not surface ede_diagnostic-only result errors", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: true,
+      errors: ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"],
+    }, "/tmp/session-e");
+
+    expect(translated).toEqual([{ type: "turn_end" }]);
+  });
+
+  it("prefers real result error after ede_diagnostic preface", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: true,
+      errors: [
+        "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null",
+        "Permission denied",
+      ],
+    }, "/tmp/session-f");
+
+    expect(translated).toContainEqual({
+      type: "error",
+      message: "Permission denied",
+    });
+    expect(translated).toContainEqual({ type: "turn_end" });
   });
 });

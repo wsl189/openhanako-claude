@@ -3,6 +3,7 @@
  */
 
 import { memo, useEffect, useRef, useState } from 'react';
+import { useSmoothStream } from '../../hooks/use-smooth-stream';
 
 interface Props {
   content: string;
@@ -18,6 +19,11 @@ export const ThinkingBlock = memo(function ThinkingBlock({ content, sealed, dimm
   const [shouldCollapse, setShouldCollapse] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const stateText = sealed ? t('thinking.done') : t('thinking.active');
+  const { displayedContent } = useSmoothStream({
+    content,
+    isStreaming: !sealed,
+    minDelay: 16,
+  });
 
   useEffect(() => {
     const el = contentRef.current;
@@ -25,7 +31,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({ content, sealed, dimm
     const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight || '22') || 22;
     const maxHeight = lineHeight * THINKING_COLLAPSE_LINE_THRESHOLD;
     setShouldCollapse(el.scrollHeight > maxHeight + 10);
-  }, [content]);
+  }, [displayedContent]);
 
   return (
     <div className={`thinking-block proma-like${dimmed ? ' dimmed' : ''}${sealed ? ' sealed' : ' running'}`}>
@@ -40,7 +46,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({ content, sealed, dimm
             ref={contentRef}
             className={`thinking-block-body${shouldCollapse && !expanded ? ' clamp' : ''}`}
           >
-            {content}
+            {displayedContent}
           </div>
           {shouldCollapse && (
             <button
