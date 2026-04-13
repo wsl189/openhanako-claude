@@ -623,6 +623,11 @@ export class Agent {
       ? toolProfile.tools.custom_enabled.filter((name) => runtimeCustomNames.has(name))
       : [...runtimeCustomNames];
     const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
+    const formatToolList = (list = []) => {
+      const cleaned = [...new Set((list || []).map((item) => String(item || "").trim()).filter(Boolean))];
+      if (cleaned.length === 0) return isZh ? "（无）" : "(none)";
+      return cleaned.join(" / ");
+    };
 
     const readFile = (filePath) => {
       try { return fs.readFileSync(filePath, "utf-8"); } catch { return ""; }
@@ -712,6 +717,27 @@ export class Agent {
     parts.push(isZh
       ? "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
       : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
+    );
+
+    parts.push(isZh
+      ? [
+          "",
+          "## 工具可用性（严格）",
+          "",
+          `当前会话可用的标准 Claude 工具（仅以下）：${formatToolList(enabledBuiltin)}`,
+          `当前会话可用的 Hanako/MCP 工具（仅以下）：${formatToolList(enabledCustom)}`,
+          "当用户问“你有哪些工具”时，必须只基于以上两行回答。",
+          "不要把未出现在列表里的工具说成可用；如果用户点名了未启用工具，明确回复“当前不可用”。",
+        ].join("\n")
+      : [
+          "",
+          "## Tool Availability (Strict)",
+          "",
+          `Standard Claude tools available in this session (only these): ${formatToolList(enabledBuiltin)}`,
+          `Hanako/MCP tools available in this session (only these): ${formatToolList(enabledCustom)}`,
+          "When the user asks what tools you have, answer strictly from the two lines above.",
+          "Do not claim availability for tools not listed; if asked about one, clearly say it is unavailable now.",
+        ].join("\n")
     );
 
     const hasSearchTool = hasTool("web_search");

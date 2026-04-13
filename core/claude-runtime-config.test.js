@@ -87,7 +87,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     });
   });
 
-  it("defaults settingSources to user and does not force options.tools by default", () => {
+  it("defaults settingSources to user and injects options.tools by default", () => {
     const config = createConfig({
       toolProfile: {
         tools: {
@@ -97,7 +97,8 @@ describe("buildClaudeRuntimeConfig env", () => {
     });
     expect(config.options.settingSources).toEqual(["user"]);
     expect(config.options.allowedTools).toEqual(["Read", "Glob", "Grep"]);
-    expect("tools" in config.options).toBe(false);
+    expect(config.options.tools).toEqual(["Read", "Glob", "Grep"]);
+    expect(config.diagnostics?.forcedToolsOption).toBe(true);
   });
 
   it("supports settingSources override via env", () => {
@@ -125,9 +126,9 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.settingSources).toEqual(["user", "project"]);
   });
 
-  it("can force options.tools via env for compatibility debugging", () => {
+  it("can disable options.tools via env for compatibility debugging", () => {
     const original = process.env.HANAKO_FORCE_SDK_TOOLS_OPTION;
-    process.env.HANAKO_FORCE_SDK_TOOLS_OPTION = "1";
+    process.env.HANAKO_FORCE_SDK_TOOLS_OPTION = "0";
     try {
       const config = createConfig({
         toolProfile: {
@@ -136,9 +137,9 @@ describe("buildClaudeRuntimeConfig env", () => {
           },
         },
       });
-      expect(config.options.tools).toEqual(["Read", "Glob"]);
+      expect("tools" in config.options).toBe(false);
       expect(config.options.allowedTools).toEqual(["Read", "Glob"]);
-      expect(config.diagnostics?.forcedToolsOption).toBe(true);
+      expect(config.diagnostics?.forcedToolsOption).toBe(false);
     } finally {
       if (original === undefined) delete process.env.HANAKO_FORCE_SDK_TOOLS_OPTION;
       else process.env.HANAKO_FORCE_SDK_TOOLS_OPTION = original;
@@ -193,6 +194,54 @@ describe("buildClaudeRuntimeConfig env", () => {
       if (original === undefined) delete process.env.HANAKO_CLAUDE_PERMISSION_STRATEGY;
       else process.env.HANAKO_CLAUDE_PERMISSION_STRATEGY = original;
     }
+  });
+
+  it("denies tools that are outside the configured allowlist", async () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+        },
+      },
+    });
+    const decision = await config.options.canUseTool("CronCreate", {}, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-croncreate",
+    });
+    expect(decision).toMatchObject({
+      behavior: "deny",
+    });
+    expect(String(decision.message || "")).toContain("not allowed");
+  });
+
+  it("enforces MCP wildcard allowlist for custom tool namespace", async () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          custom_enabled: ["cron"],
+        },
+      },
+      customTools: [
+        { name: "cron", parameters: { type: "object", properties: {} } },
+      ],
+    });
+
+    const allowed = await config.options.canUseTool("mcp__hanako__cron", { action: "list" }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-allowed",
+    });
+    expect(allowed).toMatchObject({
+      behavior: "allow",
+      updatedInput: { action: "list" },
+    });
+
+    const denied = await config.options.canUseTool("mcp__MiniMax__web_search", { query: "latest" }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-denied",
+    });
+    expect(denied).toMatchObject({
+      behavior: "deny",
+    });
   });
 
   it("requests confirmation for EnterPlanMode/ExitPlanMode when confirmStore is available", async () => {

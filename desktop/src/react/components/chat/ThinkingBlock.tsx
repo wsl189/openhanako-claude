@@ -10,44 +10,39 @@ interface Props {
   sealed: boolean;
   dimmed?: boolean;
   streamLike?: boolean;
+  runningMs?: number;
 }
 
 const THINKING_COLLAPSE_LINE_THRESHOLD = 4;
+
+function formatRunningDuration(ms: number): string {
+  const sec = Math.max(0, ms) / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec - minutes * 60;
+  return `${minutes}m ${seconds.toFixed(1)}s`;
+}
 
 export const ThinkingBlock = memo(function ThinkingBlock({
   content,
   sealed,
   dimmed = false,
   streamLike = false,
+  runningMs,
 }: Props) {
-  const t = window.t ?? ((p: string) => p);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [shouldCollapse, setShouldCollapse] = useState(false);
-  const [replayStreaming, setReplayStreaming] = useState(() => streamLike && sealed && !!content);
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const stateText = sealed ? t('thinking.done') : t('thinking.active');
-  const isStreamingLike = !sealed || replayStreaming;
+  const shouldStreamText = (!sealed || streamLike) && !!content;
   const { displayedContent } = useSmoothStream({
     content,
-    isStreaming: isStreamingLike,
-    minDelay: 16,
-    startFromEmptyWhenStreaming: replayStreaming,
+    isStreaming: shouldStreamText,
+    minDelay: 20,
+    startFromEmptyWhenStreaming: false,
   });
-
-  useEffect(() => {
-    if (!streamLike || !sealed || !content) {
-      setReplayStreaming(false);
-      return;
-    }
-    setReplayStreaming(true);
-  }, [streamLike, sealed, content]);
-
-  useEffect(() => {
-    if (!replayStreaming) return;
-    const duration = Math.min(1_050, Math.max(220, Math.ceil(content.length * 7)));
-    const timer = window.setTimeout(() => setReplayStreaming(false), duration);
-    return () => window.clearTimeout(timer);
-  }, [replayStreaming, content.length]);
+  const bodyContent = content
+    ? (shouldStreamText ? displayedContent : content)
+    : '';
 
   useEffect(() => {
     const el = contentRef.current;
@@ -55,24 +50,26 @@ export const ThinkingBlock = memo(function ThinkingBlock({
     const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight || '22') || 22;
     const maxHeight = lineHeight * THINKING_COLLAPSE_LINE_THRESHOLD;
     setShouldCollapse(el.scrollHeight > maxHeight + 10);
-  }, [displayedContent]);
+  }, [bodyContent]);
 
   return (
     <div className={`thinking-block proma-like${dimmed ? ' dimmed' : ''}${sealed ? ' sealed' : ' running'}`}>
       <div className="thinking-block-summary">
         <span className="thinking-block-title">THINKING</span>
         {!sealed && <span className="thinking-dots"><span /><span /><span /></span>}
-        <span className={`thinking-block-state${sealed ? ' done' : ' running'}`}>{stateText}</span>
+        {!sealed && typeof runningMs === 'number' && runningMs >= 0 && (
+          <span className="thinking-block-elapsed">{formatRunningDuration(runningMs)}</span>
+        )}
       </div>
-      {!!content && (
+      {!!bodyContent && (
         <div className={`thinking-block-panel${shouldCollapse && !expanded ? ' collapsed' : ''}`}>
           <div
             ref={contentRef}
             className={`thinking-block-body${shouldCollapse && !expanded ? ' clamp' : ''}`}
           >
-            {displayedContent}
+            {bodyContent}
           </div>
-          {shouldCollapse && (
+          {shouldCollapse && !!content && (
             <button
               type="button"
               className="thinking-block-toggle"

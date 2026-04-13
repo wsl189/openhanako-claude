@@ -536,8 +536,14 @@ class StreamBufferManager {
   /** 确保 store 中已为该 session 追加了一条空 assistant message */
   private ensureMessage(buf: Buffer): void {
     const store = useStore.getState();
-    const session = store.chatSessions[buf.sessionPath];
-    if (!session) return; // session 未初始化（可能还没 loadMessages）
+    let session = store.chatSessions[buf.sessionPath];
+    if (!session) {
+      // 新会话在首轮 streaming 时，chatSessions 可能尚未初始化；
+      // 先创建空会话，确保 thinking/tool 块可以立即渲染，而不是等 turn_end 后一次性出现。
+      store.initSession(buf.sessionPath, [], false);
+      session = useStore.getState().chatSessions[buf.sessionPath];
+      if (!session) return;
+    }
 
     const items = Array.isArray(session.items) ? session.items : [];
     const last = items[items.length - 1];

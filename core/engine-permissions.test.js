@@ -36,7 +36,7 @@ describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
     expect(permission.tools.custom_enabled).toEqual(["web_fetch", "todo_write", "ask_agent"]);
   });
 
-  it("allows all custom tools when custom_enabled is an empty array", () => {
+  it("disables all custom tools when custom_enabled is an empty array", () => {
     const engineLike = createEngineLikeForPermissions({
       toolsConfig: {
         builtin_enabled: ["write"],
@@ -45,7 +45,7 @@ describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
     });
 
     const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
-    expect(permission.tools.custom_enabled).toEqual(["web_fetch", "todo_write", "ask_agent"]);
+    expect(permission.tools.custom_enabled).toEqual([]);
   });
 
   it("treats non-empty custom_enabled as whitelist", () => {
@@ -59,7 +59,7 @@ describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
     expect(permission.tools.custom_enabled).toEqual(["todo_write"]);
   });
 
-  it("falls back to all custom tools when whitelist contains only stale names", () => {
+  it("filters stale tool names out of whitelist without fallback", () => {
     const engineLike = createEngineLikeForPermissions({
       toolsConfig: {
         custom_enabled: ["old_tool_a", "old_tool_b"],
@@ -67,6 +67,6 @@ describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
     });
 
     const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
-    expect(permission.tools.custom_enabled).toEqual(["web_fetch", "todo_write", "ask_agent"]);
+    expect(permission.tools.custom_enabled).toEqual([]);
   });
 });

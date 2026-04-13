@@ -71,18 +71,41 @@ function isCoreChainBlock(block: ContentBlock): boolean {
   return block.type === 'thinking' || block.type === 'tool_group';
 }
 
-function formatRunningDuration(ms: number): string {
-  const sec = Math.max(0, ms) / 1000;
-  if (sec < 60) return `${sec.toFixed(1)}s`;
-  const minutes = Math.floor(sec / 60);
-  const seconds = sec - minutes * 60;
-  return `${minutes}m ${seconds.toFixed(1)}s`;
-}
-
 const CHAIN_AUTO_COLLAPSE_DELAY_MS = 1200;
-const BLOCK_REVEAL_DELAY_MS = 88;
+const BLOCK_REVEAL_BASE_DELAY_MS = 180;
+const BLOCK_REVEAL_MAX_DELAY_MS = 1_200;
+const THINKING_BLOCK_REVEAL_MIN_DELAY_MS = 420;
+const TOOL_BLOCK_REVEAL_MIN_DELAY_MS = 520;
+const THINK_TO_TOOL_REVEAL_PAUSE_MS = 980;
+const FRESH_CHAIN_REVEAL_WINDOW_MS = 20_000;
 const FINAL_TEXT_SETTLE_MIN_MS = 240;
 const FINAL_TEXT_SETTLE_MAX_MS = 1200;
+
+function getBlockRevealDelayMs(params: {
+  prevBlock?: ContentBlock;
+  nextBlock?: ContentBlock;
+  remaining: number;
+}): number {
+  const { prevBlock, nextBlock, remaining } = params;
+  // 运行中的 thinking 块优先尽快出现，先给用户“思考中”状态反馈。
+  if (nextBlock?.type === 'thinking' && nextBlock.sealed === false) {
+    return 24;
+  }
+
+  let delay = BLOCK_REVEAL_BASE_DELAY_MS + Math.min(4, Math.max(0, remaining)) * 24;
+
+  if (nextBlock?.type === 'thinking') {
+    delay = Math.max(delay, THINKING_BLOCK_REVEAL_MIN_DELAY_MS);
+  } else if (nextBlock?.type === 'tool_group') {
+    delay = Math.max(delay, TOOL_BLOCK_REVEAL_MIN_DELAY_MS);
+  }
+
+  if (prevBlock?.type === 'thinking' && nextBlock?.type === 'tool_group') {
+    delay = Math.max(delay, THINK_TO_TOOL_REVEAL_PAUSE_MS);
+  }
+
+  return Math.min(BLOCK_REVEAL_MAX_DELAY_MS, delay);
+}
 
 export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, isStreaming = false, runningMs }: Props) {
   const agentName = useStore(s => s.agentName) || 'Hanako';
@@ -125,25 +148,31 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const blocks = message.blocks || [];
   const isLiveStreamMessage = isStreaming || String(message.id || '').startsWith('stream-');
   const displayBlocks = useMemo(() => removeRedundantOutputToolLines(blocks), [blocks]);
+  const hasChainLikeBlocks = useMemo(
+    () => displayBlocks.length > 1 && displayBlocks.some((block) => block.type === 'thinking' || block.type === 'tool_group'),
+    [displayBlocks],
+  );
+  const messageHasTimestamp = typeof message.timestamp === 'number';
+  const isRecentAssistantMessage = useMemo(() => {
+    if (!messageHasTimestamp) return false;
+    return Date.now() - (message.timestamp as number) < FRESH_CHAIN_REVEAL_WINDOW_MS;
+  }, [message.id, message.timestamp, messageHasTimestamp]);
+  // 仅在“可确认是最近消息”时才做历史链路渐进回放。
+  // 历史消息缺少 timestamp 时，不应触发展开/收起动画，否则重启后会出现逐条展开再收起。
+  const shouldTreatAsFreshChain = hasChainLikeBlocks && messageHasTimestamp && isRecentAssistantMessage;
+  const shouldProgressiveReveal = isLiveStreamMessage || shouldTreatAsFreshChain;
   const [revealedBlockCount, setRevealedBlockCount] = useState(() => (
-    isLiveStreamMessage ? Math.min(1, displayBlocks.length) : displayBlocks.length
+    shouldProgressiveReveal ? Math.min(1, displayBlocks.length) : displayBlocks.length
   ));
   const prevRevealMessageIdRef = useRef(message.id);
 
   useEffect(() => {
     if (prevRevealMessageIdRef.current === message.id) return;
     prevRevealMessageIdRef.current = message.id;
-    setRevealedBlockCount(isLiveStreamMessage ? Math.min(1, displayBlocks.length) : displayBlocks.length);
-  }, [message.id, isLiveStreamMessage, displayBlocks.length]);
+    setRevealedBlockCount(shouldProgressiveReveal ? Math.min(1, displayBlocks.length) : displayBlocks.length);
+  }, [message.id, shouldProgressiveReveal, displayBlocks.length]);
 
   useEffect(() => {
-    if (!isLiveStreamMessage) {
-      if (revealedBlockCount !== displayBlocks.length) {
-        setRevealedBlockCount(displayBlocks.length);
-      }
-      return;
-    }
-
     if (revealedBlockCount > displayBlocks.length) {
       setRevealedBlockCount(displayBlocks.length);
       return;
@@ -151,10 +180,9 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     if (revealedBlockCount >= displayBlocks.length) return;
 
     const remaining = displayBlocks.length - revealedBlockCount;
-    const delay = Math.min(
-      BLOCK_REVEAL_DELAY_MS + Math.min(4, remaining) * 20,
-      BLOCK_REVEAL_DELAY_MS * 2,
-    );
+    const prevBlock = revealedBlockCount > 0 ? displayBlocks[revealedBlockCount - 1] : undefined;
+    const nextBlock = displayBlocks[revealedBlockCount];
+    const delay = getBlockRevealDelayMs({ prevBlock, nextBlock, remaining });
     const timer = window.setTimeout(() => {
       setRevealedBlockCount((count) => Math.min(displayBlocks.length, count + 1));
     }, delay);
@@ -165,6 +193,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     () => displayBlocks.slice(0, Math.max(0, revealedBlockCount)),
     [displayBlocks, revealedBlockCount],
   );
+  const showProvisionalThinking = isStreaming && visibleBlocks.length === 0;
 
   const finalTextIndex = useMemo(() => {
     for (let i = visibleBlocks.length - 1; i >= 0; i--) {
@@ -305,11 +334,6 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
 
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
-  const runningLabel = useMemo(() => {
-    const key = 'chat.agentRunning';
-    const text = t(key);
-    return text && text !== key ? text : 'Agent Running';
-  }, [t]);
 
   const handleCopy = useCallback(() => {
     if (!finalDisplayHtml) return;
@@ -323,12 +347,12 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     }).catch(() => {});
   }, [finalDisplayHtml]);
 
-  if (visibleBlocks.length === 0) return null;
+  if (visibleBlocks.length === 0 && !showProvisionalThinking) return null;
 
   return (
     <div className="message-group assistant">
       {showAvatar && (
-        <div className="avatar-row assistant">
+        <div className={`avatar-row assistant${showProvisionalThinking ? ' streaming-intro' : ''}`}>
           {!avatarFailed ? (
             <img
               className="avatar hana-avatar"
@@ -350,15 +374,18 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
             <span className="avatar user-avatar">🌸</span>
           )}
           <span className="avatar-name">{displayName}</span>
-          {typeof runningMs === 'number' && runningMs >= 0 && (
-            <span className="agent-running-inline">
-              <span className="agent-running-inline-icon" aria-hidden>⋮</span>
-              <span>{runningLabel} {formatRunningDuration(runningMs)}</span>
-            </span>
-          )}
         </div>
       )}
       <div className="message assistant">
+        {showProvisionalThinking && (
+          <ThinkingBlock
+            content=""
+            sealed={false}
+            dimmed={false}
+            streamLike={true}
+            runningMs={runningMs}
+          />
+        )}
         {hasCollapsibleChain && (
           <button
             type="button"
@@ -390,6 +417,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
                     yuan={displayYuan}
                     dimmed={hasPrimaryText && block.type !== 'text'}
                     animate={isLiveStreamMessage}
+                    runningMs={runningMs}
                   />
                 </div>
               </div>
@@ -432,6 +460,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
               yuan={displayYuan}
               dimmed={hasPrimaryText && block.type !== 'text'}
               animate={isLiveStreamMessage}
+              runningMs={runningMs}
             />
           );
         })}
@@ -442,16 +471,17 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
 
 // ── ContentBlock 分发 ──
 
-const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan, dimmed, animate }: {
+const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan, dimmed, animate, runningMs }: {
   block: ContentBlock;
   agentName: string;
   yuan: string;
   dimmed?: boolean;
   animate?: boolean;
+  runningMs?: number;
 }) {
   switch (block.type) {
     case 'thinking':
-      return <ThinkingBlock content={block.content} sealed={block.sealed} dimmed={!!dimmed} streamLike={!!animate} />;
+      return <ThinkingBlock content={block.content} sealed={block.sealed} dimmed={!!dimmed} streamLike={!!animate} runningMs={runningMs} />;
     case 'mood':
       return <MoodBlock yuan={block.yuan} text={block.text} />;
     case 'tool_group':

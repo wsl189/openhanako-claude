@@ -771,11 +771,13 @@ function InputPromptPanel({
   const [submittingAction, setSubmittingAction] = useState<'confirmed' | 'rejected' | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string | string[]>>({});
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [activeAskIndex, setActiveAskIndex] = useState(0);
   const isZh = String((window as any).i18n?.locale || '').startsWith('zh');
 
   useEffect(() => {
     setSubmittingAction(null);
     setAnswers({});
+    setActiveAskIndex(0);
     if (prompt.kind !== 'ask_user') {
       setSelectedOptions({});
       return;
@@ -790,6 +792,12 @@ function InputPromptPanel({
       else init[id] = firstOption;
     }
     setSelectedOptions(init);
+  }, [prompt]);
+
+  useEffect(() => {
+    if (prompt.kind !== 'ask_user') return;
+    const maxIndex = Math.max(0, prompt.questions.length - 1);
+    setActiveAskIndex((prev) => Math.min(prev, maxIndex));
   }, [prompt]);
 
   const submitPrompt = useCallback(async (
@@ -909,6 +917,30 @@ function InputPromptPanel({
     );
   }
 
+  const askQuestions = prompt.questions || [];
+  const currentIndex = Math.min(activeAskIndex, Math.max(askQuestions.length - 1, 0));
+  const currentQuestion = askQuestions[currentIndex];
+  const currentQuestionId = String(currentQuestion?.id || '').trim() || `q_${currentIndex + 1}`;
+  const currentTitle = String(currentQuestion?.header || '').trim()
+    || String(currentQuestion?.question || '').trim()
+    || `${isZh ? '问题' : 'Question'} ${currentIndex + 1}`;
+  const currentDescription = String(currentQuestion?.header || '').trim() && String(currentQuestion?.question || '').trim()
+    ? String(currentQuestion.question || '').trim()
+    : '';
+  const currentOptions = Array.isArray(currentQuestion?.options)
+    ? currentQuestion.options.filter((option) => option?.label)
+    : [];
+  const hasPrevQuestion = currentIndex > 0;
+  const hasNextQuestion = currentIndex < askQuestions.length - 1;
+  const isQuestionAnswered = (question: (typeof askQuestions)[number], idx: number): boolean => {
+    const id = String(question?.id || '').trim() || `q_${idx + 1}`;
+    const freeText = String(answers[id] || '').trim();
+    if (freeText) return true;
+    const selected = selectedOptions[id];
+    if (Array.isArray(selected)) return selected.some((item) => String(item || '').trim().length > 0);
+    return String(selected || '').trim().length > 0;
+  };
+
   return (
     <div className="input-prompt-panel" role="group" aria-live="polite">
       <div className="input-prompt-head">
@@ -920,67 +952,105 @@ function InputPromptPanel({
         )}
       </div>
       <div className="input-prompt-title">{isZh ? 'Agent 需要你的输入' : 'Agent Needs Your Input'}</div>
-      {prompt.questions.map((question, idx) => {
-        const id = String(question?.id || '').trim() || `q_${idx + 1}`;
-        const title = String(question?.header || '').trim() || String(question?.question || '').trim() || `${isZh ? '问题' : 'Question'} ${idx + 1}`;
-        const description = String(question?.header || '').trim() && String(question?.question || '').trim()
-          ? String(question.question || '').trim()
-          : '';
-        const options = Array.isArray(question?.options)
-          ? question.options.filter((option) => option?.label)
-          : [];
+      {askQuestions.length > 1 ? (
+        <div className="input-prompt-steps" role="tablist" aria-label={isZh ? '问题步骤' : 'Question steps'}>
+          {askQuestions.map((question, idx) => {
+            const shortTitle = String(question?.header || '').trim()
+              || String(question?.question || '').trim()
+              || `${isZh ? '问题' : 'Question'} ${idx + 1}`;
+            const modeText = question.multiSelect ? (isZh ? '多选' : 'Multi') : (isZh ? '单选' : 'Single');
+            const done = isQuestionAnswered(question, idx);
+            return (
+              <button
+                key={`${question?.id || idx}`}
+                type="button"
+                role="tab"
+                className={`input-prompt-step${idx === currentIndex ? ' active' : ''}${done ? ' done' : ''}`}
+                aria-selected={idx === currentIndex}
+                disabled={isSubmitting}
+                onClick={() => setActiveAskIndex(idx)}
+                title={shortTitle}
+              >
+                <span className="input-prompt-step-text">{`${idx + 1}-${modeText}: ${shortTitle}`}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
-        return (
-          <div key={id} className="input-prompt-question">
-            <div className="input-prompt-question-title">{title}</div>
-            {description ? <div className="input-prompt-question-desc">{description}</div> : null}
-            {options.length > 0 ? (
-              <div className="input-prompt-options">
-                {options.map((option) => {
-                  const current = selectedOptions[id];
-                  const selected = question.multiSelect
-                    ? Array.isArray(current) && current.includes(option.label)
-                    : current === option.label;
-                  return (
-                    <button
-                      key={option.label}
-                      type="button"
-                      className={`input-prompt-option${selected ? ' selected' : ''}`}
-                      title={option.description || option.label}
-                      disabled={isSubmitting}
-                      onClick={() => {
-                        setSelectedOptions((prev) => {
-                          if (!question.multiSelect) {
-                            return { ...prev, [id]: option.label };
-                          }
-                          const currentList = Array.isArray(prev[id]) ? (prev[id] as string[]) : [];
-                          const list = [...currentList];
-                          const existing = list.includes(option.label);
-                          const next = existing
-                            ? list.filter((item) => item !== option.label)
-                            : [...list, option.label];
-                          return { ...prev, [id]: next };
-                        });
-                      }}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-            <input
-              type="text"
-              className="input-prompt-answer"
-              value={answers[id] || ''}
-              disabled={isSubmitting}
-              placeholder={isZh ? '可选：补充说明（留空则使用已选项）' : 'Optional: add details (blank = selected option)'}
-              onChange={(e) => setAnswers((prev) => ({ ...prev, [id]: e.target.value }))}
-            />
+      <div className="input-prompt-question">
+        <div className="input-prompt-question-title">{currentTitle}</div>
+        {currentDescription ? <div className="input-prompt-question-desc">{currentDescription}</div> : null}
+        {currentOptions.length > 0 ? (
+          <div className="input-prompt-option-list">
+            {currentOptions.map((option, optIdx) => {
+              const current = selectedOptions[currentQuestionId];
+              const selected = currentQuestion?.multiSelect
+                ? Array.isArray(current) && current.includes(option.label)
+                : current === option.label;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  className={`input-prompt-option-row${selected ? ' selected' : ''}`}
+                  title={option.description || option.label}
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setSelectedOptions((prev) => {
+                      if (!currentQuestion?.multiSelect) {
+                        return { ...prev, [currentQuestionId]: option.label };
+                      }
+                      const currentList = Array.isArray(prev[currentQuestionId]) ? (prev[currentQuestionId] as string[]) : [];
+                      const list = [...currentList];
+                      const existing = list.includes(option.label);
+                      const next = existing
+                        ? list.filter((item) => item !== option.label)
+                        : [...list, option.label];
+                      return { ...prev, [currentQuestionId]: next };
+                    });
+                  }}
+                >
+                  <span className="input-prompt-option-index">{optIdx + 1}</span>
+                  <span className="input-prompt-option-main">
+                    <span className="input-prompt-option-label">{option.label}</span>
+                    {option.description ? <span className="input-prompt-option-desc">{option.description}</span> : null}
+                  </span>
+                  <span className="input-prompt-option-state">{selected ? (isZh ? '已选' : 'Selected') : ''}</span>
+                </button>
+              );
+            })}
           </div>
-        );
-      })}
+        ) : null}
+        <input
+          type="text"
+          className="input-prompt-answer"
+          value={answers[currentQuestionId] || ''}
+          disabled={isSubmitting}
+          placeholder={isZh ? '可选：补充说明（留空则使用已选项）' : 'Optional: add details (blank = selected option)'}
+          onChange={(e) => setAnswers((prev) => ({ ...prev, [currentQuestionId]: e.target.value }))}
+        />
+      </div>
       <div className="input-prompt-actions">
+        {askQuestions.length > 1 ? (
+          <button
+            type="button"
+            className="input-prompt-btn nav"
+            disabled={isSubmitting || !hasPrevQuestion}
+            onClick={() => setActiveAskIndex((prev) => Math.max(0, prev - 1))}
+          >
+            {isZh ? '上一题' : 'Prev'}
+          </button>
+        ) : null}
+        {askQuestions.length > 1 ? (
+          <button
+            type="button"
+            className="input-prompt-btn nav"
+            disabled={isSubmitting || !hasNextQuestion}
+            onClick={() => setActiveAskIndex((prev) => Math.min(askQuestions.length - 1, prev + 1))}
+          >
+            {isZh ? '下一题' : 'Next'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="input-prompt-btn approve"

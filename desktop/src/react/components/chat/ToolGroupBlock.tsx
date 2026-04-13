@@ -2,10 +2,9 @@
  * ToolGroupBlock — 工具调用组，含展开/折叠
  */
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { extractToolDetail } from '../../utils/message-parser';
 import type { ToolCall } from '../../stores/chat-types';
-import { useSmoothStream } from '../../hooks/use-smooth-stream';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -18,6 +17,9 @@ interface Props {
 
 const TOOL_PANEL_TEXT_MAX_LEN = 10_000;
 const TOOL_PREVIEW_EMPTY_LINE = '\u200B';
+const TOOL_REVEAL_BASE_DELAY_MS = 150;
+const TOOL_REVEAL_MAX_DELAY_MS = 480;
+const TOOL_REVEAL_AFTER_THINKING_DELAY_MS = 260;
 
 function humanizeToolName(name: string): string {
   return String(name || '')
@@ -300,16 +302,54 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({
   dimmed = false,
   animate = false,
 }: Props) {
+  const [revealedToolCount, setRevealedToolCount] = useState(() => (
+    animate ? Math.min(1, tools.length) : tools.length
+  ));
+  const nextToolDone = tools[revealedToolCount]?.done ?? true;
+
+  useEffect(() => {
+    if (!animate) {
+      setRevealedToolCount(tools.length);
+      return;
+    }
+    if (revealedToolCount > tools.length) {
+      setRevealedToolCount(tools.length);
+      return;
+    }
+    if (revealedToolCount === 0 && tools.length > 0) {
+      setRevealedToolCount(1);
+    }
+  }, [animate, tools.length, revealedToolCount]);
+
+  useEffect(() => {
+    if (!animate) return;
+    if (revealedToolCount >= tools.length) return;
+
+    const nextIndex = revealedToolCount;
+    let delay = TOOL_REVEAL_BASE_DELAY_MS + Math.min(4, Math.max(0, tools.length - nextIndex)) * 18;
+    if (!nextToolDone) delay = Math.max(delay, TOOL_REVEAL_AFTER_THINKING_DELAY_MS);
+    delay = Math.min(delay, TOOL_REVEAL_MAX_DELAY_MS);
+
+    const timer = window.setTimeout(() => {
+      setRevealedToolCount((count) => Math.min(tools.length, count + 1));
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [animate, revealedToolCount, tools.length, nextToolDone]);
+
+  const visibleTools = useMemo(
+    () => (animate ? tools.slice(0, Math.max(0, revealedToolCount)) : tools),
+    [animate, tools, revealedToolCount],
+  );
+
   return (
     <div className={`tool-group proma-like${dimmed ? ' dimmed' : ''}${animate ? ' streaming' : ''}`}>
       <div className="tool-group-content">
-        {tools.map((tool, i) => (
+        {visibleTools.map((tool, i) => (
           <ToolIndicator
             key={tool.toolUseId || `${tool.name}-${i}`}
             tool={tool}
             agentName={agentName}
             order={i}
-            animateCompletedOnMount={animate}
           />
         ))}
       </div>
@@ -323,55 +363,21 @@ const ToolIndicator = memo(function ToolIndicator({
   tool,
   agentName,
   order,
-  animateCompletedOnMount,
 }: {
   tool: ToolCall;
   agentName: string;
   order: number;
-  animateCompletedOnMount: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [replayDoneStreaming, setReplayDoneStreaming] = useState(
-    () => animateCompletedOnMount && tool.done,
-  );
-  const prevDoneRef = useRef(tool.done);
   const detail = extractToolDetail(tool.name, tool.args);
   const phase = (tool.done ? (tool.success ? 'done' : 'failed') : 'running') as 'running' | 'done' | 'failed';
   const label = getToolLabel(tool.name, phase, agentName, tool.args);
   const actionLine = buildToolActionLine(tool.name, phase, detail);
-  const streamActionLine = !tool.done || replayDoneStreaming;
-  const { displayedContent: smoothActionLine } = useSmoothStream({
-    content: actionLine,
-    isStreaming: streamActionLine,
-    minDelay: 14,
-    startFromEmptyWhenStreaming: streamActionLine,
-  });
   const t = (window as any).t;
   const doneText = stripLeadingEmoji(t?.('tool._line.done') || '完成');
   const failedText = stripLeadingEmoji(t?.('tool._line.failed') || '失败');
   const outputText = useMemo(() => getOutputText(tool), [tool.resultText, tool.details]);
   const canExpand = !!outputText;
-
-  useEffect(() => {
-    const wasDone = prevDoneRef.current;
-    prevDoneRef.current = tool.done;
-
-    if (!tool.done) {
-      setReplayDoneStreaming(false);
-      return;
-    }
-    if (!animateCompletedOnMount) return;
-    // 仅“已完成状态直接挂载”时回放慢速 action line，
-    // 避免 running -> done 正常流转时从头打字。
-    if (wasDone) setReplayDoneStreaming(true);
-  }, [tool.done, animateCompletedOnMount, tool.toolUseId]);
-
-  useEffect(() => {
-    if (!replayDoneStreaming) return;
-    const duration = Math.min(900, Math.max(180, actionLine.length * 8));
-    const timer = window.setTimeout(() => setReplayDoneStreaming(false), duration);
-    return () => window.clearTimeout(timer);
-  }, [replayDoneStreaming, actionLine.length]);
 
   // 如果 args 里有 tag 类型信息（如 agent 名）
   const tag = tool.args?.agentId as string | undefined;
@@ -395,7 +401,7 @@ const ToolIndicator = memo(function ToolIndicator({
         title={label}
       >
         <span className="tool-leading">{phase === 'failed' ? '!' : (phase === 'done' ? '✓' : '›')}</span>
-        <span className="tool-desc">{renderActionLineWithDiffColors(smoothActionLine || actionLine)}</span>
+        <span className="tool-desc">{renderActionLineWithDiffColors(actionLine)}</span>
         {tag && <span className="tool-tag">{tag}</span>}
         {tool.done ? (
           <span className={`tool-status ${tool.success ? 'done' : 'failed'}`}>

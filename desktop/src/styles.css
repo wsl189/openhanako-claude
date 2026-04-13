@@ -1956,6 +1956,12 @@ html[data-platform="linux"] .tb-toggle-right {
     margin-bottom: 0.2rem;
 }
 
+.avatar-row.assistant.streaming-intro {
+    opacity: 0;
+    transform: translateY(8px);
+    animation: assistant-avatar-intro 0.52s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
 .message-group.user .avatar-row {
     flex-direction: row-reverse;
 }
@@ -1994,6 +2000,17 @@ html[data-platform="linux"] .tb-toggle-right {
     font-size: 0.75rem;
     color: var(--text-muted);
     letter-spacing: 0.02em;
+}
+
+@keyframes assistant-avatar-intro {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .agent-running-inline {
@@ -4585,8 +4602,8 @@ html[data-platform="darwin"] .sv-topbar-title {
 .tool-item {
     width: 100%;
     opacity: 0;
-    transform: translateY(2px);
-    animation: tool-item-enter 0.22s ease-out forwards;
+    transform: translateY(8px);
+    animation: tool-item-enter 0.52s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .tool-indicator {
@@ -4662,6 +4679,7 @@ html[data-platform="darwin"] .sv-topbar-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: 0.72rem;
     color: color-mix(in oklab, var(--text-muted) 84%, var(--text) 16%);
 }
 
@@ -4721,7 +4739,7 @@ html[data-platform="darwin"] .sv-topbar-title {
 @keyframes tool-item-enter {
     from {
         opacity: 0;
-        transform: translateY(2px);
+        transform: translateY(8px);
     }
     to {
         opacity: 1;
@@ -4949,6 +4967,12 @@ html[data-platform="darwin"] .sv-topbar-title {
         transform: none;
     }
 
+    .avatar-row.assistant.streaming-intro {
+        animation: none;
+        opacity: 1;
+        transform: none;
+    }
+
     .chain-collapsible,
     .chain-collapsible.expanded {
         transition: none;
@@ -4962,13 +4986,14 @@ html[data-platform="darwin"] .sv-topbar-title {
     max-width: min(100%, 900px);
     font-size: 0.8rem;
     opacity: 0;
-    transform: translateY(2px);
-    animation: thinking-block-enter 0.24s ease-out forwards;
+    transform: translateY(10px);
+    animation: thinking-block-enter 0.58s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .thinking-block-summary {
     display: flex;
     align-items: center;
+    flex-wrap: nowrap;
     gap: 0.42rem;
     padding: 0.05rem 0;
     color: var(--text-muted);
@@ -5011,6 +5036,14 @@ html[data-platform="darwin"] .sv-topbar-title {
 .thinking-block-state.running {
     border-color: color-mix(in oklab, var(--accent) 34%, transparent);
     color: color-mix(in oklab, var(--accent) 56%, var(--text-muted) 44%);
+}
+
+.thinking-block-elapsed {
+    margin-left: 0;
+    font-size: 0.72rem;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in oklab, var(--text-muted) 78%, var(--text) 22%);
 }
 
 .thinking-block-panel {
@@ -5064,7 +5097,7 @@ html[data-platform="darwin"] .sv-topbar-title {
 @keyframes thinking-block-enter {
     from {
         opacity: 0;
-        transform: translateY(2px);
+        transform: translateY(10px);
     }
     to {
         opacity: 1;
@@ -6686,6 +6719,57 @@ body.resizing .jian-sidebar-inner {
     padding-top: 0.46rem;
 }
 
+.input-prompt-steps {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.44rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.input-prompt-steps::-webkit-scrollbar {
+    display: none;
+}
+
+.input-prompt-step {
+    flex: 0 0 auto;
+    max-width: 240px;
+    border: 1px solid color-mix(in oklab, var(--line) 80%, transparent);
+    background: color-mix(in oklab, var(--bg) 90%, var(--bg-card) 10%);
+    color: color-mix(in oklab, var(--text-muted) 86%, var(--text) 14%);
+    border-radius: 999px;
+    padding: 0.3rem 0.62rem;
+    font-size: 0.72rem;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: all 120ms ease;
+}
+
+.input-prompt-step:hover:not(:disabled) {
+    border-color: color-mix(in oklab, var(--accent) 28%, var(--line) 72%);
+    color: color-mix(in oklab, var(--text) 68%, var(--text-muted) 32%);
+}
+
+.input-prompt-step.active {
+    border-color: color-mix(in oklab, var(--accent) 48%, var(--line) 52%);
+    background: color-mix(in oklab, var(--accent) 16%, var(--bg-card) 84%);
+    color: color-mix(in oklab, var(--accent) 72%, var(--text) 28%);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 24%, transparent) inset;
+}
+
+.input-prompt-step.done:not(.active) {
+    border-color: color-mix(in oklab, var(--accent) 26%, var(--line) 74%);
+    color: color-mix(in oklab, var(--accent) 56%, var(--text-muted) 44%);
+}
+
+.input-prompt-step-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .input-prompt-question-title {
     font-size: 0.8rem;
     font-weight: 600;
@@ -6700,34 +6784,75 @@ body.resizing .jian-sidebar-inner {
     line-height: 1.4;
 }
 
-.input-prompt-options {
+.input-prompt-option-list {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.38rem;
-    margin-top: 0.34rem;
+    flex-direction: column;
+    gap: 0.34rem;
+    margin-top: 0.42rem;
 }
 
-.input-prompt-option {
+.input-prompt-option-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.52rem;
     border: 1px solid color-mix(in oklab, var(--line) 82%, transparent);
-    background: color-mix(in oklab, var(--bg-card) 90%, transparent);
+    background: color-mix(in oklab, var(--bg) 92%, var(--bg-card) 8%);
     color: color-mix(in oklab, var(--text) 72%, var(--text-muted) 28%);
-    border-radius: 999px;
-    font-size: 0.74rem;
-    line-height: 1;
-    padding: 0.42rem 0.7rem;
+    border-radius: 11px;
+    font-size: 0.79rem;
+    line-height: 1.4;
+    padding: 0.56rem 0.64rem;
+    text-align: left;
     cursor: pointer;
     transition: all 120ms ease;
 }
 
-.input-prompt-option:hover:not(:disabled) {
+.input-prompt-option-row:hover:not(:disabled) {
     border-color: color-mix(in oklab, var(--accent) 28%, var(--line) 72%);
-    color: color-mix(in oklab, var(--accent) 46%, var(--text) 54%);
+    background: color-mix(in oklab, var(--accent) 8%, var(--bg-card) 92%);
 }
 
-.input-prompt-option.selected {
-    border-color: color-mix(in oklab, var(--accent) 50%, var(--line) 50%);
-    background: color-mix(in oklab, var(--accent) 10%, var(--bg-card) 90%);
-    color: color-mix(in oklab, var(--accent) 66%, var(--text) 34%);
+.input-prompt-option-row.selected {
+    border-color: color-mix(in oklab, var(--accent) 60%, var(--line) 40%);
+    background: color-mix(in oklab, var(--accent) 16%, var(--bg-card) 84%);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 26%, transparent) inset;
+}
+
+.input-prompt-option-index {
+    flex: 0 0 auto;
+    width: 1.3rem;
+    text-align: center;
+    color: color-mix(in oklab, var(--text-muted) 84%, var(--text) 16%);
+    font-variant-numeric: tabular-nums;
+}
+
+.input-prompt-option-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.36rem;
+    align-items: baseline;
+}
+
+.input-prompt-option-label {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: color-mix(in oklab, var(--text) 90%, var(--text-muted) 10%);
+}
+
+.input-prompt-option-desc {
+    font-size: 0.78rem;
+    color: color-mix(in oklab, var(--text-muted) 90%, var(--text) 10%);
+}
+
+.input-prompt-option-state {
+    margin-left: auto;
+    min-width: 3em;
+    text-align: right;
+    font-size: 0.72rem;
+    color: color-mix(in oklab, var(--accent) 66%, var(--text-muted) 34%);
 }
 
 .input-prompt-answer {
@@ -6751,6 +6876,7 @@ body.resizing .jian-sidebar-inner {
 .input-prompt-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.42rem;
     margin-top: 0.58rem;
 }
@@ -6775,6 +6901,17 @@ body.resizing .jian-sidebar-inner {
     background: color-mix(in oklab, var(--accent) 12%, transparent);
 }
 
+.input-prompt-btn.nav {
+    color: color-mix(in oklab, var(--text) 68%, var(--text-muted) 32%);
+    border-color: color-mix(in oklab, var(--line) 72%, transparent);
+    background: color-mix(in oklab, var(--bg) 94%, var(--line) 6%);
+}
+
+.input-prompt-btn.nav:hover:not(:disabled) {
+    color: var(--text);
+    border-color: color-mix(in oklab, var(--line) 58%, transparent);
+}
+
 .input-prompt-btn.approve:hover:not(:disabled) {
     color: white;
     background: color-mix(in oklab, var(--accent) 74%, black 26%);
@@ -6794,7 +6931,8 @@ body.resizing .jian-sidebar-inner {
 }
 
 .input-prompt-btn:disabled,
-.input-prompt-option:disabled,
+.input-prompt-step:disabled,
+.input-prompt-option-row:disabled,
 .input-prompt-answer:disabled {
     opacity: 0.55;
     cursor: not-allowed;
@@ -13877,6 +14015,9 @@ a.about-link:hover {
     .input-prompt-btn {
         flex: 1;
         justify-content: center;
+    }
+    .input-prompt-step {
+        max-width: 190px;
     }
     .channel-header,
     .channel-messages,

@@ -146,7 +146,12 @@ function resolveSettingSources(agent, runtimeEnv = {}) {
 }
 
 function shouldForceToolsOption() {
-  return /^(1|true|yes|on)$/i.test(String(process.env.HANAKO_FORCE_SDK_TOOLS_OPTION || "").trim());
+  const raw = String(process.env.HANAKO_FORCE_SDK_TOOLS_OPTION || "").trim();
+  if (/^(0|false|no|off)$/i.test(raw)) return false;
+  if (/^(1|true|yes|on)$/i.test(raw)) return true;
+  // Default to strict tool list injection so provider-side built-ins
+  // cannot leak in through compatibility layers.
+  return true;
 }
 
 function resolvePermissionStrategy(agent) {
@@ -212,6 +217,31 @@ function detectBashBypassAttempt(toolName, input = {}, opts = {}) {
   }
 
   return null;
+}
+
+function createAllowedToolMatcher(allowedTools = []) {
+  const exact = new Set();
+  const prefix = [];
+  for (const item of Array.isArray(allowedTools) ? allowedTools : []) {
+    const name = String(item || "").trim();
+    if (!name) continue;
+    if (name.endsWith("*")) {
+      prefix.push(name.slice(0, -1));
+      continue;
+    }
+    exact.add(name);
+  }
+  return (exact.size > 0 || prefix.length > 0)
+    ? { exact, prefix }
+    : null;
+}
+
+function isToolAllowedByMatcher(toolName, matcher) {
+  if (!matcher) return true;
+  const name = String(toolName || "").trim();
+  if (!name) return false;
+  if (matcher.exact.has(name)) return true;
+  return matcher.prefix.some((p) => name.startsWith(p));
 }
 
 function parseAllowedPrompts(raw) {
@@ -317,6 +347,7 @@ function buildCanUseToolHandler(permissionStrategy, opts = {}) {
   const strictSandbox = opts.sandboxMode === "standard";
   const allowedRoots = strictSandbox ? resolveAllowedRoots(opts.workspace, opts.pathRules) : [];
   const cwd = opts.cwd;
+  const allowedToolMatcher = createAllowedToolMatcher(opts.allowedTools);
   const confirmStore = opts.confirmStore;
   const sessionPath = opts.sessionPath || null;
   const emitToolEvent = opts.emitToolEvent;
@@ -324,6 +355,12 @@ function buildCanUseToolHandler(permissionStrategy, opts = {}) {
 
   return async (toolName, input = {}) => {
     const payload = (input && typeof input === "object") ? input : {};
+    if (!isToolAllowedByMatcher(toolName, allowedToolMatcher)) {
+      return {
+        behavior: "deny",
+        message: `Tool "${String(toolName || "").trim()}" is not allowed by current session policy.`,
+      };
+    }
 
     if (toolName === "AskUserQuestion") {
       const decision = await waitForAskUserConfirmation({
@@ -443,15 +480,6 @@ export function buildClaudeRuntimeConfig({
   const sandboxMode = toolProfile?.sandbox?.mode || "standard";
   const pathRules = normalizePathRules(toolProfile?.sandbox?.path_rules);
   const permissionStrategy = resolvePermissionStrategy(agent);
-  const canUseTool = buildCanUseToolHandler(permissionStrategy, {
-    sandboxMode,
-    workspace,
-    pathRules,
-    cwd,
-    confirmStore,
-    sessionPath,
-    emitToolEvent,
-  });
   const settingSources = resolveSettingSources(agent, runtimeEnv);
   const builtinEnabled = noTools
     ? []
@@ -472,6 +500,16 @@ export function buildClaudeRuntimeConfig({
     ].filter(Boolean))
     : [];
   const allowedTools = uniq([...builtinEnabled, ...customAllowedTools]);
+  const canUseTool = buildCanUseToolHandler(permissionStrategy, {
+    sandboxMode,
+    workspace,
+    pathRules,
+    cwd,
+    confirmStore,
+    sessionPath,
+    emitToolEvent,
+    allowedTools,
+  });
   const mcpServers = {};
   if (filteredCustomTools.length > 0) {
     mcpServers[mcpServerKey] = createCustomToolsMcpServer(
