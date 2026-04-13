@@ -58,6 +58,9 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.includePartialMessages).toBe(false);
     expect(config.options.permissionMode).toBe("bypassPermissions");
     expect(config.options.allowDangerouslySkipPermissions).toBe(false);
+    expect(config.options.settings).toEqual({
+      skipWebFetchPreflight: true,
+    });
   });
 
   it("restricts strict sandbox filesystem to workspace and explicit whitelist rules", () => {

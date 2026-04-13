@@ -505,6 +505,21 @@ function isRenderableBlock(block: ContentBlock): boolean {
   }
 }
 
+function resetBufferTurnState(buf: Buffer): void {
+  buf.textAcc = '';
+  buf.textAnchorIndex = null;
+  buf.thinkingAcc = '';
+  buf.hadThinking = false;
+  buf.sawThinkingStreamEvent = false;
+  buf.xingAcc = '';
+  buf.xingTitle = '';
+  buf.liveBlocks = [];
+  buf.inThinking = false;
+  buf.inXing = false;
+  buf.messageAppended = false;
+  buf.lastSdkAssistantMessageKey = null;
+}
+
 class StreamBufferManager {
   private buffers = new Map<string, Buffer>();
 
@@ -520,11 +535,18 @@ class StreamBufferManager {
 
   /** 确保 store 中已为该 session 追加了一条空 assistant message */
   private ensureMessage(buf: Buffer): void {
-    if (buf.messageAppended) return;
-
     const store = useStore.getState();
     const session = store.chatSessions[buf.sessionPath];
     if (!session) return; // session 未初始化（可能还没 loadMessages）
+
+    const items = Array.isArray(session.items) ? session.items : [];
+    const last = items[items.length - 1];
+    if (last?.type === 'message' && last.data.role === 'assistant') {
+      // 真实列表尾部已是 assistant 消息（即使中间经过 compaction 标记切分），
+      // 直接复用，避免重复 append。
+      buf.messageAppended = true;
+      return;
+    }
 
     const id = `stream-${Date.now()}`;
     const msg: ChatMessage = { id, role: 'assistant', blocks: [] };
@@ -864,6 +886,11 @@ class StreamBufferManager {
         break;
 
       case 'compaction_start':
+        // 分隔项插入前先落盘当前缓冲，避免“最后一项不再是 message”导致本轮内容丢失。
+        finalizeBufferedTextSegment(buf);
+        closeOpenThinkingIfNeeded(buf);
+        if (hasBufferedRenderableState(buf)) this.flush(buf);
+        resetBufferTurnState(buf);
         useStore.getState().appendItem(sessionPath, {
           type: 'compaction',
           id: `compaction-${Date.now()}`,
@@ -872,6 +899,11 @@ class StreamBufferManager {
         break;
 
       case 'compaction_end':
+        // 压缩结束后插入“已压缩上下文”分隔线，后续流应从新 assistant 消息继续渲染。
+        finalizeBufferedTextSegment(buf);
+        closeOpenThinkingIfNeeded(buf);
+        if (hasBufferedRenderableState(buf)) this.flush(buf);
+        resetBufferTurnState(buf);
         // 移除 compaction notice
         useStore.getState().clearCompactionNotices(sessionPath);
         if (msg.success !== false) {
@@ -890,17 +922,7 @@ class StreamBufferManager {
           this.dropTrailingEmptyAssistantMessage(sessionPath);
         }
         // 清理 buffer
-        buf.textAcc = '';
-        buf.textAnchorIndex = null;
-        buf.thinkingAcc = '';
-        buf.hadThinking = false;
-        buf.sawThinkingStreamEvent = false;
-        buf.xingAcc = '';
-        buf.liveBlocks = [];
-        buf.inThinking = false;
-        buf.inXing = false;
-        buf.messageAppended = false;
-        buf.lastSdkAssistantMessageKey = null;
+        resetBufferTurnState(buf);
         break;
     }
   }

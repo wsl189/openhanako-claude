@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
+const DEFAULT_CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 
 function toTextBlock(text = "") {
   return { type: "text", text: String(text || "") };
@@ -46,6 +46,31 @@ function maybeParseJson(raw) {
   } catch {
     return null;
   }
+}
+
+const INTERNAL_USER_TEXT_PATTERNS = [
+  /^Base directory for this skill:/i,
+  /^This session is being continued from a previous conversation that ran out of context\./i,
+  /^<local-command-caveat>/i,
+  /^<command-name>\/compact<\/command-name>/i,
+  /^<local-command-stdout>Compacted\b/i,
+];
+
+function extractPlainTextFromBlocks(blocks = []) {
+  return (Array.isArray(blocks) ? blocks : [])
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+}
+
+function isInternalUserTranscriptEntry(entry, blocks = []) {
+  if (!entry || typeof entry !== "object") return false;
+  if (entry?.message?.role !== "user") return false;
+  if (entry?.isMeta) return true;
+  if (entry?.sourceToolUseID) return true;
+  const text = extractPlainTextFromBlocks(blocks).trim();
+  if (!text) return false;
+  return INTERNAL_USER_TEXT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function extractToolResultPayload(rawContent) {
@@ -128,21 +153,88 @@ export function encodeClaudeProjectDir(cwd = "") {
   return String(cwd || "").replace(/[^a-zA-Z0-9]/g, "-");
 }
 
+function normalizeHomePath(rawPath = "") {
+  const input = String(rawPath || "").trim();
+  if (!input) return "";
+  const expanded = input.replace(/^~(?=$|[\\/])/, os.homedir());
+  return path.resolve(expanded);
+}
+
+function collectHanakoAgentProjectDirs() {
+  const hanakoHome = normalizeHomePath(process.env.HANA_HOME || "")
+    || path.join(os.homedir(), ".hanako");
+  const agentsDir = path.join(hanakoHome, "agents");
+  if (!fs.existsSync(agentsDir)) return [];
+
+  const out = [];
+  try {
+    const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const projectsDir = path.join(agentsDir, entry.name, "projects");
+      if (fs.existsSync(projectsDir)) out.push(projectsDir);
+    }
+  } catch {
+    return [];
+  }
+  return out;
+}
+
+function collectClaudeProjectRoots() {
+  const roots = [];
+  const seen = new Set();
+  const pushIfExists = (dir) => {
+    const normalized = normalizeHomePath(dir);
+    if (!normalized || seen.has(normalized)) return;
+    if (!fs.existsSync(normalized)) return;
+    seen.add(normalized);
+    roots.push(normalized);
+  };
+
+  pushIfExists(DEFAULT_CLAUDE_PROJECTS_DIR);
+  const claudeConfigDir = normalizeHomePath(process.env.CLAUDE_CONFIG_DIR || "");
+  if (claudeConfigDir) {
+    pushIfExists(path.join(claudeConfigDir, "projects"));
+  }
+  for (const projectsDir of collectHanakoAgentProjectDirs()) {
+    pushIfExists(projectsDir);
+  }
+  return roots;
+}
+
 export function resolveClaudeTranscriptPath(sessionId, cwd = "") {
   const sid = String(sessionId || "").trim();
-  if (!sid || !fs.existsSync(CLAUDE_PROJECTS_DIR)) return null;
+  if (!sid) return null;
+  const projectRoots = collectClaudeProjectRoots();
+  if (projectRoots.length === 0) return null;
 
   const candidates = [];
   if (cwd) {
-    candidates.push(path.join(CLAUDE_PROJECTS_DIR, encodeClaudeProjectDir(cwd), `${sid}.jsonl`));
+    const encoded = encodeClaudeProjectDir(cwd);
+    for (const projectsDir of projectRoots) {
+      candidates.push(path.join(projectsDir, encoded, `${sid}.jsonl`));
+    }
+  }
+  for (const projectsDir of projectRoots) {
+    candidates.push(path.join(projectsDir, `${sid}.jsonl`));
   }
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return candidate;
   }
 
-  for (const projectDir of fs.readdirSync(CLAUDE_PROJECTS_DIR)) {
-    const candidate = path.join(CLAUDE_PROJECTS_DIR, projectDir, `${sid}.jsonl`);
-    if (fs.existsSync(candidate)) return candidate;
+  for (const projectsDir of projectRoots) {
+    let projectDirs = [];
+    try {
+      projectDirs = fs.readdirSync(projectsDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      projectDirs = [];
+    }
+    for (const projectDir of projectDirs) {
+      const candidate = path.join(projectsDir, projectDir, `${sid}.jsonl`);
+      if (fs.existsSync(candidate)) return candidate;
+    }
   }
   return null;
 }
@@ -190,6 +282,9 @@ export function buildSessionMessagesFromTranscriptEntries(entries = []) {
 
     if (entry?.type === "user" && role === "user") {
       const blocks = normalizeContentBlocks(entry?.message?.content);
+      if (isInternalUserTranscriptEntry(entry, blocks)) {
+        continue;
+      }
       const toolResultBlocks = blocks.filter((block) => block?.type === "tool_result");
       if (toolResultBlocks.length && toolResultBlocks.length === blocks.length) {
         for (const block of toolResultBlocks) {

@@ -74,6 +74,35 @@ function extractToolUsesFromAssistantContent(content = []) {
     }));
 }
 
+function resolveCustomToolName(rawName, customToolNames = new Set()) {
+  const raw = String(rawName || "").trim();
+  if (!raw) return "";
+  const names = customToolNames instanceof Set
+    ? [...customToolNames].map((name) => String(name || "").trim()).filter(Boolean)
+    : [];
+  if (!names.length) return raw;
+
+  const direct = names.find((name) => name === raw);
+  if (direct) return direct;
+
+  const lowered = raw.toLowerCase();
+  const directCaseInsensitive = names.find((name) => name.toLowerCase() === lowered);
+  if (directCaseInsensitive) return directCaseInsensitive;
+
+  const mcpMatch = raw.match(/^mcp__[A-Za-z0-9_-]+__(.+)$/i);
+  const suffix = String(mcpMatch?.[1] || "").trim();
+  if (!suffix) return raw;
+
+  const suffixDirect = names.find((name) => name === suffix);
+  if (suffixDirect) return suffixDirect;
+
+  const suffixLowered = suffix.toLowerCase();
+  const suffixCaseInsensitive = names.find((name) => name.toLowerCase() === suffixLowered);
+  if (suffixCaseInsensitive) return suffixCaseInsensitive;
+
+  return raw;
+}
+
 function normalizeContentBlocks(content) {
   if (Array.isArray(content)) return content.filter(Boolean);
   if (typeof content === "string") return [{ type: "text", text: content }];
@@ -326,18 +355,19 @@ export class SessionCoordinator {
           }
         } else if (block?.type === "tool_use" && block.id) {
           state.turnSawStructuredToolUse = true;
+          const resolvedToolName = resolveCustomToolName(block.name || "", state.customToolNames);
           if (Number.isInteger(raw.index)) {
             state.blockToolUseByIndex.set(raw.index, block.id);
           }
           state.toolCalls.set(block.id, {
-            name: block.name || "",
+            name: resolvedToolName,
             args: block.input,
             rawInput: typeof block.input === "object" ? JSON.stringify(block.input) : "",
-            custom: state.customToolNames.has(block.name || ""),
+            custom: state.customToolNames.has(resolvedToolName),
           });
           translated.push({
             type: "tool_start",
-            name: block.name || "",
+            name: resolvedToolName,
             toolCallId: block.id,
             args: block.input,
           });
@@ -408,30 +438,31 @@ export class SessionCoordinator {
         state.turnSawTextToolMarkup = true;
       }
       for (const toolUse of structuredToolUses) {
+        const resolvedToolName = resolveCustomToolName(toolUse.name || "", state.customToolNames);
         if (state.toolCalls.has(toolUse.id)) {
           const prev = state.toolCalls.get(toolUse.id);
           const nextArgs = toolUse.args && typeof toolUse.args === "object" ? toolUse.args : prev?.args;
           state.toolCalls.set(toolUse.id, {
             ...prev,
-            name: toolUse.name || prev?.name || "",
+            name: resolvedToolName || prev?.name || "",
             args: nextArgs,
           });
           translated.push({
             type: "tool_start",
-            name: toolUse.name || prev?.name || "",
+            name: resolvedToolName || prev?.name || "",
             toolCallId: toolUse.id,
             args: nextArgs,
           });
           continue;
         }
         state.toolCalls.set(toolUse.id, {
-          name: toolUse.name,
+          name: resolvedToolName,
           args: toolUse.args,
-          custom: state.customToolNames.has(toolUse.name),
+          custom: state.customToolNames.has(resolvedToolName),
         });
         translated.push({
           type: "tool_start",
-          name: toolUse.name,
+          name: resolvedToolName,
           toolCallId: toolUse.id,
           args: toolUse.args,
         });

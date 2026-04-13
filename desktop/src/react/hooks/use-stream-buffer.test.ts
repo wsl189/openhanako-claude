@@ -744,4 +744,51 @@ describe('mergeDelta', () => {
       expect(blocks.map((b) => b.type)).toEqual(['thinking', 'text']);
     }
   });
+
+  it('starts a new assistant message after compaction divider', () => {
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '这是压缩前的内容。',
+    });
+    streamBufferManager.handle({ type: 'compaction_start', sessionPath });
+    streamBufferManager.handle({ type: 'compaction_end', sessionPath, success: true });
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '这是压缩后的新内容。',
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items.map((item) => item.type)).toEqual(['message', 'compaction_done', 'message']);
+
+    const first = items[0];
+    const divider = items[1];
+    const second = items[2];
+
+    expect(first?.type).toBe('message');
+    expect(divider?.type).toBe('compaction_done');
+    expect(second?.type).toBe('message');
+
+    if (first?.type === 'message') {
+      const blocks = first.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['text']);
+      const text = blocks[0];
+      expect(text?.type).toBe('text');
+      if (text?.type === 'text') {
+        expect(text.html).toContain('这是压缩前的内容');
+      }
+    }
+
+    if (second?.type === 'message') {
+      const blocks = second.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['text']);
+      const text = blocks[0];
+      expect(text?.type).toBe('text');
+      if (text?.type === 'text') {
+        expect(text.html).toContain('这是压缩后的新内容');
+      }
+    }
+  });
 });

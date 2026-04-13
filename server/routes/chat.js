@@ -342,6 +342,18 @@ function hasFileOutputs(toolName, details) {
   });
 }
 
+function getImageBlockPayload(block, defaultMime = "image/png") {
+  if (!block || typeof block !== "object" || block.type !== "image") return null;
+  const base64 = typeof block.data === "string"
+    ? block.data
+    : (typeof block.source?.data === "string" ? block.source.data : "");
+  if (!base64) return null;
+  const mimeType = typeof block.mimeType === "string"
+    ? block.mimeType
+    : (typeof block.source?.media_type === "string" ? block.source.media_type : defaultMime);
+  return { base64, mimeType };
+}
+
 function shouldUseStructuredStreamForSession(engine, sessionPath) {
   const session = sessionPath ? engine.getSessionByPath(sessionPath) : engine.session;
   if (!session || typeof session !== "object") return false;
@@ -780,12 +792,13 @@ export default async function chatRoute(app, { engine, hub }) {
       if (event.name === "browser") {
         const d = event.details || {};
         if (d.action === "screenshot" && event.content) {
-          const imgBlock = event.content.find(c => c.type === "image");
-          if (imgBlock?.source?.data) {
+          const imgBlock = event.content.find((c) => c?.type === "image");
+          const payload = getImageBlockPayload(imgBlock, "image/jpeg");
+          if (payload) {
             emitStreamEvent(sessionPath, ss, {
               type: "browser_screenshot",
-              base64: imgBlock.source.data,
-              mimeType: imgBlock.source.media_type || "image/jpeg",
+              base64: payload.base64,
+              mimeType: payload.mimeType || "image/jpeg",
             });
           }
         }
@@ -802,12 +815,14 @@ export default async function chatRoute(app, { engine, hub }) {
       }
 
       if (event.name === "generate_images" && event.content) {
-        const imageBlocks = event.content.filter(c => c?.type === "image" && c?.source?.data);
+        const imageBlocks = event.content.filter((c) => c?.type === "image");
         for (const imgBlock of imageBlocks) {
+          const payload = getImageBlockPayload(imgBlock, "image/png");
+          if (!payload) continue;
           emitStreamEvent(sessionPath, ss, {
             type: "browser_screenshot",
-            base64: imgBlock.source.data,
-            mimeType: imgBlock.source.media_type || "image/png",
+            base64: payload.base64,
+            mimeType: payload.mimeType || "image/png",
           });
         }
       }

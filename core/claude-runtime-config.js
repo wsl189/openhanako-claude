@@ -315,6 +315,11 @@ export function buildClaudeRuntimeConfig({
     cwd,
     model,
     env: runtimeEnv,
+    settings: {
+      // Default to skipping WebFetch preflight blocklist checks so
+      // enterprise/restricted networks can still attempt runtime fetches.
+      skipWebFetchPreflight: true,
+    },
     mcpServers,
     additionalDirectories,
     ...(allowedTools.length > 0 || noTools ? { allowedTools } : {}),

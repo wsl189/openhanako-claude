@@ -251,6 +251,63 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     }));
   });
 
+  it("normalizes mcp-prefixed custom tool names to avoid duplicate browser rows", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-custom-tool-mcp-alias";
+    const customToolNames = ["browser"];
+
+    const mcpStart = coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "sdk-tool-1",
+          name: "mcp__hanako__browser",
+          input: { url: "https://news.google.com" },
+        }],
+      },
+    }, sessionPath, customToolNames);
+    expect(mcpStart).toContainEqual(expect.objectContaining({
+      type: "tool_start",
+      name: "browser",
+      toolCallId: "sdk-tool-1",
+    }));
+
+    const customStart = coordinator._translateClaudeEvent({
+      type: "tool_start",
+      name: "browser",
+      toolCallId: "custom-tool-1",
+      args: { url: "https://news.google.com" },
+    }, sessionPath, customToolNames);
+    expect(customStart.some((event) => event.type === "tool_start")).toBe(false);
+
+    const mcpToolResult = coordinator._translateClaudeEvent({
+      type: "user",
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "sdk-tool-1",
+          content: [{ type: "text", text: "ok" }],
+        }],
+      },
+    }, sessionPath, customToolNames);
+    expect(mcpToolResult.some((event) => event.type === "tool_end")).toBe(false);
+
+    const customEnd = coordinator._translateClaudeEvent({
+      type: "tool_end",
+      name: "browser",
+      toolCallId: "custom-tool-1",
+      success: true,
+      content: [{ type: "text", text: "ok" }],
+    }, sessionPath, customToolNames);
+    expect(customEnd).toContainEqual(expect.objectContaining({
+      type: "tool_end",
+      name: "browser",
+      success: true,
+    }));
+    expect(customEnd.some((event) => event.name === "mcp__hanako__browser")).toBe(false);
+  });
+
   it("does not surface ede_diagnostic-only result errors", () => {
     const coordinator = new SessionCoordinator({});
     const translated = coordinator._translateClaudeEvent({
