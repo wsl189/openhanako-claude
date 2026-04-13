@@ -47,6 +47,14 @@ function normalizeAnthropicBaseUrlForSdk(url = "") {
     .replace(/\/v1$/i, "");
 }
 
+function modelToRef(model) {
+  if (!model || typeof model !== "object") return "";
+  const id = String(model.id || "").trim();
+  if (!id) return "";
+  const provider = String(model.provider || "").trim();
+  return provider ? `${provider}/${id}` : id;
+}
+
 function extractAssistantTextFromSdkMessage(message) {
   const content = message?.message?.content;
   if (!Array.isArray(content)) return "";
@@ -149,6 +157,28 @@ function isAbortLikeErrorMessage(message) {
     || /request was aborted/i.test(text)
     || /aborterror/i.test(text)
     || /fetchrequestcanceledexception/i.test(text)
+    || /query closed before response received/i.test(text)
+  );
+}
+
+function isSdkTelemetryExportNoise(message) {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  const hasExportFailure = /\bfailed\s+to\s+export\b/i.test(text) && /\bevents?\b/i.test(text);
+  if (!hasExportFailure) return false;
+  const hasSdkExportMarker = (
+    /@anthropic-ai\/claude-agent-sdk\/cli\.js/i.test(text)
+    || /\bqueueFailedEvents\b/i.test(text)
+    || /\bdoExport\b/i.test(text)
+    || /\b(?:1p|first-party)\s+event\s+logging\b/i.test(text)
+  );
+  if (!hasSdkExportMarker) return false;
+  // 仅过滤 SDK telemetry 导出噪音，避免误伤真实业务错误。
+  return (
+    /\bstatus=\d{3}\b/i.test(text)
+    || /\bERR_[A-Z_]+\b/i.test(text)
+    || /request failed with status code \d{3}/i.test(text)
+    || /\b(?:1p|first-party)\s+event\s+logging\b/i.test(text)
   );
 }
 
@@ -157,6 +187,7 @@ function pickUserFacingRuntimeErrorMessage(rawMessage, fallback = "") {
   if (!text) return fallback;
   if (isEdeDiagnosticErrorMessage(text)) return "";
   if (isAbortLikeErrorMessage(text)) return "";
+  if (isSdkTelemetryExportNoise(text)) return "";
   return text;
 }
 
@@ -166,7 +197,9 @@ function pickUserFacingResultErrorMessage(event) {
     : [];
   if (errors.length > 0) {
     const message = errors.find((item) =>
-      !isEdeDiagnosticErrorMessage(item) && !isAbortLikeErrorMessage(item)
+      !isEdeDiagnosticErrorMessage(item)
+      && !isAbortLikeErrorMessage(item)
+      && !isSdkTelemetryExportNoise(item)
     );
     return message || "";
   }
@@ -175,6 +208,7 @@ function pickUserFacingResultErrorMessage(event) {
     resultText
     && !isEdeDiagnosticErrorMessage(resultText)
     && !isAbortLikeErrorMessage(resultText)
+    && !isSdkTelemetryExportNoise(resultText)
   ) {
     return resultText;
   }
@@ -539,11 +573,18 @@ export class SessionCoordinator {
   }) {
     const normalizedCwd = normalizeWorkspacePath(cwd, process.cwd());
     const models = this._d.getModels();
-    const modelRef = agent?.config?.models?.chat || models.currentModel?.id || models.defaultModel?.id;
+    const modelRef = String(
+      metadata?.model
+      || agent?.config?.models?.chat
+      || modelToRef(models.defaultModel)
+      || modelToRef(models.currentModel)
+      || "",
+    ).trim();
     if (!modelRef) {
       throw new Error(t("error.noAvailableModel"));
     }
     const { model, env, resolved } = this._buildSessionEnv(models, agent?.config, modelRef);
+    const resolvedModelRef = modelToRef(model) || modelRef;
 
     log.log(
       `[runtime-route] claude-sdk-runtime `
@@ -551,6 +592,16 @@ export class SessionCoordinator {
       + `base=${resolved?.base_url || ""}`,
     );
 
+    const agentId = path.basename(agent?.agentDir || "");
+    const toolProfile = this._d.getAgentPermissionConfig?.(agentId)
+      || agent?._engine?.getAgentPermissionConfig?.(agentId)
+      || null;
+    if (!toolProfile && !noTools && !builtinEnabledOverride && !customEnabledOverride) {
+      log.warn(
+        `[runtime-tools] missing permission profile for agent=${agentId || "unknown"}; `
+        + "custom tools may be unavailable",
+      );
+    }
     let runtime = null;
     const runtimeConfig = buildClaudeRuntimeConfig({
       agent,
@@ -559,7 +610,7 @@ export class SessionCoordinator {
         agent?.config?.desk?.home_folder || this._d.getHomeCwd(),
         normalizedCwd,
       ),
-      toolProfile: this._d.getAgentPermissionConfig?.(path.basename(agent?.agentDir || "")) || null,
+      toolProfile,
       customTools: agent?.tools || [],
       builtinEnabledOverride,
       customEnabledOverride,
@@ -579,7 +630,8 @@ export class SessionCoordinator {
     const runtimeTools = runtimeConfig?.diagnostics || {};
     log.log(
       `[runtime-tools] settings=${JSON.stringify(runtimeTools.settingSources || [])} `
-      + `allowed=${JSON.stringify(runtimeTools.builtinEnabled || [])} `
+      + `allowedTools=${JSON.stringify(runtimeTools.allowedTools || runtimeTools.builtinEnabled || [])} `
+      + `builtinEnabled=${JSON.stringify(runtimeTools.builtinEnabled || [])} `
       + `forcedToolsOption=${runtimeTools.forcedToolsOption === true} `
       + `permissionStrategy=${runtimeTools.permissionStrategy || "unknown"} `
       + `canUseTool=${runtimeTools.hasCanUseTool === true} `
@@ -593,6 +645,14 @@ export class SessionCoordinator {
       sessionPath,
       options: runtimeConfig.options,
     });
+    runtime.model = model;
+    if (sessionPath && resolvedModelRef && resolvedModelRef !== metadata?.model) {
+      try {
+        patchSessionMetadata(sessionPath, { model: resolvedModelRef });
+      } catch {
+        // ignore metadata patch failures
+      }
+    }
     return runtime;
   }
 
@@ -606,6 +666,21 @@ export class SessionCoordinator {
       || []
     ).map((tool) => tool?.name).filter(Boolean);
     const unsub = session.subscribe((event) => {
+      if (event?.type === "sdk_init") {
+        const mcpServers = Array.isArray(event.mcpServers) ? event.mcpServers : [];
+        const mcpStatuses = mcpServers.map((item) => ({
+          name: String(item?.name || ""),
+          status: String(item?.status || ""),
+        }));
+        const mcpTools = (Array.isArray(event.tools) ? event.tools : [])
+          .map((name) => String(name || ""))
+          .filter((name) => name.startsWith("mcp__"));
+        log.log(
+          `[sdk-init] session=${path.basename(sessionPath || "")} `
+          + `mcpServers=${JSON.stringify(mcpStatuses)} `
+          + `mcpTools=${JSON.stringify(mcpTools)}`,
+        );
+      }
       for (const translatedEvent of this._translateClaudeEvent(event, sessionPath, customToolNames)) {
         this._emitRuntimeEvent(translatedEvent, sessionPath);
       }
@@ -641,9 +716,18 @@ export class SessionCoordinator {
     agent.setMemoryEnabled(memoryEnabled);
     this._refreshSessionPrompt(agent);
 
+    const models = this._d.getModels();
+    const initialModelRef = String(
+      modelToRef(models.currentModel)
+      || modelToRef(models.defaultModel)
+      || agent?.config?.models?.chat
+      || "",
+    ).trim();
+
     const { sessionPath, metadata } = createSessionMetadata(sessionDir, {
       sessionId: randomUUID(),
       cwd: effectiveCwd,
+      model: initialModelRef || null,
       agentId: this._d.getActiveAgentId(),
       memoryEnabled,
     });
@@ -685,7 +769,17 @@ export class SessionCoordinator {
       this._d.getSkills()?.syncAgentSkills?.(this._d.getAgent());
     }
     const agent = this._d.getAgentById(targetAgentId) || this._d.getAgent();
-    const metadata = readSessionMetadata(sessionPath);
+    let metadata = readSessionMetadata(sessionPath);
+    const liveModelRef = modelToRef(currentSession?.model);
+    // 刷新 runtime 时以“当前会话正在使用的模型”为准，避免回退到 metadata 旧值。
+    if (liveModelRef && liveModelRef !== metadata?.model) {
+      metadata = { ...metadata, model: liveModelRef };
+      try {
+        patchSessionMetadata(sessionPath, { model: liveModelRef });
+      } catch {
+        // ignore metadata patch failure
+      }
+    }
     const memoryEnabled = metadata?.memoryEnabled !== false;
     const wasStarted = this._sessionStarted;
     const runtime = await this._createRuntime({

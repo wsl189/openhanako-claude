@@ -61,7 +61,7 @@ function removeRedundantOutputToolLines(blocks: ContentBlock[]): ContentBlock[] 
   return next;
 }
 
-function isAutoCollapsibleChainBlock(block: ContentBlock): boolean {
+function isCoreChainBlock(block: ContentBlock): boolean {
   return block.type === 'thinking' || block.type === 'tool_group';
 }
 
@@ -115,11 +115,22 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
 
   const blocks = message.blocks || [];
   const displayBlocks = useMemo(() => removeRedundantOutputToolLines(blocks), [blocks]);
-  const hasPrimaryText = useMemo(
-    () => displayBlocks.some((block) => block.type === 'text'),
-    [displayBlocks],
+  const finalTextIndex = useMemo(() => {
+    for (let i = displayBlocks.length - 1; i >= 0; i--) {
+      if (displayBlocks[i].type === 'text') return i;
+    }
+    return -1;
+  }, [displayBlocks]);
+  const hasPrimaryText = finalTextIndex >= 0;
+  const isAutoCollapsibleChainBlock = useCallback((block: ContentBlock, index: number) => {
+    if (isCoreChainBlock(block)) return true;
+    if (!hasPrimaryText) return false;
+    return block.type === 'text' && index !== finalTextIndex;
+  }, [hasPrimaryText, finalTextIndex]);
+  const chainBlocks = useMemo(
+    () => displayBlocks.filter((block, index) => isAutoCollapsibleChainBlock(block, index)),
+    [displayBlocks, isAutoCollapsibleChainBlock],
   );
-  const chainBlocks = useMemo(() => displayBlocks.filter(isAutoCollapsibleChainBlock), [displayBlocks]);
   const hasCollapsibleChain = hasPrimaryText && chainBlocks.length > 0;
   const [chainExpanded, setChainExpanded] = useState(() => isStreaming);
   const chainCollapseTimerRef = useRef<number | null>(null);
@@ -179,20 +190,18 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     ), 0),
     [chainBlocks],
   );
+  const chainIntermediateTextCount = useMemo(
+    () => chainBlocks.filter((block) => block.type === 'text').length,
+    [chainBlocks],
+  );
   const chainSummaryText = useMemo(() => {
     const parts: string[] = [];
     if (chainThinkingCount > 0) parts.push(`${chainThinkingCount}次思考`);
     if (chainToolCount > 0) parts.push(`${chainToolCount}次工具执行`);
+    if (chainIntermediateTextCount > 0) parts.push(`${chainIntermediateTextCount}段中间输出`);
     const detail = parts.length ? parts.join(' · ') : '详情';
     return `思考和执行链（${detail}）`;
-  }, [chainThinkingCount, chainToolCount]);
-
-  const finalTextIndex = useMemo(() => {
-    for (let i = displayBlocks.length - 1; i >= 0; i--) {
-      if (displayBlocks[i].type === 'text') return i;
-    }
-    return -1;
-  }, [displayBlocks]);
+  }, [chainThinkingCount, chainToolCount, chainIntermediateTextCount]);
   const finalTextHtml = finalTextIndex >= 0 && displayBlocks[finalTextIndex].type === 'text'
     ? displayBlocks[finalTextIndex].html
     : '';
@@ -279,7 +288,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
           </button>
         )}
         {displayBlocks.map((block, i) => {
-          if (isAutoCollapsibleChainBlock(block)) {
+          if (isAutoCollapsibleChainBlock(block, i)) {
             const chainVisible = !hasCollapsibleChain || chainExpanded;
             return (
               <div

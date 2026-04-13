@@ -151,6 +151,7 @@ async function init(): Promise<void> {
   useStore.setState({ pendingNewSession: true });
   await loadAgents();
   await loadSessions();
+  await loadModels(useStore.getState().currentSessionPath);
 
   // 11. 初始化书桌
   initJian();
@@ -190,7 +191,7 @@ async function init(): Promise<void> {
         });
         break;
       case 'models-changed':
-        loadModels();
+        loadModels(useStore.getState().currentSessionPath);
         break;
       case 'agent-created':
       case 'agent-deleted':

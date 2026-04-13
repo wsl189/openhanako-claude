@@ -10,6 +10,7 @@ import { debugLog } from "../../lib/debug-log.js";
 import { t } from "../i18n.js";
 import { BrowserManager } from "../../lib/browser/browser-manager.js";
 import { stripSdkDiagnosticLines } from "../../lib/text/assistant-visible-text.js";
+import { patchSessionMetadata } from "../../core/claude-session-store.js";
 import {
   createSessionStreamState,
   beginSessionStream,
@@ -37,6 +38,14 @@ const TOOL_ARG_LONG_TEXT_MAX_LEN = 12_000;
 const TOOL_ARG_ARRAY_MAX_ITEMS = 12;
 const TOOL_ARG_OBJECT_MAX_KEYS = 40;
 const TOOL_ARG_LONG_TEXT_KEYS = new Set(["content", "old_string", "new_string", "old_text", "new_text"]);
+
+function toModelRef(model) {
+  if (!model || typeof model !== "object") return "";
+  const id = String(model.id || "").trim();
+  if (!id) return "";
+  const provider = String(model.provider || "").trim();
+  return provider ? `${provider}/${id}` : id;
+}
 
 function compactToolArgs(rawArgs) {
   if (!rawArgs || typeof rawArgs !== "object") return undefined;
@@ -87,6 +96,48 @@ function compactToolArgValue(value, keyHint = "", depth = 0) {
 
 function isSdkDiagnosticChunk(text) {
   return EDE_DIAGNOSTIC_RE.test(String(text || "").trim());
+}
+
+function isAbortLikeErrorMessage(message) {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  return (
+    /^aborted$/i.test(text)
+    || /request was aborted/i.test(text)
+    || /aborterror/i.test(text)
+    || /fetchrequestcanceledexception/i.test(text)
+    || /query closed before response received/i.test(text)
+  );
+}
+
+function isSdkTelemetryExportNoise(message) {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  const hasExportFailure = /\bfailed\s+to\s+export\b/i.test(text) && /\bevents?\b/i.test(text);
+  if (!hasExportFailure) return false;
+  const hasSdkExportMarker = (
+    /@anthropic-ai\/claude-agent-sdk\/cli\.js/i.test(text)
+    || /\bqueueFailedEvents\b/i.test(text)
+    || /\bdoExport\b/i.test(text)
+    || /\b(?:1p|first-party)\s+event\s+logging\b/i.test(text)
+  );
+  if (!hasSdkExportMarker) return false;
+  return (
+    /\bstatus=\d{3}\b/i.test(text)
+    || /\bERR_[A-Z_]+\b/i.test(text)
+    || /request failed with status code \d{3}/i.test(text)
+    || /\b(?:1p|first-party)\s+event\s+logging\b/i.test(text)
+  );
+}
+
+function shouldSuppressUserFacingErrorMessage(message) {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  return (
+    EDE_DIAGNOSTIC_RE.test(text)
+    || isAbortLikeErrorMessage(text)
+    || isSdkTelemetryExportNoise(text)
+  );
 }
 
 /**
@@ -742,7 +793,10 @@ export default async function chatRoute(app, { engine, hub }) {
       }
     } else if (event.type === "error") {
       if (ss) ss.hadError = true;
-      if (isActive) broadcast({ type: "error", message: event.message || "Unknown error" });
+      const errorMessage = String(event.message || "Unknown error").trim();
+      if (isActive && !shouldSuppressUserFacingErrorMessage(errorMessage)) {
+        broadcast({ type: "error", message: errorMessage || "Unknown error" });
+      }
     } else if (event.type === "jian_update") {
       broadcast({ type: "jian_update", content: event.content });
     } else if (event.type === "desk_changed") {
@@ -894,8 +948,8 @@ export default async function chatRoute(app, { engine, hub }) {
       }
 
       // 空回复检测：本轮没有文本输出也没有工具调用，提示用户检查配置。
-      // 若是用户主动点击停止（abort），不应提示“模型未返回任何内容”。
-      if (!ss.hasOutput && isActive && !ss.userAborted && !ss.hadError) {
+      // 若是用户主动点击停止（abort）或插话（steer）导致当前轮提前结束，不应误报。
+      if (!ss.hasOutput && !ss.hasToolCall && isActive && !ss.userAborted && !ss.hadError) {
         broadcast({ type: "error", message: t("error.modelNoResponse") });
       }
 
@@ -965,6 +1019,9 @@ export default async function chatRoute(app, { engine, hub }) {
         debugLog()?.log("ws", `steer (${msg.text.length} chars)`);
         const steerPath = msg.sessionPath || engine.currentSessionPath;
         if (engine.steerSession(steerPath, msg.text)) {
+          // 插话本质上会中断当前生成轮，避免该轮 turn_end 被误判为“空回复”。
+          const ss = steerPath ? getState(steerPath) : null;
+          if (ss) ss.userAborted = true;
           wsSend(ws, { type: "steered" });
           return;
         }
@@ -1101,6 +1158,7 @@ export default async function chatRoute(app, { engine, hub }) {
           promptText = t("error.viewImage");
         }
         const promptSessionPath = msg.sessionPath || engine.currentSessionPath;
+        const requestedModelId = String(msg.modelId || "").trim();
         if (msg.images?.length) {
           engine.setSessionPendingImages(promptSessionPath, msg.images);
         } else {
@@ -1111,6 +1169,16 @@ export default async function chatRoute(app, { engine, hub }) {
         if (engine.isSessionStreaming(promptSessionPath)) {
           wsSend(ws, { type: "error", message: t("error.stillStreaming", { name: engine.agentName }) });
           return;
+        }
+        if (requestedModelId && promptSessionPath && promptSessionPath === engine.currentSessionPath) {
+          try {
+            await engine.setModel(requestedModelId);
+            const modelRef = toModelRef(engine.currentModel) || requestedModelId;
+            patchSessionMetadata(promptSessionPath, { model: modelRef });
+          } catch (err) {
+            wsSend(ws, { type: "error", message: err?.message || t("error.modelNotFound", { id: requestedModelId }) });
+            return;
+          }
         }
         const ss = getState(promptSessionPath);
         try {
@@ -1131,8 +1199,9 @@ export default async function chatRoute(app, { engine, hub }) {
           await hub.send(promptText, { sessionPath: promptSessionPath, images: msg.images });
           broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
         } catch (err) {
-          if (!err.message?.includes("aborted") && !ss.hadError) {
-            wsSend(ws, { type: "error", message: err.message });
+          const errorMessage = String(err?.message || "").trim();
+          if (!ss.hadError && !shouldSuppressUserFacingErrorMessage(errorMessage)) {
+            wsSend(ws, { type: "error", message: errorMessage || t("error.modelNoResponse") });
           }
           broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
         }

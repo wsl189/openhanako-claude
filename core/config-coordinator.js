@@ -246,6 +246,12 @@ export class ConfigCoordinator {
       if (session.isStreaming || session.isCompacting) {
         throw new Error(t("error.modelSwitchBusy"));
       }
+      const currentSessionModelId = String(
+        (typeof session.model === "string" ? session.model : session.model?.id) || "",
+      ).trim();
+      if (currentSessionModelId === String(model.id || "").trim()) {
+        return;
+      }
       await session.setModel(
         applyRuntimeModelOverrides(model, this._d.getAgent?.()?.config?.models?.overrides),
       );

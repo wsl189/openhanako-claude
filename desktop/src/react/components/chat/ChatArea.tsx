@@ -70,6 +70,10 @@ function isAssistantMessageItem(item: ChatListItem | undefined): item is Extract
   return !!item && item.type === 'message' && item.data.role === 'assistant';
 }
 
+function isUserMessageItem(item: ChatListItem | undefined): item is Extract<ChatListItem, { type: 'message' }> {
+  return !!item && item.type === 'message' && item.data.role === 'user';
+}
+
 function mergeAssistantMessages(prev: ChatMessage, next: ChatMessage): ChatMessage {
   const prevBlocks: ContentBlock[] = Array.isArray(prev.blocks) ? prev.blocks : [];
   const nextBlocks: ContentBlock[] = Array.isArray(next.blocks) ? next.blocks : [];
@@ -112,12 +116,20 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const contentRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
   const suppressAutoScrollUntil = useRef(0);
-  const lastAssistantIndex = useMemo(() => {
+  const lastUserIndex = useMemo(() => {
     for (let idx = items.length - 1; idx >= 0; idx--) {
-      if (isAssistantMessageItem(items[idx])) return idx;
+      if (isUserMessageItem(items[idx])) return idx;
     }
     return -1;
   }, [items]);
+  const streamingAssistantIndex = useMemo(() => {
+    if (!isPathStreaming) return -1;
+    // 仅把“最后一条用户消息之后”的 assistant 视作当前轮，避免 stop 时空占位被清理后错误回落到上一轮 assistant。
+    for (let idx = items.length - 1; idx > lastUserIndex; idx--) {
+      if (isAssistantMessageItem(items[idx])) return idx;
+    }
+    return -1;
+  }, [items, isPathStreaming, lastUserIndex]);
 
   // 判断是否在底部
   const checkAtBottom = () => {
@@ -239,8 +251,8 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             key={item.type === 'message' ? item.data.id : `c-${i}`}
             item={item}
             prevItem={i > 0 ? items[i - 1] : undefined}
-            isStreamingMessage={isPathStreaming && i === lastAssistantIndex}
-            runningMs={isPathStreaming && i === lastAssistantIndex ? runningMs : undefined}
+            isStreamingMessage={i === streamingAssistantIndex}
+            runningMs={i === streamingAssistantIndex ? runningMs : undefined}
           />
         ))}
         <div className="chat-session-footer" />

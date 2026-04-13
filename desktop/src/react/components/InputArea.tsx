@@ -16,6 +16,8 @@ import { getWebSocket } from '../services/websocket';
 import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { SVG_ICONS } from '../utils/icons';
 import type { ThinkingLevel } from '../stores/model-slice';
+import type { AttachedFile } from '../stores/input-slice';
+import { loadModels } from '../utils/ui-helpers';
 
 // ── Toast 通知 ──
 
@@ -98,6 +100,14 @@ interface SlashCommand {
   execute: () => Promise<void>;
 }
 
+const PENDING_INPUT_SESSION_KEY = '__pending_new_session__';
+
+function resolveInputSessionKey(sessionPath: string | null, pendingNewSession: boolean): string {
+  if (sessionPath) return sessionPath;
+  if (pendingNewSession) return PENDING_INPUT_SESSION_KEY;
+  return '__no_session__';
+}
+
 // ── 主组件 ──
 
 export function InputArea() {
@@ -111,6 +121,8 @@ function InputAreaInner() {
   const isStreaming = useStore(s => s.isStreaming);
   const connected = useStore(s => s.connected);
   const pendingNewSession = useStore(s => s.pendingNewSession);
+  const pendingSessionModel = useStore(s => s.pendingSessionModel);
+  const currentSessionPath = useStore(s => s.currentSessionPath);
   const sessionTodos = useStore(s => s.sessionTodos);
   const attachedFiles = useStore(s => s.attachedFiles);
   const docContextAttached = useStore(s => s.docContextAttached);
@@ -122,7 +134,31 @@ function InputAreaInner() {
   const thinkingLevel = useStore(s => s.thinkingLevel);
   const setThinkingLevel = useStore(s => s.setThinkingLevel);
 
-  const currentModelInfo = useMemo(() => models.find(m => m.isCurrent), [models]);
+  const isDraftSession = pendingNewSession && !currentSessionPath;
+  const currentModelInfo = useMemo(() => {
+    if (isDraftSession && pendingSessionModel) {
+      return models.find((m) => m.id === pendingSessionModel) || models.find((m) => m.isCurrent) || models[0];
+    }
+    return models.find((m) => m.isCurrent) || models[0];
+  }, [isDraftSession, pendingSessionModel, models]);
+
+  const resolveSelectedModelId = useCallback((): string => {
+    const state = useStore.getState();
+    const selected = state.pendingNewSession
+      ? (
+          state.pendingSessionModel
+          || state.models.find((m) => m.isCurrent)?.id
+          || state.currentModel
+          || ''
+        )
+      : (
+          state.models.find((m) => m.isCurrent)?.id
+          || state.currentModel
+          || state.pendingSessionModel
+          || ''
+        );
+    return String(selected || '').trim();
+  }, []);
 
   // Local state
   const [inputText, setInputText] = useState('');
@@ -134,6 +170,15 @@ function InputAreaInner() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isComposing = useRef(false);
+  const textDraftBySessionRef = useRef<Record<string, string>>({});
+  const attachmentDraftBySessionRef = useRef<Record<string, AttachedFile[]>>({});
+  const docContextDraftBySessionRef = useRef<Record<string, boolean>>({});
+
+  const inputSessionKey = useMemo(
+    () => resolveInputSessionKey(currentSessionPath, pendingNewSession),
+    [currentSessionPath, pendingNewSession],
+  );
+  const prevInputSessionKeyRef = useRef(inputSessionKey);
 
   // Focus trigger from store
   const inputFocusTrigger = useStore(s => s.inputFocusTrigger);
@@ -144,9 +189,39 @@ function InputAreaInner() {
   // Zustand actions
   const addAttachedFile = useStore(s => s.addAttachedFile);
   const removeAttachedFile = useStore(s => s.removeAttachedFile);
+  const setAttachedFiles = useStore(s => s.setAttachedFiles);
   const clearAttachedFiles = useStore(s => s.clearAttachedFiles);
   const toggleDocContext = useStore(s => s.toggleDocContext);
   const setDocContextAttached = useStore(s => s.setDocContextAttached);
+
+  // 按 session 保存输入草稿（文本 / 附件 / 文档上下文开关）
+  useEffect(() => {
+    textDraftBySessionRef.current[inputSessionKey] = inputText;
+  }, [inputText, inputSessionKey]);
+
+  useEffect(() => {
+    attachmentDraftBySessionRef.current[inputSessionKey] = attachedFiles.map((file) => ({ ...file }));
+    docContextDraftBySessionRef.current[inputSessionKey] = docContextAttached;
+  }, [attachedFiles, docContextAttached, inputSessionKey]);
+
+  useEffect(() => {
+    const prevKey = prevInputSessionKeyRef.current;
+    if (prevKey !== inputSessionKey) {
+      textDraftBySessionRef.current[prevKey] = inputText;
+      attachmentDraftBySessionRef.current[prevKey] = attachedFiles.map((file) => ({ ...file }));
+      docContextDraftBySessionRef.current[prevKey] = docContextAttached;
+    }
+    prevInputSessionKeyRef.current = inputSessionKey;
+
+    const nextText = textDraftBySessionRef.current[inputSessionKey] ?? '';
+    const nextFiles = (attachmentDraftBySessionRef.current[inputSessionKey] || []).map((file) => ({ ...file }));
+    const nextDocContextAttached = !!docContextDraftBySessionRef.current[inputSessionKey];
+
+    setInputText(nextText);
+    setAttachedFiles(nextFiles);
+    setDocContextAttached(nextDocContextAttached);
+    setSlashMenuOpen(false);
+  }, [inputSessionKey]);
 
   const beginOptimisticStreamingTurn = useCallback((sessionPath: string | null) => {
     if (!sessionPath) return;
@@ -182,6 +257,7 @@ function InputAreaInner() {
     const ws = getWebSocket();
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     if (useStore.getState().isStreaming) return false;
+    const draftModelIdBeforeEnsure = pendingNewSession ? resolveSelectedModelId() : '';
 
     if (pendingNewSession) {
       const ok = await ensureSession();
@@ -201,9 +277,12 @@ function InputAreaInner() {
       useStore.setState({ welcomeVisible: false });
       beginOptimisticStreamingTurn(sessionPath);
     }
-    ws.send(JSON.stringify({ type: 'prompt', text, sessionPath: useStore.getState().currentSessionPath }));
+    const wsMsg: any = { type: 'prompt', text, sessionPath: useStore.getState().currentSessionPath };
+    // 仅在草稿会话首轮发送时透传一次模型，避免每轮 prompt 意外覆盖 session 绑定模型。
+    if (draftModelIdBeforeEnsure) wsMsg.modelId = draftModelIdBeforeEnsure;
+    ws.send(JSON.stringify(wsMsg));
     return true;
-  }, [pendingNewSession, beginOptimisticStreamingTurn]);
+  }, [pendingNewSession, beginOptimisticStreamingTurn, resolveSelectedModelId]);
 
   // ── 斜杠命令 ──
 
@@ -367,6 +446,7 @@ function InputAreaInner() {
   // ── Send message ──
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
+    const draftModelIdBeforeEnsure = pendingNewSession ? resolveSelectedModelId() : '';
 
     // 斜杠命令拦截
     if (text.startsWith('/') && slashMenuOpen && filteredCommands.length > 0) {
@@ -482,12 +562,14 @@ function InputAreaInner() {
 
       const ws = getWebSocket();
       const wsMsg: any = { type: 'prompt', text: finalText, sessionPath: useStore.getState().currentSessionPath };
+      // 仅草稿首轮携带 modelId，避免把其它 session 的当前模型覆盖成全局/错误值。
+      if (draftModelIdBeforeEnsure) wsMsg.modelId = draftModelIdBeforeEnsure;
       if (images.length > 0) wsMsg.images = images;
       ws?.send(JSON.stringify(wsMsg));
     } finally {
       setSending(false);
     }
-  }, [inputText, attachedFiles, docContextAttached, connected, isStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, setDocContextAttached, slashMenuOpen, filteredCommands, slashSelected, beginOptimisticStreamingTurn]);
+  }, [inputText, attachedFiles, docContextAttached, connected, isStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, setDocContextAttached, slashMenuOpen, filteredCommands, slashSelected, beginOptimisticStreamingTurn, resolveSelectedModelId]);
 
   // ── Steer (插话) ──
   const handleSteer = useCallback(async () => {
@@ -621,7 +703,7 @@ function InputAreaInner() {
             <ContextRing />
             <ModelSelector
               models={models}
-              disabled={!connected || sending || isStreaming}
+              disabled={sending}
             />
             <SendButton
               isStreaming={isStreaming}
@@ -726,12 +808,19 @@ function DocContextButton({ active, disabled, onToggle }: {
 function ContextRing() {
   const { t } = useI18n();
   const agentYuan = useStore(s => s.agentYuan);
+  const pendingNewSession = useStore(s => s.pendingNewSession);
+  const currentSessionPath = useStore(s => s.currentSessionPath);
   const isStreaming = useStore(s => s.isStreaming);
+  const models = useStore(s => s.models);
   const [tokens, setTokens] = useState<number | null>(null);
   const [contextWindow, setContextWindow] = useState<number | null>(null);
   const [percent, setPercent] = useState<number | null>(null);
   const [compacting, setCompacting] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const currentModelName = useMemo(
+    () => models.find((m) => m.isCurrent)?.name || '',
+    [models],
+  );
 
   // 从 Zustand store 同步 context 数据
   const storeContextTokens = useStore(s => s.contextTokens);
@@ -746,16 +835,22 @@ function ContextRing() {
     setCompacting(storeCompacting);
   }, [storeContextTokens, storeContextWindow, storeContextPercent, storeCompacting]);
 
+  const isDraftSession = pendingNewSession && !currentSessionPath;
+  const safeTokens = isDraftSession ? null : tokens;
+  const safeContextWindow = isDraftSession ? null : contextWindow;
+  const safePercent = isDraftSession ? null : percent;
+  const safeCompacting = isDraftSession ? false : compacting;
+
   const handleCompact = useCallback(() => {
-    if (compacting) return;
+    if (safeCompacting) return;
     const ws = getWebSocket();
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'compact', sessionPath: useStore.getState().currentSessionPath }));
     }
-  }, [compacting]);
+  }, [safeCompacting]);
 
-  const hasContextData = contextWindow != null;
-  const pct = percent ?? 0;
+  const hasContextData = safeContextWindow != null;
+  const pct = safePercent ?? 0;
 
   // SVG 圆环参数（更小更粗）
   const r = 6;
@@ -767,8 +862,8 @@ function ContextRing() {
   const yuan = agentYuan || 'hanako';
 
   // token 数量格式化
-  const tokensK = tokens != null ? Math.round(tokens / 1000) : 0;
-  const windowK = contextWindow != null ? Math.round(contextWindow / 1000) : 0;
+  const tokensK = safeTokens != null ? Math.round(safeTokens / 1000) : 0;
+  const windowK = safeContextWindow != null ? Math.round(safeContextWindow / 1000) : 0;
   const pctText = Math.round(pct);
 
   return (
@@ -777,10 +872,10 @@ function ContextRing() {
       onMouseLeave={() => setHovered(false)}
     >
       <button
-        className={`context-ring${compacting ? ' compacting' : ''}`}
+        className={`context-ring${safeCompacting ? ' compacting' : ''}`}
         data-yuan={yuan}
         onDoubleClick={handleCompact}
-        disabled={compacting || !hasContextData}
+        disabled={safeCompacting || !hasContextData}
       >
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
           <circle cx={center} cy={center} r={r} fill="none" stroke="var(--ring-bg)" strokeWidth={sw} />
@@ -799,6 +894,9 @@ function ContextRing() {
       </button>
       {hovered && hasContextData && (
         <div className="context-ring-tooltip">
+          {currentModelName && (
+            <div className="context-ring-tooltip-row">{t('input.currentModel', { name: currentModelName })}</div>
+          )}
           <div className="context-ring-tooltip-row">{t('input.contextWindow', { windowK })}</div>
           <div className="context-ring-tooltip-row">{t('input.tokensUsed', { tokensK, pct: pctText })}</div>
         </div>
@@ -896,8 +994,29 @@ function ModelSelector({
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const pendingNewSession = useStore(s => s.pendingNewSession);
+  const currentSessionPath = useStore(s => s.currentSessionPath);
+  const pendingSessionModel = useStore(s => s.pendingSessionModel);
+  const setPendingSessionModel = useStore(s => s.setPendingSessionModel);
+  const setModels = useStore(s => s.setModels);
+  const setCurrentModel = useStore(s => s.setCurrentModel);
+  const isDraftSession = pendingNewSession && !currentSessionPath;
+  const currentModel = useStore(s => s.currentModel);
+  const selectedModelId = useMemo(
+    () => String(
+      (isDraftSession
+        ? (pendingSessionModel || currentModel)
+        : currentModel)
+      || models.find((m) => m.isCurrent)?.id
+      || models[0]?.id
+      || '',
+    ).trim(),
+    [isDraftSession, pendingSessionModel, currentModel, models],
+  );
 
-  const current = models.find(m => m.isCurrent);
+  const current = useMemo(() => {
+    return models.find((m) => m.id === selectedModelId) || models[0];
+  }, [models, selectedModelId]);
 
   useEffect(() => {
     if (disabled && open) setOpen(false);
@@ -915,25 +1034,32 @@ function ModelSelector({
 
   const switchModel = useCallback(async (modelId: string) => {
     if (disabled) return;
+    if (isDraftSession) {
+      setPendingSessionModel(modelId);
+      // 新建会话草稿阶段本地高亮选择；真正会话创建后由 ensureSession 落盘到该 session。
+      setModels(models.map((m) => ({ ...m, isCurrent: m.id === modelId })));
+      setCurrentModel(modelId);
+      setOpen(false);
+      return;
+    }
+    const previousModels = models.map((m) => ({ ...m }));
+    // 先做本地乐观更新，避免 UI 卡在 unknown/旧模型。
+    setModels(models.map((m) => ({ ...m, isCurrent: m.id === modelId })));
+    setCurrentModel(modelId);
     try {
       await hanaFetch('/api/models/set', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ modelId }),
       });
-
-      const favRes = await hanaFetch('/api/models/favorites');
-      const favData = await favRes.json();
-      useStore.setState({
-        models: favData.models || [],
-        currentModel: favData.current || null,
-      });
+      await loadModels(null);
     } catch (err: any) {
+      setModels(previousModels);
       console.error('[model] switch failed:', err);
       showToast(extractFetchErrorMessage(err, t('model.switchFailed')), 'error');
     }
     setOpen(false);
-  }, [disabled, t]);
+  }, [disabled, isDraftSession, setPendingSessionModel, setModels, setCurrentModel, models, t]);
 
   // 按 provider 分组
   const grouped = useMemo(() => {
@@ -981,7 +1107,7 @@ function ModelSelector({
                 {items.map(m => (
                   <button
                     key={m.id}
-                    className={'model-option' + (m.isCurrent ? ' active' : '')}
+                    className={'model-option' + (m.id === selectedModelId ? ' active' : '')}
                     onClick={() => switchModel(m.id)}
                   >
                     {m.name}

@@ -12,6 +12,7 @@ import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { buildItemsFromHistory } from '../utils/history-builder';
 import { loadAvatars as loadAvatarsAction, clearChat as clearChatAction } from './agent-actions';
 import { loadDeskFiles } from './desk-actions';
+import { loadModels } from '../utils/ui-helpers';
 
 // ── 防竞争计数器 ──
 
@@ -123,6 +124,7 @@ export async function switchSession(path: string): Promise<void> {
     useStore.setState({
       currentSessionPath: path,
       pendingNewSession: false,
+      pendingSessionModel: null,
       welcomeVisible: false,
       selectedFolder: null,
       selectedAgentId: null,
@@ -141,6 +143,9 @@ export async function switchSession(path: string): Promise<void> {
       browserThumbnail: data.browserRunning ? state.browserThumbnail : null,
     });
 
+    // 同步该 session 的模型状态（isCurrent / reasoning / xhigh）
+    await loadModels(path);
+
     // renderBrowserCard — no-op (browser card rendering handled by React)
 
     // updateFolderButton — no-op (React-driven)
@@ -158,11 +163,11 @@ export async function switchSession(path: string): Promise<void> {
     if (myVersion !== _switchVersion) return;
 
     // 切换会话后刷新 context ring
-    useStore.setState({ contextTokens: null, contextWindow: null, contextPercent: null });
+    useStore.setState({ contextTokens: null, contextWindow: null, contextPercent: null, compacting: false });
     const { getWebSocket } = await import('../services/websocket');
     const wsConn = getWebSocket();
     if (wsConn?.readyState === WebSocket.OPEN) {
-      wsConn.send(JSON.stringify({ type: 'context_usage' }));
+      wsConn.send(JSON.stringify({ type: 'context_usage', sessionPath: path }));
     }
   } catch (err) {
     console.error('[session] switch failed:', err);
@@ -180,6 +185,7 @@ export async function createNewSession(): Promise<void> {
   }
 
   const s = useStore.getState();
+  const currentModelId = s.models.find((m) => m.isCurrent)?.id || s.currentModel || s.models[0]?.id || null;
 
   useStore.setState({
     isStreaming: false,
@@ -189,6 +195,7 @@ export async function createNewSession(): Promise<void> {
     selectedAgentId: null,
     sessionAgent: null,
     pendingNewSession: true,
+    pendingSessionModel: currentModelId,
     browserRunning: false,
     browserSessionPath: null,
     browserToolActive: false,
@@ -198,7 +205,7 @@ export async function createNewSession(): Promise<void> {
   });
 
   // 重置 context ring
-  useStore.setState({ contextTokens: null, contextWindow: null, contextPercent: null });
+  useStore.setState({ contextTokens: null, contextWindow: null, contextPercent: null, compacting: false });
 
   // renderBrowserCard — no-op (browser card rendering handled by React)
 
@@ -217,6 +224,7 @@ export async function createNewSession(): Promise<void> {
 export async function ensureSession(): Promise<boolean> {
   const s = useStore.getState();
   if (!s.pendingNewSession) return true;
+  const pendingModelId = String(s.pendingSessionModel || '').trim();
 
   try {
     const body: Record<string, any> = { memoryEnabled: s.memoryEnabled };
@@ -225,6 +233,9 @@ export async function ensureSession(): Promise<boolean> {
     }
     if (s.selectedAgentId && s.selectedAgentId !== s.currentAgentId) {
       body.agentId = s.selectedAgentId;
+    }
+    if (pendingModelId) {
+      body.modelId = pendingModelId;
     }
 
     const res = await hanaFetch('/api/sessions/new', {
@@ -243,6 +254,7 @@ export async function ensureSession(): Promise<boolean> {
     // 基础状态更新
     const patch: Record<string, any> = {
       pendingNewSession: false,
+      pendingSessionModel: null,
       selectedFolder: null,
       selectedAgentId: null,
       browserToolActive: false,
@@ -286,6 +298,26 @@ export async function ensureSession(): Promise<boolean> {
     useStore.setState(patch);
 
     await loadSessions();
+    await loadModels(data.path || null);
+
+    // 兜底：确保新会话最终模型与草稿选择一致，不一致则再补一次并阻止本轮发送。
+    if (data.path && pendingModelId) {
+      const modelState = useStore.getState();
+      const currentModelId = modelState.models.find((m) => m.isCurrent)?.id || modelState.currentModel || '';
+      if (String(currentModelId || '').trim() !== pendingModelId) {
+        try {
+          await hanaFetch('/api/models/set', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ modelId: pendingModelId, sessionPath: data.path }),
+          });
+          await loadModels(data.path);
+        } catch (err) {
+          console.error('[session] model mismatch fallback failed:', err);
+          return false;
+        }
+      }
+    }
 
     // updateFolderButton — no-op (React-driven)
 

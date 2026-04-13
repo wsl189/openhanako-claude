@@ -127,6 +127,7 @@ export class HanaEngine {
       agentsDir: this.agentsDir,
       getAgent: () => this.agent,
       getActiveAgentId: () => this.currentAgentId,
+      getAgentPermissionConfig: (agentId) => this.getAgentPermissionConfig(agentId),
       getModels: () => this._models,
       getResourceLoader: () => this._resourceLoader,
       getSkills: () => this._skills,
@@ -605,8 +606,13 @@ export class HanaEngine {
 
     const hasCustomConfig = Array.isArray(ag?.config?.tools?.custom_enabled);
     const configuredCustom = uniqStrings(ag?.config?.tools?.custom_enabled || []);
-    const custom_enabled = hasCustomConfig
-      ? configuredCustom.filter(n => catalog.custom.includes(n))
+    const filteredCustom = configuredCustom.filter(n => catalog.custom.includes(n));
+    // 约定：custom_enabled 留空（[]）表示放行该 agent 的全部 custom tools；
+    // 非空数组才视为显式白名单。
+    // 兼容兜底：若白名单全是历史/失效名称导致完全失配，则回退为全部放行，
+    // 避免旧配置把所有 custom tools 意外锁死。
+    const custom_enabled = hasCustomConfig && configuredCustom.length > 0
+      ? (filteredCustom.length > 0 ? filteredCustom : [...catalog.custom])
       : [...catalog.custom];
 
     return {

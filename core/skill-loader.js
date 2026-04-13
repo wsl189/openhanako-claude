@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { parseSkillMetadata } from "../lib/skills/skill-metadata.js";
 
 function stripMarkdown(line = "") {
   return String(line || "")
@@ -11,11 +12,18 @@ function stripMarkdown(line = "") {
 function readSkillDescription(filePath) {
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
-    const lines = raw.split(/\r?\n/).map((line) => line.trim());
+    const fallbackName = path.basename(path.dirname(filePath));
+    const meta = parseSkillMetadata(raw, fallbackName);
+    if (meta.description) return meta.description;
+
+    // Fallback for skills without frontmatter description: parse human-readable body lines.
+    const body = raw.replace(/^---\s*\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
+    const lines = body.split(/\r?\n/).map((line) => line.trim());
     for (const line of lines) {
       if (!line) continue;
+      if (line === "---") continue;
       const text = stripMarkdown(line);
-      if (!text || /^skill$/i.test(text)) continue;
+      if (!text || text === "---" || /^skill$/i.test(text)) continue;
       return text;
     }
   } catch {}
@@ -59,22 +67,6 @@ export function scanSkillsInPaths(skillPaths = []) {
     }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-export function formatSkillsForPrompt(skills = []) {
-  const blocks = [];
-  for (const skill of skills || []) {
-    if (!skill?.filePath) continue;
-    try {
-      const body = fs.readFileSync(skill.filePath, "utf-8").trim();
-      if (!body) continue;
-      blocks.push(`<skill name="${skill.name}">\n${body}\n</skill>`);
-    } catch {
-      // ignore unreadable skill
-    }
-  }
-  if (!blocks.length) return "";
-  return `\n## Skills\n\n${blocks.join("\n\n")}`;
 }
 
 export class SimpleResourceLoader {

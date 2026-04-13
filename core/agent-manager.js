@@ -461,7 +461,7 @@ export class AgentManager {
     ag._onInstallCallback = async (skillName) => {
       const skills = this._d.getSkills();
       // install_skill 工具会写入 learned-skills，这里同步复制到当前 agent 的 skills 目录，
-      // 让提示词注入与 /skill 读取都走 agent 私有 skills。
+      // 让 SDK Skill discovery 与 /skill 读取都走 agent 私有 skills。
       const learnedDir = path.join(this.agent.agentDir, "learned-skills", skillName);
       const agentSkillsDir = path.join(this.agent.agentDir, "skills", skillName);
       if (fs.existsSync(learnedDir) && !fs.existsSync(path.join(agentSkillsDir, "SKILL.md"))) {

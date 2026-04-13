@@ -243,6 +243,18 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     expect(translated).toEqual([{ type: "turn_end" }]);
   });
 
+  it("does not surface query-closed runtime errors", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "runtime_error",
+      error: {
+        message: "Error: Query closed before response received",
+      },
+    }, "/tmp/session-query-closed-runtime");
+
+    expect(translated).toEqual([{ type: "turn_end" }]);
+  });
+
   it("does not surface abort-like result errors", () => {
     const coordinator = new SessionCoordinator({});
     const translated = coordinator._translateClaudeEvent({
@@ -250,6 +262,56 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
       is_error: true,
       errors: ["Error: Request was aborted."],
     }, "/tmp/session-abort-result");
+
+    expect(translated).toEqual([{ type: "turn_end" }]);
+  });
+
+  it("does not surface SDK telemetry export runtime errors", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "runtime_error",
+      error: {
+        message: "Error: 1P event logging: 19 events failed to export (status=403, code=ERR_BAD_REQUEST, Request failed with status code 403) at bL1.queueFailedEvents (file:///tmp/node_modules/@anthropic-ai/claude-agent-sdk/cli.js:1:1)",
+      },
+    }, "/tmp/session-sdk-telemetry-runtime");
+
+    expect(translated).toEqual([{ type: "turn_end" }]);
+  });
+
+  it("does not surface SDK telemetry export runtime errors in new format", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "runtime_error",
+      error: {
+        message: "Error: Failed to export 17 events (status=403, code=ERR_BAD_REQUEST, Request failed with status code 403)\n at bL1.doExport (file:///tmp/node_modules/@anthropic-ai/claude-agent-sdk/cli.js:1:1)",
+      },
+    }, "/tmp/session-sdk-telemetry-runtime-new");
+
+    expect(translated).toEqual([{ type: "turn_end" }]);
+  });
+
+  it("does not surface SDK telemetry export result errors", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: true,
+      errors: [
+        "Error: 1P event logging: 3 events failed to export (status=403, code=ERR_BAD_REQUEST, Request failed with status code 403) at bL1.doExport (file:///tmp/node_modules/@anthropic-ai/claude-agent-sdk/cli.js:1:1)",
+      ],
+    }, "/tmp/session-sdk-telemetry-result");
+
+    expect(translated).toEqual([{ type: "turn_end" }]);
+  });
+
+  it("does not surface SDK telemetry export result errors in new format", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: true,
+      errors: [
+        "Error: Failed to export 17 events (status=403, code=ERR_BAD_REQUEST, Request failed with status code 403)\n at bL1.doExport (file:///tmp/node_modules/@anthropic-ai/claude-agent-sdk/cli.js:1:1)",
+      ],
+    }, "/tmp/session-sdk-telemetry-result-new");
 
     expect(translated).toEqual([{ type: "turn_end" }]);
   });

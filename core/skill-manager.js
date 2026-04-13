@@ -1,8 +1,8 @@
 /**
- * SkillManager — Skill 加载与 per-agent 注入
+ * SkillManager — Skill 加载与 per-agent 索引
  *
  * - 全局技能仓库：.hanako/skills（用于“可添加技能”列表）
- * - Agent 私有技能：agents/<id>/skills（用于 system prompt 注入）
+ * - Agent 私有技能：agents/<id>/skills（用于 SDK Skill discovery）
  */
 import fs from "fs";
 import path from "path";
@@ -40,7 +40,7 @@ export class SkillManager {
     this._rebuildIndexes(resourceLoader, agents);
   }
 
-  /** 将 agent 私有 skills 同步到 agent 的 system prompt */
+  /** 将 agent 私有 skills 同步到 agent 运行态 */
   syncAgentSkills(agent) {
     const skills = this._getAgentSkills(agent);
     agent.setEnabledSkills(skills);

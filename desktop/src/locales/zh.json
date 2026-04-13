@@ -150,6 +150,7 @@
       "auto": "模型决定深度",
       "xhigh": "最强推理"
     },
+    "currentModel": "模型 {name}",
     "contextWindow": "上下文 {windowK}k",
     "tokensUsed": "已用 {tokensK}k ({pct}%)"
   },
@@ -1577,7 +1578,7 @@
       "promptDesc": "生图提示词",
       "modeDesc": "生图模式：auto（自动）、text2image（文生图）、image2image（图生图）",
       "imageIdsDesc": "图生图参考图片编号（从 1 开始）。不传则使用当前会话可用图片",
-      "providerDesc": "供应商选择（可选）：minimax 或 modelscope；默认 minimax",
+      "providerDesc": "供应商选择（可选）：minimax 或 modelscope；默认自动选择可用 provider",
       "referenceTypeDesc": "图生图参考类型（MiniMax subject_reference.type），默认 character",
       "countDesc": "生成张数，默认 1，最多 4",
       "widthDesc": "输出宽度，默认 1024",

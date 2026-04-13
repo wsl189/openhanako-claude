@@ -53,6 +53,14 @@ const TRACK_STATE_ARCHIVED = "archived";
 const BASELINE_NONE = "none";
 const BASELINE_READ_ONLY = "read_only";
 
+function toModelRef(model) {
+  if (!model || typeof model !== "object") return "";
+  const id = String(model.id || "").trim();
+  if (!id) return "";
+  const provider = String(model.provider || "").trim();
+  return provider ? `${provider}/${id}` : id;
+}
+
 /** 从文本中提取并剥离 <think>...</think> 标签 */
 function stripThinkTags(raw) {
   const thinkParts = [];
@@ -905,10 +913,11 @@ export default async function sessionsRoute(app, { engine }) {
   // 新建 session（可选指定工作目录和 agentId）
   app.post("/api/sessions/new", async (req, reply) => {
     try {
-      const { cwd, memoryEnabled, agentId } = req.body || {};
+      const { cwd, memoryEnabled, agentId, modelId } = req.body || {};
       const memFlag = memoryEnabled !== false; // 默认 true
       const requestedCwd = normalizeAbsolutePath(cwd);
       const targetAgentId = String(agentId || engine.currentAgentId || "").trim();
+      const desiredModelId = String(modelId || "").trim();
       const defaultWorkspace = normalizeAbsolutePath(engine.getHomeFolder(targetAgentId) || "");
       const shouldTrackWorkspace = !!requestedCwd && requestedCwd !== defaultWorkspace;
       let workspaceTracker = null;
@@ -947,6 +956,19 @@ export default async function sessionsRoute(app, { engine }) {
         await engine.createSession(null, cwd || undefined, memFlag);
       }
       engine.persistMemoryEnabled();
+
+      // 新建会话时允许直接指定模型，确保首轮消息就使用该 session 的目标模型。
+      if (desiredModelId) {
+        await engine.setModel(desiredModelId);
+        if (engine.currentSessionPath) {
+          try {
+            const modelRef = toModelRef(engine.currentModel) || desiredModelId;
+            patchSessionMetadata(engine.currentSessionPath, { model: modelRef });
+          } catch {
+            // ignore metadata patch failures
+          }
+        }
+      }
 
       // 记住工作目录 + 更新历史
       if (cwd) {

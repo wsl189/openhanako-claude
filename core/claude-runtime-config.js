@@ -111,34 +111,42 @@ function buildAdditionalDirectories(cwd, workspace, pathRules) {
   ]).filter(Boolean);
 }
 
-function parseSettingSources(raw = "") {
-  if (typeof raw !== "string") return null;
-  const normalized = raw.trim();
-  if (!normalized) return null;
-  if (/^(none|off|disabled)$/i.test(normalized)) return [];
-  return uniq(
-    normalized
-      .split(/[,\s]+/)
-      .map((item) => item.trim().toLowerCase())
-      .filter((item) => item === "user" || item === "project"),
-  );
+function toMcpAllowedPrefix(name) {
+  const raw = String(name || "").trim();
+  if (!raw) return "";
+  // Keep tool permission prefixes deterministic and ASCII-safe.
+  const normalized = raw.replace(/[^A-Za-z0-9_-]/g, "_");
+  return normalized ? `mcp__${normalized}__*` : "";
 }
 
-function resolveSettingSources(agent) {
-  const fromAgent = Array.isArray(agent?.config?.claude?.setting_sources)
-    ? uniq(
-      agent.config.claude.setting_sources
-        .map((item) => String(item || "").trim().toLowerCase())
-        .filter((item) => item === "user" || item === "project"),
-    )
-    : null;
-  if (fromAgent && fromAgent.length > 0) return fromAgent;
+const VALID_SETTING_SOURCES = new Set(["user", "project", "local"]);
 
-  const fromEnv = parseSettingSources(process.env.HANAKO_CLAUDE_SETTING_SOURCES);
-  if (Array.isArray(fromEnv)) return fromEnv;
+function normalizeSettingSources(rawSources) {
+  const list = Array.isArray(rawSources)
+    ? rawSources
+    : String(rawSources || "").split(",");
+  const out = [];
+  const seen = new Set();
+  for (const source of list) {
+    const normalized = String(source || "").trim().toLowerCase();
+    if (!VALID_SETTING_SOURCES.has(normalized)) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
 
-  // Proma 同款默认来源：加载 user + project 配置，避免 SDK 处于“无设置来源”异常状态。
-  return ["user", "project"];
+function resolveSettingSources(agent, runtimeEnv = {}) {
+  const fromAgent = normalizeSettingSources(agent?.config?.claude?.setting_sources);
+  if (fromAgent.length > 0) return fromAgent;
+
+  const fromEnv = normalizeSettingSources(runtimeEnv?.HANAKO_CLAUDE_SETTING_SOURCES);
+  if (fromEnv.length > 0) return fromEnv;
+
+  // SDK isolation mode would disable all filesystem settings.
+  // Default to "user" so each agent can discover its own skills via CLAUDE_CONFIG_DIR.
+  return ["user"];
 }
 
 function shouldForceToolsOption() {
@@ -245,10 +253,17 @@ export function buildClaudeRuntimeConfig({
   model,
   env = {},
 } = {}) {
+  const explicitClaudeConfigDir = String(env?.CLAUDE_CONFIG_DIR || "").trim();
   const runtimeEnv = {
     ...process.env,
     ...(env || {}),
   };
+  const agentConfigDir = normalizeAbsolutePath(agent?.agentDir);
+  if (!explicitClaudeConfigDir && agentConfigDir) {
+    // Route Claude's user-level customizations (including Skill tool discovery)
+    // to the current agent directory, where Hanako stores per-agent skills.
+    runtimeEnv.CLAUDE_CONFIG_DIR = agentConfigDir;
+  }
   const sandboxMode = toolProfile?.sandbox?.mode || "standard";
   const pathRules = normalizePathRules(toolProfile?.sandbox?.path_rules);
   const permissionStrategy = resolvePermissionStrategy(agent);
@@ -258,7 +273,7 @@ export function buildClaudeRuntimeConfig({
     pathRules,
     cwd,
   });
-  const settingSources = resolveSettingSources(agent);
+  const settingSources = resolveSettingSources(agent, runtimeEnv);
   const builtinEnabled = noTools
     ? []
     : resolveClaudeBuiltinTools(builtinEnabledOverride || toolProfile?.tools?.builtin_enabled || []);
@@ -266,10 +281,22 @@ export function buildClaudeRuntimeConfig({
     ? []
     : uniq(customEnabledOverride || toolProfile?.tools?.custom_enabled || []);
   const filteredCustomTools = (customTools || []).filter((toolDef) => customEnabled.includes(toolDef?.name));
+  const mcpServerKey = "hanako";
+  const mcpServerName = "hanako";
+  // Claude Agent SDK MCP docs recommend allowing MCP tools via server-level
+  // wildcard (mcp__<server>__*). Keep both key/name prefixes for compatibility
+  // across SDK variants that may resolve server names differently.
+  const customAllowedTools = filteredCustomTools.length > 0
+    ? uniq([
+      toMcpAllowedPrefix(mcpServerKey),
+      toMcpAllowedPrefix(mcpServerName),
+    ].filter(Boolean))
+    : [];
+  const allowedTools = uniq([...builtinEnabled, ...customAllowedTools]);
   const mcpServers = {};
   if (filteredCustomTools.length > 0) {
-    mcpServers.hanako = createCustomToolsMcpServer(
-      `hanako-${path.basename(agent?.agentDir || "agent")}-tools`,
+    mcpServers[mcpServerKey] = createCustomToolsMcpServer(
+      mcpServerName,
       filteredCustomTools,
       {
         createContext: createToolContext,
@@ -290,7 +317,7 @@ export function buildClaudeRuntimeConfig({
     env: runtimeEnv,
     mcpServers,
     additionalDirectories,
-    ...(builtinEnabled.length > 0 || noTools ? { allowedTools: builtinEnabled } : {}),
+    ...(allowedTools.length > 0 || noTools ? { allowedTools } : {}),
     ...(shouldForceTools || noTools ? { tools: builtinEnabled } : {}),
     systemPrompt: {
       type: "preset",
@@ -298,7 +325,7 @@ export function buildClaudeRuntimeConfig({
       append,
     },
     sandbox: buildSandboxConfig(sandboxMode, workspace, pathRules),
-    permissionMode: "acceptEdits",
+    permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: !strictSandbox,
     ...(canUseTool ? { canUseTool } : {}),
     settingSources,
@@ -314,10 +341,14 @@ export function buildClaudeRuntimeConfig({
       settingSources,
       builtinEnabled,
       customEnabled,
+      allowedTools,
       forcedToolsOption: shouldForceTools || noTools,
       permissionStrategy,
       hasCanUseTool: typeof canUseTool === "function",
       customToolsLoaded: filteredCustomTools.map((toolDef) => toolDef?.name).filter(Boolean),
+      mcpServerKey,
+      mcpServerName,
+      customAllowedTools,
     },
   };
 }

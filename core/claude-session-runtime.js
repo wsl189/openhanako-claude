@@ -108,6 +108,7 @@ function isAbortError(error) {
     || /^aborted$/i.test(message)
     || /request was aborted/i.test(message)
     || /fetchrequestcanceledexception/i.test(message)
+    || /query closed before response received/i.test(message)
   );
 }
 
@@ -159,6 +160,7 @@ export class ClaudeSessionRuntime {
       includePartialMessages: false,
       persistSession: true,
     };
+    this.model = null;
     this.sessionManager = {
       getSessionId: () => this.sessionId,
       getSessionFile: () => this.sessionPath,
@@ -232,6 +234,16 @@ export class ClaudeSessionRuntime {
         ...(this.resumeSessionId ? { resume: this.resumeSessionId } : {}),
       },
     });
+    // Some SDK/CLI combinations can miss in-process MCP registration from the
+    // initial query() options path. Re-apply explicitly to guarantee custom
+    // tool servers are attached before turns start.
+    if (
+      this.options?.mcpServers
+      && Object.keys(this.options.mcpServers).length > 0
+      && typeof this._query?.setMcpServers === "function"
+    ) {
+      await this._query.setMcpServers(this.options.mcpServers);
+    }
     this._pumpActive = true;
     this._pumpPromise = this._pump();
     this.refreshContextUsage().catch(() => {});
@@ -294,6 +306,13 @@ export class ClaudeSessionRuntime {
             this._emit({ type: "compaction_start", trigger: this._activeCompactionTrigger });
           }
           this.isCompacting = nextCompacting;
+        }
+        if (message?.type === "system" && message?.subtype === "init") {
+          this._emit({
+            type: "sdk_init",
+            tools: Array.isArray(message.tools) ? message.tools : [],
+            mcpServers: Array.isArray(message.mcp_servers) ? message.mcp_servers : [],
+          });
         }
         if (message?.type === "system" && message?.subtype === "compact_boundary") {
           if (this._activeCompactionTrigger) {
@@ -481,6 +500,15 @@ export class ClaudeSessionRuntime {
     if (!nextModel) {
       throw new Error("model id is required");
     }
+    if (String(this.options?.model || "").trim() === nextModel) {
+      this.model = typeof model === "string"
+        ? { id: nextModel, name: nextModel }
+        : model;
+      return;
+    }
+    this.model = typeof model === "string"
+      ? { id: nextModel, name: nextModel }
+      : model;
     this.options = {
       ...this.options,
       model: nextModel,

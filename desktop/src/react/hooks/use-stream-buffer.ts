@@ -124,17 +124,17 @@ function extractSnapshotTextContent(content: any[]): string {
   return text;
 }
 
-function extractSnapshotThinkingContent(content: any[]): string {
-  let thinking = '';
+function extractSnapshotThinkingSegments(content: any[]): string[] {
+  const thinkingSegments: string[] = [];
   for (const block of content) {
     if (!block || typeof block !== 'object') continue;
     const part = pickSnapshotText(block);
     if (!part) continue;
     if (block.type === 'thinking' || isReasoningLikeType(block.type)) {
-      thinking += part;
+      thinkingSegments.push(part);
     }
   }
-  return thinking;
+  return thinkingSegments;
 }
 
 function extractSnapshotToolUses(content: any[]): Array<{ id: string; name: string; args?: Record<string, unknown> }> {
@@ -155,7 +155,8 @@ function hasRenderableAssistantSnapshot(content: any[]): boolean {
   if (!Array.isArray(content) || content.length === 0) return false;
   if (extractSnapshotToolUses(content).length > 0) return true;
   if (stripStreamToolMarkup(stripSdkDiagnosticLines(extractSnapshotTextContent(content))).trim()) return true;
-  if (stripSdkDiagnosticLines(extractSnapshotThinkingContent(content)).trim()) return true;
+  const snapshotThinking = extractSnapshotThinkingSegments(content).join('');
+  if (stripSdkDiagnosticLines(snapshotThinking).trim()) return true;
   return false;
 }
 
@@ -279,13 +280,6 @@ function appendSealedThinkingBlock(buf: Buffer, rawThinking: string): void {
   const thinking = sanitizeBufferedThinkingText(String(rawThinking || ''));
   if (!thinking.trim()) return;
 
-  const last = buf.liveBlocks[buf.liveBlocks.length - 1];
-  if (last?.type === 'thinking' && last.sealed) {
-    const glue = last.content && !last.content.endsWith('\n') ? '\n' : '';
-    last.content = `${last.content}${glue}${thinking}`;
-    return;
-  }
-
   buf.liveBlocks.push({
     type: 'thinking',
     content: thinking,
@@ -293,10 +287,7 @@ function appendSealedThinkingBlock(buf: Buffer, rawThinking: string): void {
   });
 }
 
-function finalizeBufferedTextSegment(
-  buf: Buffer,
-  opts: { asThinking?: boolean } = {},
-): void {
+function finalizeBufferedTextSegment(buf: Buffer): void {
   if (!buf.textAcc) {
     buf.textAnchorIndex = null;
     return;
@@ -305,10 +296,6 @@ function finalizeBufferedTextSegment(
   const anchor = buf.textAnchorIndex;
   buf.textAcc = '';
   buf.textAnchorIndex = null;
-  if (opts.asThinking) {
-    appendSealedThinkingBlock(buf, rawText);
-    return;
-  }
 
   const block = buildTextBlockFromBufferedText(rawText);
   if (!block) return;
@@ -329,17 +316,14 @@ function finalizeBufferedThinkingSegment(buf: Buffer): void {
   appendSealedThinkingBlock(buf, thinking);
 }
 
-function upsertSealedThinkingFromSnapshot(buf: Buffer, snapshotThinking: string): void {
-  const thinking = sanitizeBufferedThinkingText(String(snapshotThinking || ''));
+function closeOpenThinkingIfNeeded(buf: Buffer): void {
+  if (!buf.inThinking) return;
+  buf.inThinking = false;
+  finalizeBufferedThinkingSegment(buf);
+}
+
+function insertSealedThinkingBlockBeforeTextLike(buf: Buffer, thinking: string): void {
   if (!thinking.trim()) return;
-
-  const existingIdx = buf.liveBlocks.findIndex((block) => block.type === 'thinking' && block.sealed);
-  if (existingIdx >= 0) {
-    const current = buf.liveBlocks[existingIdx] as Extract<ContentBlock, { type: 'thinking' }>;
-    current.content = mergeSnapshotText(current.content || '', thinking);
-    return;
-  }
-
   const firstTextLikeIdx = buf.liveBlocks.findIndex((block) => (
     block.type === 'text'
     || block.type === 'tool_group'
@@ -357,6 +341,57 @@ function upsertSealedThinkingFromSnapshot(buf: Buffer, snapshotThinking: string)
     { type: 'thinking', content: thinking, sealed: true },
     ...buf.liveBlocks.slice(insertAt),
   ];
+}
+
+function upsertSealedThinkingSegmentsFromSnapshot(buf: Buffer, snapshotThinkingSegments: string[]): void {
+  const segments = snapshotThinkingSegments
+    .map((segment) => sanitizeBufferedThinkingText(String(segment || '')))
+    .filter((segment) => !!segment.trim());
+  if (!segments.length) return;
+
+  const existingSealedIndices: number[] = [];
+  for (let i = 0; i < buf.liveBlocks.length; i += 1) {
+    const block = buf.liveBlocks[i];
+    if (block?.type === 'thinking' && block.sealed) {
+      existingSealedIndices.push(i);
+    }
+  }
+
+  for (let i = 0; i < segments.length; i += 1) {
+    const thinking = segments[i]!;
+    if (i < existingSealedIndices.length) {
+      const blockIdx = existingSealedIndices[i]!;
+      const current = buf.liveBlocks[blockIdx] as Extract<ContentBlock, { type: 'thinking' }>;
+      current.content = mergeSnapshotText(current.content || '', thinking);
+      continue;
+    }
+    insertSealedThinkingBlockBeforeTextLike(buf, thinking);
+  }
+}
+
+function applySnapshotThinking(buf: Buffer, content: any[]): void {
+  const snapshotThinkingSegments = extractSnapshotThinkingSegments(content);
+  if (snapshotThinkingSegments.length === 0) {
+    if (!buf.inThinking) buf.thinkingAcc = '';
+    return;
+  }
+
+  buf.hadThinking = true;
+  if (buf.inThinking) {
+    const closedThinkingSegments = snapshotThinkingSegments.slice(0, -1);
+    const inProgressSegment = snapshotThinkingSegments[snapshotThinkingSegments.length - 1] || '';
+    if (closedThinkingSegments.length > 0) {
+      upsertSealedThinkingSegmentsFromSnapshot(buf, closedThinkingSegments);
+    }
+    const sanitizedInProgress = sanitizeBufferedThinkingText(inProgressSegment);
+    if (sanitizedInProgress.trim()) {
+      buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, sanitizedInProgress);
+    }
+    return;
+  }
+
+  upsertSealedThinkingSegmentsFromSnapshot(buf, snapshotThinkingSegments);
+  buf.thinkingAcc = '';
 }
 
 function isRenderableBlock(block: ContentBlock): boolean {
@@ -507,19 +542,7 @@ class StreamBufferManager {
         if (role === 'assistant') {
           if (!hasRenderableAssistantSnapshot(content) && !buf.messageAppended) break;
           this.ensureMessage(buf);
-          const snapshotThinking = stripSdkDiagnosticLines(extractSnapshotThinkingContent(content));
-          const sanitizedSnapshotThinking = sanitizeBufferedThinkingText(snapshotThinking);
-          if (sanitizedSnapshotThinking) {
-            buf.hadThinking = true;
-            if (buf.inThinking) {
-              buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, sanitizedSnapshotThinking);
-            } else {
-              upsertSealedThinkingFromSnapshot(buf, sanitizedSnapshotThinking);
-              buf.thinkingAcc = '';
-            }
-          } else if (!buf.inThinking) {
-            buf.thinkingAcc = '';
-          }
+          applySnapshotThinking(buf, content);
 
           const snapshotText = stripStreamToolMarkup(
             stripSdkDiagnosticLines(extractSnapshotTextContent(content)),
@@ -530,9 +553,7 @@ class StreamBufferManager {
           }
 
           const toolUses = extractSnapshotToolUses(content);
-          if (toolUses.length > 0) {
-            finalizeBufferedTextSegment(buf, { asThinking: true });
-          }
+          if (toolUses.length > 0) finalizeBufferedTextSegment(buf);
           for (const toolUse of toolUses) {
             buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
               type: 'tool_start',
@@ -569,19 +590,7 @@ class StreamBufferManager {
         if (!hasRenderableAssistantSnapshot(content) && !buf.messageAppended) break;
         this.ensureMessage(buf);
 
-        const snapshotThinking = stripSdkDiagnosticLines(extractSnapshotThinkingContent(content));
-        const sanitizedSnapshotThinking = sanitizeBufferedThinkingText(snapshotThinking);
-        if (sanitizedSnapshotThinking) {
-          buf.hadThinking = true;
-          if (buf.inThinking) {
-            buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, sanitizedSnapshotThinking);
-          } else {
-            upsertSealedThinkingFromSnapshot(buf, sanitizedSnapshotThinking);
-            buf.thinkingAcc = '';
-          }
-        } else if (!buf.inThinking) {
-          buf.thinkingAcc = '';
-        }
+        applySnapshotThinking(buf, content);
 
         const snapshotText = stripStreamToolMarkup(
           stripSdkDiagnosticLines(extractSnapshotTextContent(content)),
@@ -592,9 +601,7 @@ class StreamBufferManager {
         }
 
         const toolUses = extractSnapshotToolUses(content);
-        if (toolUses.length > 0) {
-          finalizeBufferedTextSegment(buf, { asThinking: true });
-        }
+        if (toolUses.length > 0) finalizeBufferedTextSegment(buf);
         for (const toolUse of toolUses) {
           buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
             type: 'tool_start',
@@ -609,6 +616,7 @@ class StreamBufferManager {
       }
 
       case 'text_delta':
+        closeOpenThinkingIfNeeded(buf);
         this.ensureMessage(buf);
         if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
         buf.textAcc = mergeDelta(
@@ -630,11 +638,17 @@ class StreamBufferManager {
 
       case 'thinking_delta':
         {
+          if (!buf.inThinking) {
+            finalizeBufferedTextSegment(buf);
+            finalizeBufferedThinkingSegment(buf);
+            this.ensureMessage(buf);
+            buf.inThinking = true;
+          }
           const sanitizedDelta = sanitizeBufferedThinkingText(String(msg.delta || ''));
           if (sanitizedDelta) buf.hadThinking = true;
           buf.thinkingAcc = mergeDelta(buf.thinkingAcc, sanitizedDelta);
         }
-        // thinking 内容不频繁 flush，等 end 或下一个 text_delta
+        this.scheduleFlush(buf);
         break;
 
       case 'thinking_end':
@@ -662,7 +676,8 @@ class StreamBufferManager {
         break;
 
       case 'tool_start':
-        finalizeBufferedTextSegment(buf, { asThinking: true });
+        finalizeBufferedTextSegment(buf);
+        closeOpenThinkingIfNeeded(buf);
         this.ensureMessage(buf);
         buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
         this.flush(buf);

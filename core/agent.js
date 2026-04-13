@@ -31,7 +31,6 @@ import { createClaudeCoreTool } from "../lib/tools/claude-core-tool.js";
 import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
 import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
-import { formatSkillsForPrompt } from "./skill-loader.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { t } from "../server/i18n.js";
 
@@ -735,11 +734,6 @@ export class Agent {
             : memoryRule.trimStart() + "\n" + memoryTimelinessLegend + "\n\nThe following are memories accumulated from past conversations.\n\n" + memory
         ));
       }
-    }
-
-    // Skills 注入：仅注入当前 Agent 已启用的技能（available_skills）
-    if (this._enabledSkills?.length > 0) {
-      parts.push(formatSkillsForPrompt(this._enabledSkills));
     }
 
     const optionalEnabled = builtinOptional.filter((name) => enabledBuiltin.includes(name));

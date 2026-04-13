@@ -168,7 +168,7 @@ describe('mergeDelta', () => {
     }
   });
 
-  it('folds pre-tool narration into thinking while keeping post-tool text visible', () => {
+  it('keeps pre-tool narration as visible text before tool activity', () => {
     streamBufferManager.handle({
       type: 'text_delta',
       sessionPath,
@@ -201,13 +201,13 @@ describe('mergeDelta', () => {
     expect(only?.type).toBe('message');
     if (only?.type === 'message') {
       const blocks = only.data.blocks || [];
-      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'tool_group', 'text']);
-      const firstThinking = blocks[0];
+      expect(blocks.map((b) => b.type)).toEqual(['text', 'tool_group', 'text']);
+      const firstText = blocks[0];
       const secondText = blocks[2];
-      expect(firstThinking?.type).toBe('thinking');
+      expect(firstText?.type).toBe('text');
       expect(secondText?.type).toBe('text');
-      if (firstThinking?.type === 'thinking') {
-        expect(firstThinking.content).toContain('先给你同步一下进展');
+      if (firstText?.type === 'text') {
+        expect(firstText.html).toContain('先给你同步一下进展');
       }
       if (secondText?.type === 'text') {
         expect(secondText.html).toContain('继续抓更可靠的来源');
@@ -215,7 +215,7 @@ describe('mergeDelta', () => {
     }
   });
 
-  it('folds inter-tool narration into thinking when another tool starts', () => {
+  it('keeps inter-tool narration as visible text when another tool starts', () => {
     streamBufferManager.handle({
       type: 'text_delta',
       sessionPath,
@@ -269,23 +269,23 @@ describe('mergeDelta', () => {
     if (only?.type === 'message') {
       const blocks = only.data.blocks || [];
       expect(blocks.map((b) => b.type)).toEqual([
-        'thinking',
+        'text',
         'tool_group',
-        'thinking',
+        'text',
         'tool_group',
         'text',
       ]);
 
-      const thinking = blocks[0];
-      expect(thinking?.type).toBe('thinking');
-      if (thinking?.type === 'thinking') {
-        expect(thinking.content).toContain('我先尝试调用图片工具');
+      const firstText = blocks[0];
+      expect(firstText?.type).toBe('text');
+      if (firstText?.type === 'text') {
+        expect(firstText.html).toContain('我先尝试调用图片工具');
       }
 
-      const midThinking = blocks[2];
-      expect(midThinking?.type).toBe('thinking');
-      if (midThinking?.type === 'thinking') {
-        expect(midThinking.content).toContain('图片工具不可用');
+      const midText = blocks[2];
+      expect(midText?.type).toBe('text');
+      if (midText?.type === 'text') {
+        expect(midText.html).toContain('图片工具不可用');
       }
 
       const toolGroupA = blocks[1];
@@ -307,7 +307,54 @@ describe('mergeDelta', () => {
     }
   });
 
-  it('does not overwrite previous thinking when multiple thinking segments occur', () => {
+  it('does not merge non-thinking text into the first thinking block when tool starts', () => {
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '先做背景分析。' });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '这是中间可见文本，不是思考。',
+    });
+    streamBufferManager.handle({
+      type: 'tool_start',
+      sessionPath,
+      name: 'Read',
+      toolCallId: 'tool-mid-text',
+      args: { file_path: 'README.md' },
+    });
+    streamBufferManager.handle({
+      type: 'tool_end',
+      sessionPath,
+      name: 'Read',
+      toolCallId: 'tool-mid-text',
+      success: true,
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'text', 'tool_group']);
+      const thinking = blocks[0];
+      const text = blocks[1];
+      expect(thinking?.type).toBe('thinking');
+      expect(text?.type).toBe('text');
+      if (thinking?.type === 'thinking') {
+        expect(thinking.content).toContain('先做背景分析');
+        expect(thinking.content).not.toContain('这是中间可见文本');
+      }
+      if (text?.type === 'text') {
+        expect(text.html).toContain('这是中间可见文本');
+      }
+    }
+  });
+
+  it('keeps separate thinking blocks when multiple thinking segments occur', () => {
     streamBufferManager.handle({ type: 'thinking_start', sessionPath });
     streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '第一段思考' });
     streamBufferManager.handle({ type: 'thinking_end', sessionPath });
@@ -322,11 +369,142 @@ describe('mergeDelta', () => {
     const only = items[0];
     expect(only?.type).toBe('message');
     if (only?.type === 'message') {
-      const thinking = (only.data.blocks || []).find((b) => b.type === 'thinking');
+      const blocks = only.data.blocks || [];
+      const thinkingBlocks = blocks.filter((b) => b.type === 'thinking');
+      expect(thinkingBlocks).toHaveLength(2);
+      const first = thinkingBlocks[0];
+      const second = thinkingBlocks[1];
+      if (first?.type === 'thinking') {
+        expect(first.content).toContain('第一段思考');
+        expect(first.content).not.toContain('第二段思考');
+      }
+      if (second?.type === 'thinking') {
+        expect(second.content).toContain('第二段思考');
+        expect(second.content).not.toContain('第一段思考');
+      }
+    }
+  });
+
+  it('does not merge all snapshot thinking segments into the first thinking block', () => {
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        { type: 'thinking', thinking: '第一段思考。' },
+        { type: 'thinking', thinking: '第二段思考。' },
+        { type: 'text', text: '这是最终回答。' },
+      ],
+    });
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        { type: 'thinking', thinking: '第一段思考。' },
+        { type: 'thinking', thinking: '第二段思考。' },
+        { type: 'text', text: '这是最终回答。' },
+      ],
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'thinking', 'text']);
+      const first = blocks[0];
+      const second = blocks[1];
+      if (first?.type === 'thinking') {
+        expect(first.content).toContain('第一段思考');
+        expect(first.content).not.toContain('第二段思考');
+      }
+      if (second?.type === 'thinking') {
+        expect(second.content).toContain('第二段思考');
+        expect(second.content).not.toContain('第一段思考');
+      }
+    }
+  });
+
+  it('implicitly starts thinking when only thinking_delta arrives', () => {
+    streamBufferManager.handle({
+      type: 'thinking_delta',
+      sessionPath,
+      delta: '先快速检查目录结构。',
+    });
+
+    let items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    let only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks).toHaveLength(1);
+      const thinking = blocks[0];
       expect(thinking?.type).toBe('thinking');
       if (thinking?.type === 'thinking') {
-        expect(thinking.content).toContain('第一段思考');
-        expect(thinking.content).toContain('第二段思考');
+        expect(thinking.sealed).toBe(false);
+        expect(thinking.content).toContain('先快速检查目录结构');
+      }
+    }
+
+    streamBufferManager.handle({
+      type: 'tool_start',
+      sessionPath,
+      name: 'Read',
+      toolCallId: 'implicit-thinking-tool',
+      args: { file_path: 'README.md' },
+    });
+
+    items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'tool_group']);
+      const thinking = blocks[0];
+      const toolGroup = blocks[1];
+      expect(thinking?.type).toBe('thinking');
+      expect(toolGroup?.type).toBe('tool_group');
+      if (thinking?.type === 'thinking') {
+        expect(thinking.sealed).toBe(true);
+      }
+      if (toolGroup?.type === 'tool_group') {
+        expect(toolGroup.tools[0]?.done).toBe(false);
+      }
+    }
+  });
+
+  it('auto-seals implicit thinking when text arrives without thinking_end', () => {
+    streamBufferManager.handle({
+      type: 'thinking_delta',
+      sessionPath,
+      delta: '先把关键点列出来。',
+    });
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '这是最终答复。',
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'text']);
+      const thinking = blocks[0];
+      const text = blocks[1];
+      expect(thinking?.type).toBe('thinking');
+      expect(text?.type).toBe('text');
+      if (thinking?.type === 'thinking') {
+        expect(thinking.sealed).toBe(true);
+        expect(thinking.content).toContain('先把关键点列出来');
+      }
+      if (text?.type === 'text') {
+        expect(text.html).toContain('这是最终答复');
       }
     }
   });

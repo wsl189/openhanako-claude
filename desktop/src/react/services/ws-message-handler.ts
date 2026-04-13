@@ -73,7 +73,30 @@ function hasOptimisticCurrentSession(): boolean {
 function requestContextUsage(sessionPath?: string | null): void {
   const ws = getWebSocket();
   if (ws?.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'context_usage', sessionPath: sessionPath || useStore.getState().currentSessionPath || null }));
+  const targetPath = sessionPath || useStore.getState().currentSessionPath;
+  if (!targetPath) return;
+  ws.send(JSON.stringify({ type: 'context_usage', sessionPath: targetPath }));
+}
+
+function normalizeContextUsageForDisplay(
+  _sessionPath: string | null,
+  tokens: unknown,
+  contextWindow: unknown,
+  percent: unknown,
+): { tokens: number | null; contextWindow: number | null; percent: number | null } {
+  const rawTokens = Number.isFinite(tokens as number) ? Number(tokens) : null;
+  const rawWindow = Number.isFinite(contextWindow as number) ? Number(contextWindow) : null;
+  const rawPercent = Number.isFinite(percent as number) ? Number(percent) : null;
+  const displayPercent =
+    rawTokens != null && rawWindow != null && rawWindow > 0
+      ? Math.max(0, Math.min(100, (rawTokens / rawWindow) * 100))
+      : rawPercent;
+
+  return {
+    tokens: rawTokens,
+    contextWindow: rawWindow,
+    percent: displayPercent,
+  };
 }
 
 export function applyStreamingStatus(isStreaming: boolean): void {
@@ -157,18 +180,27 @@ export function handleServerMessage(msg: any): void {
     // compaction_end 后更新 token
     if (msg.type === 'compaction_end') {
       const currentSessionPath = useStore.getState().currentSessionPath;
-      if (msg.sessionPath && currentSessionPath && msg.sessionPath !== currentSessionPath) {
+      if (!currentSessionPath) {
         return;
       }
+      if (msg.sessionPath && msg.sessionPath !== currentSessionPath) {
+        return;
+      }
+      const usagePath = msg.sessionPath || currentSessionPath || null;
+      const normalized = normalizeContextUsageForDisplay(
+        usagePath,
+        msg.tokens,
+        msg.contextWindow,
+        msg.percent,
+      );
       const patch: Record<string, any> = { compacting: false };
       // SDK 在压缩后可能返回 tokens/percent=null（下一次模型回复前未知），
       // 这里也要写入，避免 UI 继续显示压缩前的旧值。
-      if ('tokens' in msg) patch.contextTokens = msg.tokens ?? null;
-      if ('contextWindow' in msg) patch.contextWindow = msg.contextWindow ?? null;
-      if ('percent' in msg) patch.contextPercent = msg.percent ?? null;
+      if ('tokens' in msg) patch.contextTokens = normalized.tokens;
+      if ('contextWindow' in msg) patch.contextWindow = normalized.contextWindow;
+      if ('percent' in msg) patch.contextPercent = normalized.percent;
       useStore.setState(patch);
       // 压缩结束后多次拉取 context_usage，避免 SDK 统计延迟导致圆环停留在旧值
-      const usagePath = msg.sessionPath || currentSessionPath;
       requestContextUsage(usagePath);
       setTimeout(() => requestContextUsage(usagePath), 350);
       setTimeout(() => requestContextUsage(usagePath), 1200);
@@ -177,7 +209,10 @@ export function handleServerMessage(msg: any): void {
     }
     if (msg.type === 'compaction_start') {
       const currentSessionPath = useStore.getState().currentSessionPath;
-      if (msg.sessionPath && currentSessionPath && msg.sessionPath !== currentSessionPath) {
+      if (!currentSessionPath) {
+        return;
+      }
+      if (msg.sessionPath && msg.sessionPath !== currentSessionPath) {
         return;
       }
       useStore.setState({ compacting: true });
@@ -226,33 +261,36 @@ export function handleServerMessage(msg: any): void {
     case 'browser_status':
       // 仅让当前会话的 browser 状态影响顶部提示，
       // 避免后台/其他 session 的事件串到当前页面。
-      if (msg.sessionPath && msg.sessionPath !== state.currentSessionPath) {
+      {
+        const liveState = useStore.getState();
+        if (msg.sessionPath && msg.sessionPath !== liveState.currentSessionPath) {
+          break;
+        }
+        const browserPatch: Record<string, any> = {
+          browserRunning: !!msg.running,
+          browserSessionPath: msg.running ? (msg.sessionPath || liveState.currentSessionPath || null) : null,
+          browserUrl: msg.url || null,
+          browserThumbnail: msg.running ? (msg.thumbnail || liveState.browserThumbnail) : null,
+        };
+        if (!msg.running) {
+          const activeSessionPath = useStore.getState().browserToolSessionPath;
+          if (!msg.sessionPath || !activeSessionPath || msg.sessionPath === activeSessionPath) {
+            browserPatch.browserToolActive = false;
+            browserPatch.browserToolSessionPath = null;
+          }
+        }
+        useStore.setState(browserPatch);
+        // renderBrowserCard — no-op (browser card rendering handled by React)
+        if ((window as any).platform?.updateBrowserViewer) {
+          (window as any).platform.updateBrowserViewer({
+            running: !!msg.running,
+            url: msg.url || null,
+            thumbnail: msg.running ? (msg.thumbnail || liveState.browserThumbnail) : null,
+          });
+        }
+        notifyBrowserSessionsChanged();
         break;
       }
-      const browserPatch: Record<string, any> = {
-        browserRunning: !!msg.running,
-        browserSessionPath: msg.running ? (msg.sessionPath || state.currentSessionPath || null) : null,
-        browserUrl: msg.url || null,
-        browserThumbnail: msg.running ? (msg.thumbnail || state.browserThumbnail) : null,
-      };
-      if (!msg.running) {
-        const activeSessionPath = useStore.getState().browserToolSessionPath;
-        if (!msg.sessionPath || !activeSessionPath || msg.sessionPath === activeSessionPath) {
-          browserPatch.browserToolActive = false;
-          browserPatch.browserToolSessionPath = null;
-        }
-      }
-      useStore.setState(browserPatch);
-      // renderBrowserCard — no-op (browser card rendering handled by React)
-      if ((window as any).platform?.updateBrowserViewer) {
-        (window as any).platform.updateBrowserViewer({
-          running: !!msg.running,
-          url: msg.url || null,
-          thumbnail: msg.running ? (msg.thumbnail || state.browserThumbnail) : null,
-        });
-      }
-      notifyBrowserSessionsChanged();
-      break;
 
     case 'browser_bg_status': {
       // browser_bg_status 来自后台/巡检场景，不绑定具体前台会话。
@@ -343,18 +381,29 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'context_usage':
-      // 仅在当前会话明确存在且不匹配时忽略；currentSessionPath 为空时允许更新
-      if (msg.sessionPath && state.currentSessionPath && msg.sessionPath !== state.currentSessionPath) {
+      {
+        // 没有焦点 session（例如“新建对话”草稿态）时，不接受任何上下文统计，
+        // 避免被后台/上一会话数据污染圆环。
+        const liveState = useStore.getState();
+        const currentSessionPath = liveState.currentSessionPath;
+        if (!currentSessionPath) break;
+        if (msg.sessionPath && msg.sessionPath !== currentSessionPath) break;
+        if ('tokens' in msg || 'contextWindow' in msg || 'percent' in msg) {
+          const usagePath = msg.sessionPath || currentSessionPath || null;
+          const normalized = normalizeContextUsageForDisplay(
+            usagePath,
+            msg.tokens,
+            msg.contextWindow,
+            msg.percent,
+          );
+          const patch: Record<string, any> = {};
+          if ('tokens' in msg) patch.contextTokens = normalized.tokens;
+          if ('contextWindow' in msg) patch.contextWindow = normalized.contextWindow;
+          if ('percent' in msg) patch.contextPercent = normalized.percent;
+          useStore.setState(patch);
+        }
         break;
       }
-      if ('tokens' in msg || 'contextWindow' in msg || 'percent' in msg) {
-        const patch: Record<string, any> = {};
-        if ('tokens' in msg) patch.contextTokens = msg.tokens ?? null;
-        if ('contextWindow' in msg) patch.contextWindow = msg.contextWindow ?? null;
-        if ('percent' in msg) patch.contextPercent = msg.percent ?? null;
-        useStore.setState(patch);
-      }
-      break;
 
     case 'error': {
       showError(msg.message);
@@ -439,7 +488,14 @@ export function handleServerMessage(msg: any): void {
         });
       }
       // 渲染层：只有焦点 session 才影响 UI
-      if (!sp || sp === state.currentSessionPath) {
+      const liveState = useStore.getState();
+      // 无焦点 session（新建对话草稿态）时，禁止把 isStreaming 置 true，
+      // 避免后台/异常事件把输入区锁成“停止”态。
+      if (!liveState.currentSessionPath) {
+        if (!msg.isStreaming) {
+          applyStreamingStatus(false);
+        }
+      } else if (!sp || sp === liveState.currentSessionPath) {
         applyStreamingStatus(msg.isStreaming);
         if (msg.isStreaming && sp) {
           streamBufferManager.startTurn(sp);
@@ -448,7 +504,7 @@ export function handleServerMessage(msg: any): void {
 
       // 浏览器自动收尾：
       // 仅在当前会话本轮真正结束（status=false）后关闭，避免 tool-use 中间轮次误关。
-      if (!msg.isStreaming && sp && sp === state.currentSessionPath) {
+      if (!msg.isStreaming && sp && sp === liveState.currentSessionPath) {
         const latest = useStore.getState();
         const shouldAutoCloseBrowser =
           !!latest.browserRunning &&

@@ -279,7 +279,8 @@ export class BridgeSessionManager {
       debugLog()?.log(
         "bridge-session",
         `[runtime-tools] settings=${JSON.stringify(runtimeTools.settingSources || [])} `
-        + `allowed=${JSON.stringify(runtimeTools.builtinEnabled || [])} `
+        + `allowedTools=${JSON.stringify(runtimeTools.allowedTools || runtimeTools.builtinEnabled || [])} `
+        + `builtinEnabled=${JSON.stringify(runtimeTools.builtinEnabled || [])} `
         + `forcedToolsOption=${runtimeTools.forcedToolsOption === true} `
         + `permissionStrategy=${runtimeTools.permissionStrategy || "unknown"} `
         + `canUseTool=${runtimeTools.hasCanUseTool === true} `

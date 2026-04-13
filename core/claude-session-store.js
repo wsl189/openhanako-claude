@@ -37,6 +37,7 @@ export function isClaudeSessionPath(sessionPath = "") {
 export function buildSessionMetadata({
   sessionId,
   cwd,
+  model = null,
   agentId = null,
   title = null,
   archiveState = "active",
@@ -56,6 +57,7 @@ export function buildSessionMetadata({
     kind: "claude-agent-session",
     sessionId,
     cwd,
+    model: model || null,
     agentId,
     title,
     archiveState,

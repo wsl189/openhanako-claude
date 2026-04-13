@@ -45,6 +45,52 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     expect(queryMock.mock.calls[0]?.[0]?.options?.persistSession).toBe(true);
   });
 
+  it("re-applies configured mcpServers via setMcpServers on start", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+    const setMcpServers = vi.fn(async () => {});
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          yield {
+            type: "result",
+            is_error: false,
+          };
+          return;
+        }
+      }
+      const iterator = stream();
+      iterator.close = vi.fn();
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.setMcpServers = setMcpServers;
+      return iterator;
+    });
+
+    const mcpServers = {
+      hanako: {
+        type: "sdk",
+        name: "hanako-tools",
+        instance: {},
+      },
+    };
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "s1",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-mcp.json",
+      options: {
+        mcpServers,
+      },
+    });
+
+    await runtime.prompt("hello");
+    await runtime.close();
+
+    expect(setMcpServers).toHaveBeenCalledTimes(1);
+    expect(setMcpServers).toHaveBeenCalledWith(mcpServers);
+  });
+
   it("retries as a fresh session when resume session is missing", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();
@@ -212,6 +258,44 @@ describe("ClaudeSessionRuntime resume recovery", () => {
       expect(call?.[0]?.options?.resume).toBeUndefined();
       expect(call?.[0]?.options?.sessionId).toBeUndefined();
     }
+  });
+
+  it("does not restart query when switching to the same model id", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          yield {
+            type: "result",
+            is_error: false,
+          };
+          return;
+        }
+      }
+      const iterator = stream();
+      iterator.close = vi.fn();
+      iterator.getContextUsage = vi.fn(async () => null);
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "same-model-session",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-same-model.json",
+      options: {
+        model: "claude-3-7-sonnet",
+      },
+    });
+
+    await runtime.start();
+    await runtime.setModel("claude-3-7-sonnet");
+    await runtime.prompt("hello");
+    await runtime.close();
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
   it("recovers when a prestarted query stream ends before next prompt", async () => {

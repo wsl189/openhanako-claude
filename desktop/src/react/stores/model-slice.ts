@@ -5,9 +5,11 @@ export type ThinkingLevel = 'off' | 'auto' | 'xhigh';
 export interface ModelSlice {
   models: Model[];
   currentModel: string | null;
+  pendingSessionModel: string | null;
   thinkingLevel: ThinkingLevel;
   setModels: (models: Model[]) => void;
   setCurrentModel: (model: string | null) => void;
+  setPendingSessionModel: (model: string | null) => void;
   setThinkingLevel: (level: ThinkingLevel) => void;
 }
 
@@ -16,8 +18,10 @@ export const createModelSlice = (
 ): ModelSlice => ({
   models: [],
   currentModel: null,
+  pendingSessionModel: null,
   thinkingLevel: 'auto',
   setModels: (models) => set({ models }),
   setCurrentModel: (model) => set({ currentModel: model }),
+  setPendingSessionModel: (model) => set({ pendingSessionModel: model }),
   setThinkingLevel: (level) => set({ thinkingLevel: level }),
 });

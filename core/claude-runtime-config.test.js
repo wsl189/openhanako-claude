@@ -34,10 +34,29 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.env.HANAKO_TEST_ENV).toBe("ok");
   });
 
-  it("uses Proma-aligned non-partial streaming and permission settings", () => {
+  it("defaults CLAUDE_CONFIG_DIR to current agent directory", () => {
+    const config = createConfig({
+      agent: { agentDir: "/tmp/agent-claude-dir" },
+    });
+
+    expect(config.options.env.CLAUDE_CONFIG_DIR).toBe("/tmp/agent-claude-dir");
+  });
+
+  it("keeps explicit CLAUDE_CONFIG_DIR from runtime env", () => {
+    const config = createConfig({
+      agent: { agentDir: "/tmp/agent-claude-dir" },
+      env: {
+        CLAUDE_CONFIG_DIR: "/tmp/custom-claude-dir",
+      },
+    });
+
+    expect(config.options.env.CLAUDE_CONFIG_DIR).toBe("/tmp/custom-claude-dir");
+  });
+
+  it("uses non-partial streaming and bypass permission mode", () => {
     const config = createConfig();
     expect(config.options.includePartialMessages).toBe(false);
-    expect(config.options.permissionMode).toBe("acceptEdits");
+    expect(config.options.permissionMode).toBe("bypassPermissions");
     expect(config.options.allowDangerouslySkipPermissions).toBe(false);
   });
 
@@ -65,7 +84,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     });
   });
 
-  it("uses Proma-aligned setting sources and does not force options.tools by default", () => {
+  it("defaults settingSources to user and does not force options.tools by default", () => {
     const config = createConfig({
       toolProfile: {
         tools: {
@@ -73,9 +92,34 @@ describe("buildClaudeRuntimeConfig env", () => {
         },
       },
     });
-    expect(config.options.settingSources).toEqual(["user", "project"]);
+    expect(config.options.settingSources).toEqual(["user"]);
     expect(config.options.allowedTools).toEqual(["Read", "Glob", "Grep"]);
     expect("tools" in config.options).toBe(false);
+  });
+
+  it("supports settingSources override via env", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_CLAUDE_SETTING_SOURCES: "project,local,invalid",
+      },
+    });
+    expect(config.options.settingSources).toEqual(["project", "local"]);
+  });
+
+  it("prefers agent setting_sources over env override", () => {
+    const config = createConfig({
+      agent: {
+        config: {
+          claude: {
+            setting_sources: ["user", "project"],
+          },
+        },
+      },
+      env: {
+        HANAKO_CLAUDE_SETTING_SOURCES: "local",
+      },
+    });
+    expect(config.options.settingSources).toEqual(["user", "project"]);
   });
 
   it("can force options.tools via env for compatibility debugging", () => {
@@ -96,6 +140,34 @@ describe("buildClaudeRuntimeConfig env", () => {
       if (original === undefined) delete process.env.HANAKO_FORCE_SDK_TOOLS_OPTION;
       else process.env.HANAKO_FORCE_SDK_TOOLS_OPTION = original;
     }
+  });
+
+  it("includes enabled custom MCP tools in allowedTools", () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read", "Glob"],
+          custom_enabled: ["web_fetch", "todo", "notify"],
+        },
+      },
+      customTools: [
+        { name: "web_fetch", parameters: { type: "object", properties: {} } },
+        { name: "todo", parameters: { type: "object", properties: {} } },
+        { name: "notify", parameters: { type: "object", properties: {} } },
+      ],
+    });
+
+    expect(config.options.allowedTools).toEqual([
+      "Read",
+      "Glob",
+      "mcp__hanako__*",
+    ]);
+    expect(config.diagnostics?.customToolsLoaded).toEqual(["web_fetch", "todo", "notify"]);
+    expect(config.diagnostics?.allowedTools).toEqual([
+      "Read",
+      "Glob",
+      "mcp__hanako__*",
+    ]);
   });
 
   it("installs canUseTool handler by default to avoid permission prompt deadlocks", async () => {

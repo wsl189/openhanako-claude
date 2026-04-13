@@ -63,23 +63,34 @@ function isCurrentModelRef(modelRef, currentModel, modelCatalog) {
   return !!(currentEntry && refEntry && currentEntry.key === refEntry.key);
 }
 
+function toModelRef(model) {
+  if (!model || typeof model !== "object") return "";
+  const id = String(model.id || "").trim();
+  if (!id) return "";
+  const provider = String(model.provider || "").trim();
+  return provider ? `${provider}/${id}` : id;
+}
+
 export default async function modelsRoute(app, { engine }) {
   const modelCatalog = engine._models?.modelCatalog || null;
 
   // 列出可用模型
   app.get("/api/models", async (req, reply) => {
     try {
+      const currentModel = engine.currentModel;
       const overrides = engine.config?.models?.overrides;
       const models = engine.availableModels.map(m => ({
         id: m.id,
         name: resolveModelName(m.id, m.name, overrides),
         provider: m.provider,
-        isCurrent: isCurrentModelRef(m.provider ? `${m.provider}/${m.id}` : m.id, engine.currentModel, modelCatalog),
+        isCurrent: isCurrentModelRef(m.provider ? `${m.provider}/${m.id}` : m.id, currentModel, modelCatalog),
+        reasoning: !!m.reasoning,
+        xhigh: supportsXhigh(m),
       }));
       return {
         models,
-        current: engine.currentModel
-          ? (engine.currentModel.provider ? `${engine.currentModel.provider}/${engine.currentModel.id}` : engine.currentModel.id)
+        current: currentModel
+          ? (currentModel.provider ? `${currentModel.provider}/${currentModel.id}` : currentModel.id)
           : null,
       };
     } catch (err) {
@@ -88,29 +99,53 @@ export default async function modelsRoute(app, { engine }) {
     }
   });
 
-  // 收藏模型列表（给聊天页面用，直接读 favorites，和设置页同源）
+  // 收藏模型列表（给聊天页面用，仅返回当前可解析/可切换的模型）
   app.get("/api/models/favorites", async (req, reply) => {
     try {
       const favorites = engine.readFavorites();
       const available = engine.availableModels;
+      const currentModel = engine.currentModel;
+      const currentRef = currentModel
+        ? (currentModel.provider ? `${currentModel.provider}/${currentModel.id}` : currentModel.id)
+        : null;
 
       const overrides = engine.config?.models?.overrides;
-      const result = favorites.map(id => {
-        const m = resolveModelRef(id, available, modelCatalog);
-        return {
-          id,
-          name: resolveModelName(id, m?.name, overrides),
-          provider: m?.provider || "",
-          isCurrent: isCurrentModelRef(id, engine.currentModel, modelCatalog),
-          reasoning: m ? !!m.reasoning : false,
-          xhigh: m ? supportsXhigh(m) : false,
-        };
-      });
+      // favorites 里可能存在已失效/歧义 ID：
+      // 1) provider 被删除后残留的旧模型；
+      // 2) 多 provider 同名模型导致裸 ID 歧义。
+      // 这里统一解析成规范 modelRef（provider/model）并去重，只返回可切换项。
+      const result = [];
+      const seenRefs = new Set();
+      for (const favoriteRef of favorites) {
+        const resolved = resolveModelRef(favoriteRef, available, modelCatalog);
+        if (!resolved) continue;
+        const canonicalRef = toModelRef(resolved) || String(favoriteRef || "").trim();
+        if (!canonicalRef || seenRefs.has(canonicalRef)) continue;
+        seenRefs.add(canonicalRef);
+        const modelIdForName = String(resolved.id || canonicalRef);
+        result.push({
+          id: canonicalRef,
+          name: resolveModelName(modelIdForName, resolved.name, overrides),
+          provider: resolved.provider || "",
+          isCurrent: isCurrentModelRef(canonicalRef, currentModel, modelCatalog),
+          reasoning: !!resolved.reasoning,
+          xhigh: supportsXhigh(resolved),
+        });
+      }
 
-      const current = favorites.find((id) => isCurrentModelRef(id, engine.currentModel, modelCatalog))
-        || (engine.currentModel
-          ? (engine.currentModel.provider ? `${engine.currentModel.provider}/${engine.currentModel.id}` : engine.currentModel.id)
-          : null);
+      // 当前模型不在 favorites 时，前端仍需要可展示的当前项，避免出现“未知模型”。
+      if (currentModel && currentRef && !result.some((item) => isCurrentModelRef(item.id, currentModel, modelCatalog))) {
+        result.unshift({
+          id: currentRef,
+          name: resolveModelName(currentModel.id, currentModel.name, overrides),
+          provider: currentModel.provider || "",
+          isCurrent: true,
+          reasoning: !!currentModel.reasoning,
+          xhigh: supportsXhigh(currentModel),
+        });
+      }
+
+      const current = result.find((item) => item.isCurrent)?.id || currentRef;
 
       return {
         models: result,
@@ -190,7 +225,8 @@ export default async function modelsRoute(app, { engine }) {
         return { error: t("error.missingParam", { param: "modelId" }) };
       }
       await engine.setModel(modelId);
-      return { ok: true, model: engine.currentModel?.name };
+      const currentRef = toModelRef(engine.currentModel) || String(modelId);
+      return { ok: true, model: engine.currentModel?.name, modelRef: currentRef };
     } catch (err) {
       reply.code(isModelSwitchConflict(err) ? 409 : 500);
       return { error: err.message };

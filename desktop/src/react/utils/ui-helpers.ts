@@ -22,13 +22,39 @@ export function showError(message: string): void {
 
 // ── 模型加载 ──
 
-export async function loadModels(): Promise<void> {
+export async function loadModels(sessionPath?: string | null): Promise<void> {
   try {
-    const favRes = await hanaFetch('/api/models/favorites');
+    const state = useStore.getState();
+    const effectiveSessionPath =
+      sessionPath !== undefined
+        ? sessionPath
+        : (state.pendingNewSession ? null : state.currentSessionPath);
+    const query = effectiveSessionPath ? `?sessionPath=${encodeURIComponent(effectiveSessionPath)}` : '';
+    const favRes = await hanaFetch(`/api/models/favorites${query}`);
     const favData = await favRes.json();
+    const isDraftSession = !sessionPath && state.pendingNewSession && !state.currentSessionPath;
+    const pendingModelId = String(state.pendingSessionModel || '').trim();
+    let models = Array.isArray(favData.models) ? favData.models : [];
+    let current = favData.current || null;
+
+    if (!current && models.length > 0) {
+      const localCurrent = String(state.currentModel || '').trim();
+      const localCurrentExists = !!localCurrent && models.some((m: any) => m.id === localCurrent);
+      const fallbackCurrent = (isDraftSession && pendingModelId && models.some((m: any) => m.id === pendingModelId))
+        ? pendingModelId
+        : (localCurrentExists ? localCurrent : (models[0]?.id || null));
+      current = fallbackCurrent;
+      models = models.map((m: any) => ({ ...m, isCurrent: m.id === fallbackCurrent }));
+    }
+
+    if (isDraftSession && pendingModelId) {
+      models = models.map((m: any) => ({ ...m, isCurrent: m.id === pendingModelId }));
+      current = pendingModelId;
+    }
+
     useStore.setState({
-      models: favData.models || [],
-      currentModel: favData.current,
+      models,
+      currentModel: current,
     });
   } catch { /* silent */ }
 }
