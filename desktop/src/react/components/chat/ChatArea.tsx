@@ -171,7 +171,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const toggleAnchorSelector = '.tool-indicator.expandable, .chain-summary, .thinking-block-toggle';
+    const toggleAnchorSelector = '.tool-indicator.expandable, .chain-summary';
 
     const preserveToggleAnchor = (anchor: HTMLElement) => {
       const beforeTop = anchor.getBoundingClientRect().top;

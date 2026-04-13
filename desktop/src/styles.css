@@ -2163,14 +2163,29 @@ html[data-platform="linux"] .tb-toggle-right {
     padding-right: 2rem;
 }
 
+.assistant-final-reply.streaming {
+    animation: assistant-final-reply-enter 0.48s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .assistant-final-reply.streaming .md-content.stream-live {
-    animation: stream-live-fade 0.18s ease-out;
+    animation: stream-live-fade 0.28s ease-out;
+}
+
+@keyframes assistant-final-reply-enter {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 @keyframes stream-live-fade {
     from {
-        opacity: 0.72;
-        transform: translateY(1px);
+        opacity: 0.58;
+        transform: translateY(2px);
     }
     to {
         opacity: 1;
@@ -2179,6 +2194,10 @@ html[data-platform="linux"] .tb-toggle-right {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .assistant-final-reply.streaming {
+        animation: none;
+    }
+
     .assistant-final-reply.streaming .md-content.stream-live {
         animation: none;
     }
@@ -4774,6 +4793,32 @@ html[data-platform="darwin"] .sv-topbar-title {
     background: color-mix(in oklab, var(--overlay-subtle) 58%, transparent);
 }
 
+.tool-panel-collapse {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition:
+        grid-template-rows 0.56s cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 0.44s ease,
+        transform 0.56s ease;
+}
+
+.tool-panel-collapse.expanded {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.tool-panel-collapse.collapsed {
+    pointer-events: none;
+}
+
+.tool-panel-collapse-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+
 .tool-panel-row + .tool-panel-row {
     margin-top: 0.42rem;
 }
@@ -4910,9 +4955,17 @@ html[data-platform="darwin"] .sv-topbar-title {
 }
 
 .chain-summary .chain-summary-text {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.chain-summary .chain-summary-elapsed {
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: color-mix(in oklab, var(--text-muted) 74%, var(--text) 26%);
 }
 
 .chain-summary .chain-summary-arrow {
@@ -4975,6 +5028,12 @@ html[data-platform="darwin"] .sv-topbar-title {
 
     .chain-collapsible,
     .chain-collapsible.expanded {
+        transition: none;
+        transform: none;
+    }
+
+    .tool-panel-collapse,
+    .tool-panel-collapse.expanded {
         transition: none;
         transform: none;
     }

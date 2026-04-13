@@ -71,15 +71,27 @@ function isCoreChainBlock(block: ContentBlock): boolean {
   return block.type === 'thinking' || block.type === 'tool_group';
 }
 
+function formatChainDuration(ms: number): string {
+  const sec = Math.max(0, ms) / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec - minutes * 60;
+  return `${minutes}m ${seconds.toFixed(1)}s`;
+}
+
 const CHAIN_AUTO_COLLAPSE_DELAY_MS = 1200;
 const BLOCK_REVEAL_BASE_DELAY_MS = 180;
 const BLOCK_REVEAL_MAX_DELAY_MS = 1_200;
 const THINKING_BLOCK_REVEAL_MIN_DELAY_MS = 420;
 const TOOL_BLOCK_REVEAL_MIN_DELAY_MS = 520;
 const THINK_TO_TOOL_REVEAL_PAUSE_MS = 980;
+const THINK_TO_INTERMEDIATE_TEXT_REVEAL_PAUSE_MS = 560;
+const TOOL_TO_INTERMEDIATE_TEXT_REVEAL_PAUSE_MS = 460;
+const THINK_TO_FINAL_REPLY_REVEAL_PAUSE_MS = 820;
+const TOOL_TO_FINAL_REPLY_REVEAL_PAUSE_MS = 680;
 const FRESH_CHAIN_REVEAL_WINDOW_MS = 20_000;
-const FINAL_TEXT_SETTLE_MIN_MS = 240;
-const FINAL_TEXT_SETTLE_MAX_MS = 1200;
+const FINAL_TEXT_SETTLE_MIN_MS = 420;
+const FINAL_TEXT_SETTLE_MAX_MS = 2200;
 
 function getBlockRevealDelayMs(params: {
   prevBlock?: ContentBlock;
@@ -102,6 +114,21 @@ function getBlockRevealDelayMs(params: {
 
   if (prevBlock?.type === 'thinking' && nextBlock?.type === 'tool_group') {
     delay = Math.max(delay, THINK_TO_TOOL_REVEAL_PAUSE_MS);
+  }
+  // 给“最后一次思考/工具 -> 最终回复”留出更平滑的过渡间隔。
+  if (nextBlock?.type === 'text' && remaining <= 1) {
+    if (prevBlock?.type === 'thinking') {
+      delay = Math.max(delay, THINK_TO_FINAL_REPLY_REVEAL_PAUSE_MS);
+    } else if (prevBlock?.type === 'tool_group') {
+      delay = Math.max(delay, TOOL_TO_FINAL_REPLY_REVEAL_PAUSE_MS);
+    }
+  }
+  if (nextBlock?.type === 'text' && remaining > 1) {
+    if (prevBlock?.type === 'thinking') {
+      delay = Math.max(delay, THINK_TO_INTERMEDIATE_TEXT_REVEAL_PAUSE_MS);
+    } else if (prevBlock?.type === 'tool_group') {
+      delay = Math.max(delay, TOOL_TO_INTERMEDIATE_TEXT_REVEAL_PAUSE_MS);
+    }
   }
 
   return Math.min(BLOCK_REVEAL_MAX_DELAY_MS, delay);
@@ -148,9 +175,18 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const blocks = message.blocks || [];
   const isLiveStreamMessage = isStreaming || String(message.id || '').startsWith('stream-');
   const displayBlocks = useMemo(() => removeRedundantOutputToolLines(blocks), [blocks]);
-  const hasChainLikeBlocks = useMemo(
-    () => displayBlocks.length > 1 && displayBlocks.some((block) => block.type === 'thinking' || block.type === 'tool_group'),
+  // 运行中但尚未收到 thinking 文本时，不渲染空壳 thinking 块，避免“先出 THINKING 再出内容”。
+  const renderBlocks = useMemo(
+    () => displayBlocks.filter((block) => !(
+      block.type === 'thinking'
+      && block.sealed === false
+      && !String(block.content || '').trim()
+    )),
     [displayBlocks],
+  );
+  const hasChainLikeBlocks = useMemo(
+    () => renderBlocks.length > 1 && renderBlocks.some((block) => block.type === 'thinking' || block.type === 'tool_group'),
+    [renderBlocks],
   );
   const messageHasTimestamp = typeof message.timestamp === 'number';
   const isRecentAssistantMessage = useMemo(() => {
@@ -162,38 +198,38 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const shouldTreatAsFreshChain = hasChainLikeBlocks && messageHasTimestamp && isRecentAssistantMessage;
   const shouldProgressiveReveal = isLiveStreamMessage || shouldTreatAsFreshChain;
   const [revealedBlockCount, setRevealedBlockCount] = useState(() => (
-    shouldProgressiveReveal ? Math.min(1, displayBlocks.length) : displayBlocks.length
+    shouldProgressiveReveal ? Math.min(1, renderBlocks.length) : renderBlocks.length
   ));
   const prevRevealMessageIdRef = useRef(message.id);
 
   useEffect(() => {
     if (prevRevealMessageIdRef.current === message.id) return;
     prevRevealMessageIdRef.current = message.id;
-    setRevealedBlockCount(shouldProgressiveReveal ? Math.min(1, displayBlocks.length) : displayBlocks.length);
-  }, [message.id, shouldProgressiveReveal, displayBlocks.length]);
+    setRevealedBlockCount(shouldProgressiveReveal ? Math.min(1, renderBlocks.length) : renderBlocks.length);
+  }, [message.id, shouldProgressiveReveal, renderBlocks.length]);
 
   useEffect(() => {
-    if (revealedBlockCount > displayBlocks.length) {
-      setRevealedBlockCount(displayBlocks.length);
+    if (revealedBlockCount > renderBlocks.length) {
+      setRevealedBlockCount(renderBlocks.length);
       return;
     }
-    if (revealedBlockCount >= displayBlocks.length) return;
+    if (revealedBlockCount >= renderBlocks.length) return;
 
-    const remaining = displayBlocks.length - revealedBlockCount;
-    const prevBlock = revealedBlockCount > 0 ? displayBlocks[revealedBlockCount - 1] : undefined;
-    const nextBlock = displayBlocks[revealedBlockCount];
+    const remaining = renderBlocks.length - revealedBlockCount;
+    const prevBlock = revealedBlockCount > 0 ? renderBlocks[revealedBlockCount - 1] : undefined;
+    const nextBlock = renderBlocks[revealedBlockCount];
     const delay = getBlockRevealDelayMs({ prevBlock, nextBlock, remaining });
     const timer = window.setTimeout(() => {
-      setRevealedBlockCount((count) => Math.min(displayBlocks.length, count + 1));
+      setRevealedBlockCount((count) => Math.min(renderBlocks.length, count + 1));
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [isLiveStreamMessage, displayBlocks.length, revealedBlockCount]);
+  }, [isLiveStreamMessage, renderBlocks.length, revealedBlockCount]);
 
   const visibleBlocks = useMemo(
-    () => displayBlocks.slice(0, Math.max(0, revealedBlockCount)),
-    [displayBlocks, revealedBlockCount],
+    () => renderBlocks.slice(0, Math.max(0, revealedBlockCount)),
+    [renderBlocks, revealedBlockCount],
   );
-  const showProvisionalThinking = isStreaming && visibleBlocks.length === 0;
+  const showStreamingIntro = isStreaming && visibleBlocks.length === 0;
 
   const finalTextIndex = useMemo(() => {
     for (let i = visibleBlocks.length - 1; i >= 0; i--) {
@@ -211,11 +247,33 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     () => visibleBlocks.filter((block, index) => isAutoCollapsibleChainBlock(block, index)),
     [visibleBlocks, isAutoCollapsibleChainBlock],
   );
+  const displayFinalTextIndex = useMemo(() => {
+    for (let i = renderBlocks.length - 1; i >= 0; i--) {
+      if (renderBlocks[i].type === 'text') return i;
+    }
+    return -1;
+  }, [renderBlocks]);
+  const summaryCountingBlocks = useMemo(() => {
+    return renderBlocks.filter((block, index) => {
+      if (isCoreChainBlock(block)) return true;
+      if (block.type !== 'text') return false;
+      if (displayFinalTextIndex < 0) return true;
+      return index !== displayFinalTextIndex;
+    });
+  }, [renderBlocks, displayFinalTextIndex]);
   const hasCollapsibleChain = hasPrimaryText && chainBlocks.length > 0;
+  const [chainSummaryPinned, setChainSummaryPinned] = useState(
+    () => isStreaming || hasCollapsibleChain || chainBlocks.length > 0,
+  );
+  const showChainSummary = chainSummaryPinned || isStreaming || hasCollapsibleChain || chainBlocks.length > 0;
   const [chainExpanded, setChainExpanded] = useState(() => isStreaming);
   const chainCollapseTimerRef = useRef<number | null>(null);
-  const prevStreamingRef = useRef(isStreaming);
   const prevMessageIdRef = useRef(message.id);
+  const autoCollapseArmedRef = useRef(isStreaming);
+  const didAutoCollapseRef = useRef(false);
+  const [chainElapsedMsFrozen, setChainElapsedMsFrozen] = useState<number | null>(
+    typeof runningMs === 'number' && runningMs >= 0 ? runningMs : null,
+  );
 
   const clearChainCollapseTimer = useCallback(() => {
     if (chainCollapseTimerRef.current == null) return;
@@ -231,57 +289,74 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     if (prevMessageIdRef.current === message.id) return;
     prevMessageIdRef.current = message.id;
     clearChainCollapseTimer();
-    prevStreamingRef.current = isStreaming;
-    setChainExpanded(hasCollapsibleChain ? isStreaming : false);
-  }, [message.id, hasCollapsibleChain, isStreaming, clearChainCollapseTimer]);
+    autoCollapseArmedRef.current = isStreaming;
+    didAutoCollapseRef.current = false;
+    setChainSummaryPinned(isStreaming || hasCollapsibleChain || chainBlocks.length > 0);
+    setChainExpanded(showChainSummary ? isStreaming : false);
+    setChainElapsedMsFrozen(typeof runningMs === 'number' && runningMs >= 0 ? runningMs : null);
+  }, [
+    message.id,
+    showChainSummary,
+    isStreaming,
+    runningMs,
+    hasCollapsibleChain,
+    chainBlocks.length,
+    clearChainCollapseTimer,
+  ]);
+
+  useEffect(() => {
+    if (!chainSummaryPinned && (isStreaming || hasCollapsibleChain || chainBlocks.length > 0)) {
+      setChainSummaryPinned(true);
+    }
+  }, [chainSummaryPinned, isStreaming, hasCollapsibleChain, chainBlocks.length]);
+
+  useEffect(() => {
+    if (typeof runningMs === 'number' && runningMs >= 0) {
+      setChainElapsedMsFrozen(runningMs);
+    }
+  }, [runningMs]);
 
   useEffect(() => {
     clearChainCollapseTimer();
 
-    if (!hasCollapsibleChain) {
+    if (!showChainSummary) {
       setChainExpanded(false);
-      prevStreamingRef.current = isStreaming;
       return;
     }
 
     if (isStreaming) {
       setChainExpanded(true);
-      prevStreamingRef.current = true;
+      autoCollapseArmedRef.current = true;
+      didAutoCollapseRef.current = false;
       return;
     }
 
-    const justFinishedStreaming = prevStreamingRef.current;
-    prevStreamingRef.current = false;
-    if (!justFinishedStreaming) return;
+    if (!autoCollapseArmedRef.current || didAutoCollapseRef.current) return;
+    if (!hasCollapsibleChain || !hasPrimaryText) return;
 
     chainCollapseTimerRef.current = window.setTimeout(() => {
       setChainExpanded(false);
+      didAutoCollapseRef.current = true;
       chainCollapseTimerRef.current = null;
     }, CHAIN_AUTO_COLLAPSE_DELAY_MS);
-  }, [hasCollapsibleChain, isStreaming, clearChainCollapseTimer]);
+  }, [showChainSummary, hasCollapsibleChain, hasPrimaryText, isStreaming, clearChainCollapseTimer]);
 
   const chainThinkingCount = useMemo(
-    () => chainBlocks.filter((block) => block.type === 'thinking').length,
-    [chainBlocks],
+    () => summaryCountingBlocks.filter((block) => block.type === 'thinking').length,
+    [summaryCountingBlocks],
   );
   const chainToolCount = useMemo(
-    () => chainBlocks.reduce((sum, block) => (
+    () => summaryCountingBlocks.reduce((sum, block) => (
       block.type === 'tool_group' ? sum + block.tools.length : sum
     ), 0),
-    [chainBlocks],
+    [summaryCountingBlocks],
   );
-  const chainIntermediateTextCount = useMemo(
-    () => chainBlocks.filter((block) => block.type === 'text').length,
-    [chainBlocks],
-  );
+  const chainElapsedMs = (typeof runningMs === 'number' && runningMs >= 0)
+    ? runningMs
+    : chainElapsedMsFrozen;
   const chainSummaryText = useMemo(() => {
-    const parts: string[] = [];
-    if (chainThinkingCount > 0) parts.push(`${chainThinkingCount}次思考`);
-    if (chainToolCount > 0) parts.push(`${chainToolCount}次工具执行`);
-    if (chainIntermediateTextCount > 0) parts.push(`${chainIntermediateTextCount}段中间输出`);
-    const detail = parts.length ? parts.join(' · ') : '详情';
-    return `思考和执行链（${detail}）`;
-  }, [chainThinkingCount, chainToolCount, chainIntermediateTextCount]);
+    return `思考和执行链（${chainThinkingCount}次思考 · ${chainToolCount}次工具执行）`;
+  }, [chainThinkingCount, chainToolCount]);
   const finalTextBlock = finalTextIndex >= 0 && visibleBlocks[finalTextIndex].type === 'text'
     ? visibleBlocks[finalTextIndex]
     : null;
@@ -312,7 +387,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     if (!replayFinalText) return;
     const duration = Math.min(
       FINAL_TEXT_SETTLE_MAX_MS,
-      Math.max(FINAL_TEXT_SETTLE_MIN_MS, Math.ceil(finalTextRaw.length * 8)),
+      Math.max(FINAL_TEXT_SETTLE_MIN_MS, Math.ceil(finalTextRaw.length * 12)),
     );
     const timer = window.setTimeout(() => setReplayFinalText(false), duration);
     return () => window.clearTimeout(timer);
@@ -323,7 +398,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   const { displayedContent: smoothedFinalTextRaw } = useSmoothStream({
     content: finalTextRaw,
     isStreaming: smoothFinalTextStreaming,
-    minDelay: 16,
+    minDelay: 24,
     startFromEmptyWhenStreaming: smoothFinalTextStreaming,
   });
   const finalDisplayHtml = useMemo(() => {
@@ -347,12 +422,12 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     }).catch(() => {});
   }, [finalDisplayHtml]);
 
-  if (visibleBlocks.length === 0 && !showProvisionalThinking) return null;
+  if (visibleBlocks.length === 0 && !showChainSummary) return null;
 
   return (
     <div className="message-group assistant">
       {showAvatar && (
-        <div className={`avatar-row assistant${showProvisionalThinking ? ' streaming-intro' : ''}`}>
+        <div className={`avatar-row assistant${showStreamingIntro ? ' streaming-intro' : ''}`}>
           {!avatarFailed ? (
             <img
               className="avatar hana-avatar"
@@ -377,16 +452,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
         </div>
       )}
       <div className="message assistant">
-        {showProvisionalThinking && (
-          <ThinkingBlock
-            content=""
-            sealed={false}
-            dimmed={false}
-            streamLike={true}
-            runningMs={runningMs}
-          />
-        )}
-        {hasCollapsibleChain && (
+        {showChainSummary && (
           <button
             type="button"
             className="chain-summary"
@@ -398,17 +464,20 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
           >
             <span className="chain-summary-arrow">{chainExpanded ? '▾' : '▸'}</span>
             <span className="chain-summary-text">{chainSummaryText}</span>
+            {typeof chainElapsedMs === 'number' && chainElapsedMs >= 0 && (
+              <span className="chain-summary-elapsed">{formatChainDuration(chainElapsedMs)}</span>
+            )}
             <span className="chain-summary-status">{chainExpanded ? '已展开' : '已折叠'}</span>
           </button>
         )}
         {visibleBlocks.map((block, i) => {
           if (isAutoCollapsibleChainBlock(block, i)) {
-            const chainVisible = !hasCollapsibleChain || chainExpanded;
+            const chainVisible = !showChainSummary || chainExpanded;
             return (
               <div
                 key={i}
                 className={`chain-collapsible${chainVisible ? ' expanded' : ' collapsed'}`}
-                aria-hidden={hasCollapsibleChain ? !chainExpanded : undefined}
+                aria-hidden={showChainSummary ? !chainExpanded : undefined}
               >
                 <div className="chain-collapsible-inner">
                   <ContentBlockView

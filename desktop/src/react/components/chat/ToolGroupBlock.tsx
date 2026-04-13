@@ -413,9 +413,16 @@ const ToolIndicator = memo(function ToolIndicator({
         {canExpand && <span className="tool-expand">{expanded ? '▾' : '▸'}</span>}
       </button>
 
-      {expanded && canExpand && (
-        <div className="tool-panel">
-          <pre className="tool-panel-pre">{outputText}</pre>
+      {canExpand && (
+        <div
+          className={`tool-panel-collapse${expanded ? ' expanded' : ' collapsed'}`}
+          aria-hidden={!expanded}
+        >
+          <div className="tool-panel-collapse-inner">
+            <div className="tool-panel">
+              <pre className="tool-panel-pre">{outputText}</pre>
+            </div>
+          </div>
         </div>
       )}
     </div>

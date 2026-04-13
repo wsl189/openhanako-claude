@@ -32,6 +32,8 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "task", "model", "max_turns", "permission_mode", "thinking", "timeout_sec", "continue", "dangerously_skip_permissions",
   "search_query", "weather", "finance", "sports", "open", "click", "find", "image_query",
   "tool_uses",
+  // skill 工具关键字段
+  "skill", "skill_name", "skillName", "skill_path", "skillPath", "github_url", "githubUrl",
   // 编辑/写入工具关键信息：让前端展开时能展示“实际写入/替换内容”
   "content", "old_string", "new_string", "old_text", "new_text", "replace_all", "offset", "limit", "lineno",
 ];

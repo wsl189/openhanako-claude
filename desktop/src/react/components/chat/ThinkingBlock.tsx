@@ -15,14 +15,6 @@ interface Props {
 
 const THINKING_COLLAPSE_LINE_THRESHOLD = 4;
 
-function formatRunningDuration(ms: number): string {
-  const sec = Math.max(0, ms) / 1000;
-  if (sec < 60) return `${sec.toFixed(1)}s`;
-  const minutes = Math.floor(sec / 60);
-  const seconds = sec - minutes * 60;
-  return `${minutes}m ${seconds.toFixed(1)}s`;
-}
-
 export const ThinkingBlock = memo(function ThinkingBlock({
   content,
   sealed,
@@ -30,6 +22,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   streamLike = false,
   runningMs,
 }: Props) {
+  void runningMs;
   const [expanded, setExpanded] = useState(false);
   const [shouldCollapse, setShouldCollapse] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -55,11 +48,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   return (
     <div className={`thinking-block proma-like${dimmed ? ' dimmed' : ''}${sealed ? ' sealed' : ' running'}`}>
       <div className="thinking-block-summary">
-        <span className="thinking-block-title">THINKING</span>
         {!sealed && <span className="thinking-dots"><span /><span /><span /></span>}
-        {!sealed && typeof runningMs === 'number' && runningMs >= 0 && (
-          <span className="thinking-block-elapsed">{formatRunningDuration(runningMs)}</span>
-        )}
       </div>
       {!!bodyContent && (
         <div className={`thinking-block-panel${shouldCollapse && !expanded ? ' collapsed' : ''}`}>

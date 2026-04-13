@@ -147,6 +147,30 @@ function extractGenericDetail(args: Record<string, unknown>): string {
   if (structured) return structured;
 
   const scalar = (key: string): string => asText(args[key]);
+  const skillLike = scalar('skill')
+    || scalar('skill_name')
+    || scalar('skillName');
+  if (skillLike) return truncateHead(skillLike, 40);
+
+  const skillPathLike = scalar('skill_path') || scalar('skillPath');
+  if (skillPathLike) {
+    const cleaned = skillPathLike.replace(/\\/g, '/').replace(/\/+$/, '');
+    const lastSeg = cleaned.split('/').filter(Boolean).pop() || cleaned;
+    if (lastSeg) return truncateHead(lastSeg, 40);
+  }
+
+  const githubUrlLike = scalar('github_url') || scalar('githubUrl');
+  if (githubUrlLike) {
+    try {
+      const u = new URL(githubUrlLike);
+      const segs = u.pathname.split('/').filter(Boolean);
+      if (segs.length >= 2) return truncateHead(`${segs[0]}/${segs[1].replace(/\.git$/i, '')}`, 40);
+      if (segs.length === 1) return truncateHead(segs[0].replace(/\.git$/i, ''), 40);
+    } catch {
+      return truncateHead(githubUrlLike, 40);
+    }
+  }
+
   const pathLike = scalar('path') || scalar('file_path') || scalar('cwd');
   if (pathLike) return truncatePath(pathLike);
 
@@ -178,6 +202,8 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
   if (!args) return '';
   const tool = String(name || '').toLowerCase();
   switch (tool) {
+    case 'install_skill':
+      return extractGenericDetail(args);
     case 'read':
     case 'write':
     case 'edit':
