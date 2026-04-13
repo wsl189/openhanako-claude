@@ -509,4 +509,143 @@ describe("ClaudeSessionRuntime resume recovery", () => {
 
     await runtime.close();
   });
+
+  it("releases pending turn immediately on abort even if interrupt does not end stream", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    let enteredTurnResolve;
+    const enteredTurn = new Promise((resolve) => {
+      enteredTurnResolve = resolve;
+    });
+
+    let unblockStream = null;
+    let closed = false;
+    const close = vi.fn(() => {
+      closed = true;
+      unblockStream?.();
+    });
+    const interrupt = vi.fn(async () => {
+      // 模拟 SDK interrupt 未立即结束流（真实场景会偶发这个竞态）
+    });
+
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          enteredTurnResolve?.();
+          await new Promise((resolve) => {
+            unblockStream = resolve;
+          });
+          if (closed) {
+            throw new Error("Query closed before response received");
+          }
+        }
+      }
+      const iterator = stream();
+      iterator.close = close;
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.interrupt = interrupt;
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "abort-immediate-release-session",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-abort-immediate-release.json",
+      options: {},
+    });
+
+    const pending = runtime.prompt("stop quickly but keep responsive");
+    await enteredTurn;
+
+    await expect(runtime.abort()).resolves.toBe(true);
+    await expect(pending).rejects.toThrow("Request was aborted.");
+    expect(runtime.isStreaming).toBe(false);
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+
+    await runtime.close();
+  });
+
+  it("can start a new prompt immediately after abort without reusing old queue", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    let firstEnteredResolve;
+    const firstEntered = new Promise((resolve) => {
+      firstEnteredResolve = resolve;
+    });
+
+    let releaseFirstStream = null;
+    let firstClosed = false;
+    let queryCallCount = 0;
+
+    queryMock.mockImplementation(({ prompt }) => {
+      queryCallCount += 1;
+      const callIndex = queryCallCount;
+
+      async function* stream() {
+        if (callIndex === 1) {
+          for await (const _input of prompt) {
+            firstEnteredResolve?.();
+            await new Promise((resolve) => {
+              releaseFirstStream = resolve;
+            });
+            if (firstClosed) {
+              throw new Error("Query closed before response received");
+            }
+          }
+          return;
+        }
+
+        for await (const _input of prompt) {
+          yield {
+            type: "assistant",
+            message: {
+              id: "after-abort-assistant",
+              content: [{ type: "text", text: "after abort" }],
+            },
+          };
+          yield {
+            type: "result",
+            session_id: "after-abort-session",
+            is_error: false,
+            usage: {},
+          };
+          return;
+        }
+      }
+
+      const iterator = stream();
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.interrupt = vi.fn(async () => {});
+      iterator.close = vi.fn(() => {
+        if (callIndex === 1) {
+          firstClosed = true;
+          setTimeout(() => releaseFirstStream?.(), 25);
+        }
+      });
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "abort-then-reprompt",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-abort-then-reprompt.json",
+      options: {},
+    });
+
+    const firstPending = runtime.prompt("first prompt");
+    await firstEntered;
+    await expect(runtime.abort()).resolves.toBe(true);
+    await expect(firstPending).rejects.toThrow("Request was aborted.");
+
+    const secondResult = await runtime.prompt("second prompt after abort");
+    expect(secondResult?.type).toBe("result");
+    expect(queryCallCount).toBeGreaterThanOrEqual(2);
+
+    await runtime.close();
+  });
 });

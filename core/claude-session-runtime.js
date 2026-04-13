@@ -499,16 +499,54 @@ export class ClaudeSessionRuntime {
   }
 
   async abort() {
-    if (!this._query?.interrupt || !this.isStreaming) return false;
+    if (!this.isStreaming) return false;
     this._abortRequested = true;
+    const abortError = new Error("Request was aborted.");
+    // 关键：用户点击停止时，立即释放当前 pending turn。
+    // 避免 SDK 中断信号已发出但底层流尚未结束时，后续 prompt 被“还在运行”卡住。
+    const turn = this._pendingTurn;
+    this._pendingTurn = null;
+    turn?.reject(abortError);
+    this.isStreaming = false;
+
+    if (this._activeCompactionTrigger) {
+      this._emit({ type: "compaction_end", trigger: this._activeCompactionTrigger });
+      this._activeCompactionTrigger = null;
+    }
+    this.isCompacting = false;
+    const compaction = this._pendingCompaction;
+    this._pendingCompaction = null;
+    compaction?.reject(abortError);
+
     const activeQuery = this._query;
+    const activePump = this._pumpPromise;
+    const activeQueue = this._queue;
+    // 立即切断旧流引用：后续 prompt 必须走新 query/new queue，
+    // 不允许再把消息写进已被 abort 的旧队列。
+    this._query = null;
+    this._pumpPromise = null;
+    this._pumpActive = false;
+    this._queue = new AsyncMessageQueue();
     try {
-      await activeQuery.interrupt();
+      activeQueue?.close?.();
+    } catch {}
+    if (!activeQuery) {
+      activePump?.catch(() => {});
+      return true;
+    }
+    const hasInterrupt = typeof activeQuery.interrupt === "function";
+    try {
+      if (hasInterrupt) {
+        await activeQuery.interrupt();
+      }
     } catch (error) {
       if (!isAbortError(error)) throw error;
     } finally {
-      activeQuery?.close?.();
+      try {
+        activeQuery?.close?.();
+      } catch {}
     }
+    activePump?.catch(() => {});
     return true;
   }
 
