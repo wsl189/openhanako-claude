@@ -91,6 +91,64 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     expect(setMcpServers).toHaveBeenCalledWith(mcpServers);
   });
 
+  it("does not hang prompt when setMcpServers stalls", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          yield {
+            type: "assistant",
+            session_id: "mcp-timeout-session",
+            message: {
+              content: [{ type: "text", text: "ok" }],
+            },
+          };
+          yield {
+            type: "result",
+            session_id: "mcp-timeout-session",
+            is_error: false,
+          };
+          return;
+        }
+      }
+      const iterator = stream();
+      iterator.close = vi.fn();
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.setMcpServers = vi.fn(() => new Promise(() => {}));
+      return iterator;
+    });
+
+    const prevTimeout = process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS;
+    process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS = "1";
+
+    try {
+      const runtime = new ClaudeSessionRuntime({
+        sessionId: "mcp-timeout",
+        resumeSessionId: null,
+        cwd: process.cwd(),
+        sessionPath: "/tmp/hanako-runtime-test-mcp-timeout.json",
+        options: {
+          mcpServers: {
+            hanako: {
+              type: "sdk",
+              name: "hanako-tools",
+              instance: {},
+            },
+          },
+        },
+      });
+
+      await runtime.prompt("hello");
+      await runtime.close();
+      expect(queryMock).toHaveBeenCalledTimes(1);
+    } finally {
+      if (prevTimeout == null) delete process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS;
+      else process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS = prevTimeout;
+    }
+  });
+
   it("retries as a fresh session when resume session is missing", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();

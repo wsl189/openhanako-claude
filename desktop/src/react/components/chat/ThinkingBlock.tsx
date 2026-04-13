@@ -9,21 +9,45 @@ interface Props {
   content: string;
   sealed: boolean;
   dimmed?: boolean;
+  streamLike?: boolean;
 }
 
 const THINKING_COLLAPSE_LINE_THRESHOLD = 4;
 
-export const ThinkingBlock = memo(function ThinkingBlock({ content, sealed, dimmed = false }: Props) {
+export const ThinkingBlock = memo(function ThinkingBlock({
+  content,
+  sealed,
+  dimmed = false,
+  streamLike = false,
+}: Props) {
   const t = window.t ?? ((p: string) => p);
   const [expanded, setExpanded] = useState(true);
   const [shouldCollapse, setShouldCollapse] = useState(false);
+  const [replayStreaming, setReplayStreaming] = useState(() => streamLike && sealed && !!content);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const stateText = sealed ? t('thinking.done') : t('thinking.active');
+  const isStreamingLike = !sealed || replayStreaming;
   const { displayedContent } = useSmoothStream({
     content,
-    isStreaming: !sealed,
+    isStreaming: isStreamingLike,
     minDelay: 16,
+    startFromEmptyWhenStreaming: replayStreaming,
   });
+
+  useEffect(() => {
+    if (!streamLike || !sealed || !content) {
+      setReplayStreaming(false);
+      return;
+    }
+    setReplayStreaming(true);
+  }, [streamLike, sealed, content]);
+
+  useEffect(() => {
+    if (!replayStreaming) return;
+    const duration = Math.min(1_050, Math.max(220, Math.ceil(content.length * 7)));
+    const timer = window.setTimeout(() => setReplayStreaming(false), duration);
+    return () => window.clearTimeout(timer);
+  }, [replayStreaming, content.length]);
 
   useEffect(() => {
     const el = contentRef.current;

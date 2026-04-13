@@ -1217,6 +1217,7 @@
     "agentDeleteActive": "不能删除当前正在使用的助手",
     "agentNotExists": "助手 \"{id}\" 不存在",
     "modelNoResponse": "模型未返回任何内容，请检查 API 配置和网络连接。",
+    "replyTimeout": "等待模型回复超时（{sec} 秒），已自动停止。请重试。",
     "noActiveSession": "没有活跃的 session",
     "modelSwitchBusy": "当前正在回复或整理上下文，请稍后再切换模型",
     "compacting": "正在压缩中",

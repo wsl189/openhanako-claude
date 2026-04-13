@@ -245,7 +245,7 @@ function compactAssistantHistoryBlocks(content) {
 
 function isToolMessageSuccess(message) {
   if (!message || typeof message !== "object") return true;
-  if (message.success === false) return false;
+  if (typeof message.success === "boolean") return message.success;
   const error = message.details?.error;
   return !(typeof error === "string" && error.trim());
 }

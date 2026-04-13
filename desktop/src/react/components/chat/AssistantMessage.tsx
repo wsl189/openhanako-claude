@@ -12,11 +12,13 @@ import { SettingsConfirmCard } from './SettingsConfirmCard';
 import type { ChatMessage, ContentBlock } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
+import { useSmoothStream } from '../../hooks/use-smooth-stream';
 import { useI18n } from '../../hooks/use-i18n';
 import { openFilePreview, openSkillPreview, readFileForPreview } from '../../utils/file-preview';
 import { openPreview } from '../../stores/artifact-actions';
 import { normalizeAgentDisplayName } from '../../utils/agent-helpers';
 import { cronToHuman } from '../../utils/format';
+import { renderMarkdown } from '../../utils/markdown';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -74,6 +76,9 @@ function formatRunningDuration(ms: number): string {
 }
 
 const CHAIN_AUTO_COLLAPSE_DELAY_MS = 1200;
+const BLOCK_REVEAL_DELAY_MS = 88;
+const FINAL_TEXT_SETTLE_MIN_MS = 240;
+const FINAL_TEXT_SETTLE_MAX_MS = 1200;
 
 export const AssistantMessage = memo(function AssistantMessage({ message, showAvatar, isStreaming = false, runningMs }: Props) {
   const agentName = useStore(s => s.agentName) || 'Hanako';
@@ -114,13 +119,55 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   }, [sessionAgent?.avatarUrl, agentAvatarUrl, fallbackAvatar]);
 
   const blocks = message.blocks || [];
+  const isLiveStreamMessage = isStreaming || String(message.id || '').startsWith('stream-');
   const displayBlocks = useMemo(() => removeRedundantOutputToolLines(blocks), [blocks]);
+  const [revealedBlockCount, setRevealedBlockCount] = useState(() => (
+    isLiveStreamMessage ? Math.min(1, displayBlocks.length) : displayBlocks.length
+  ));
+  const prevRevealMessageIdRef = useRef(message.id);
+
+  useEffect(() => {
+    if (prevRevealMessageIdRef.current === message.id) return;
+    prevRevealMessageIdRef.current = message.id;
+    setRevealedBlockCount(isLiveStreamMessage ? Math.min(1, displayBlocks.length) : displayBlocks.length);
+  }, [message.id, isLiveStreamMessage, displayBlocks.length]);
+
+  useEffect(() => {
+    if (!isLiveStreamMessage) {
+      if (revealedBlockCount !== displayBlocks.length) {
+        setRevealedBlockCount(displayBlocks.length);
+      }
+      return;
+    }
+
+    if (revealedBlockCount > displayBlocks.length) {
+      setRevealedBlockCount(displayBlocks.length);
+      return;
+    }
+    if (revealedBlockCount >= displayBlocks.length) return;
+
+    const remaining = displayBlocks.length - revealedBlockCount;
+    const delay = Math.min(
+      BLOCK_REVEAL_DELAY_MS + Math.min(4, remaining) * 20,
+      BLOCK_REVEAL_DELAY_MS * 2,
+    );
+    const timer = window.setTimeout(() => {
+      setRevealedBlockCount((count) => Math.min(displayBlocks.length, count + 1));
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [isLiveStreamMessage, displayBlocks.length, revealedBlockCount]);
+
+  const visibleBlocks = useMemo(
+    () => displayBlocks.slice(0, Math.max(0, revealedBlockCount)),
+    [displayBlocks, revealedBlockCount],
+  );
+
   const finalTextIndex = useMemo(() => {
-    for (let i = displayBlocks.length - 1; i >= 0; i--) {
-      if (displayBlocks[i].type === 'text') return i;
+    for (let i = visibleBlocks.length - 1; i >= 0; i--) {
+      if (visibleBlocks[i].type === 'text') return i;
     }
     return -1;
-  }, [displayBlocks]);
+  }, [visibleBlocks]);
   const hasPrimaryText = finalTextIndex >= 0;
   const isAutoCollapsibleChainBlock = useCallback((block: ContentBlock, index: number) => {
     if (isCoreChainBlock(block)) return true;
@@ -128,8 +175,8 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     return block.type === 'text' && index !== finalTextIndex;
   }, [hasPrimaryText, finalTextIndex]);
   const chainBlocks = useMemo(
-    () => displayBlocks.filter((block, index) => isAutoCollapsibleChainBlock(block, index)),
-    [displayBlocks, isAutoCollapsibleChainBlock],
+    () => visibleBlocks.filter((block, index) => isAutoCollapsibleChainBlock(block, index)),
+    [visibleBlocks, isAutoCollapsibleChainBlock],
   );
   const hasCollapsibleChain = hasPrimaryText && chainBlocks.length > 0;
   const [chainExpanded, setChainExpanded] = useState(() => isStreaming);
@@ -202,21 +249,55 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     const detail = parts.length ? parts.join(' · ') : '详情';
     return `思考和执行链（${detail}）`;
   }, [chainThinkingCount, chainToolCount, chainIntermediateTextCount]);
-  const finalTextHtml = finalTextIndex >= 0 && displayBlocks[finalTextIndex].type === 'text'
-    ? displayBlocks[finalTextIndex].html
-    : '';
-  const [smoothedFinalTextHtml, setSmoothedFinalTextHtml] = useState(finalTextHtml);
+  const finalTextBlock = finalTextIndex >= 0 && visibleBlocks[finalTextIndex].type === 'text'
+    ? visibleBlocks[finalTextIndex]
+    : null;
+  const finalTextHtml = finalTextBlock?.html || '';
+  const finalTextRaw = finalTextBlock?.raw || '';
+  const [replayFinalText, setReplayFinalText] = useState(
+    () => isLiveStreamMessage && !isStreaming && !!finalTextRaw,
+  );
+  const prevFinalRawRef = useRef(finalTextRaw);
 
   useEffect(() => {
-    if (!isStreaming) {
-      setSmoothedFinalTextHtml(finalTextHtml);
+    const prev = prevFinalRawRef.current;
+    prevFinalRawRef.current = finalTextRaw;
+    if (!isLiveStreamMessage || !finalTextRaw) {
+      setReplayFinalText(false);
       return;
     }
-    const timer = window.setTimeout(() => {
-      setSmoothedFinalTextHtml(finalTextHtml);
-    }, 34);
+    if (isStreaming) {
+      setReplayFinalText(false);
+      return;
+    }
+    if (finalTextRaw !== prev) {
+      setReplayFinalText(true);
+    }
+  }, [finalTextRaw, isLiveStreamMessage, isStreaming]);
+
+  useEffect(() => {
+    if (!replayFinalText) return;
+    const duration = Math.min(
+      FINAL_TEXT_SETTLE_MAX_MS,
+      Math.max(FINAL_TEXT_SETTLE_MIN_MS, Math.ceil(finalTextRaw.length * 8)),
+    );
+    const timer = window.setTimeout(() => setReplayFinalText(false), duration);
     return () => window.clearTimeout(timer);
-  }, [finalTextHtml, isStreaming]);
+  }, [replayFinalText, finalTextRaw.length]);
+
+  const canSmoothFinalText = finalTextRaw.length > 0 && finalTextRaw.length <= 8_000;
+  const smoothFinalTextStreaming = canSmoothFinalText && (isStreaming || replayFinalText);
+  const { displayedContent: smoothedFinalTextRaw } = useSmoothStream({
+    content: finalTextRaw,
+    isStreaming: smoothFinalTextStreaming,
+    minDelay: 16,
+    startFromEmptyWhenStreaming: smoothFinalTextStreaming,
+  });
+  const finalDisplayHtml = useMemo(() => {
+    if (!finalTextRaw || !canSmoothFinalText) return finalTextHtml;
+    if (!smoothFinalTextStreaming) return finalTextHtml;
+    return renderMarkdown(smoothedFinalTextRaw);
+  }, [finalTextRaw, finalTextHtml, canSmoothFinalText, smoothFinalTextStreaming, smoothedFinalTextRaw]);
 
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -227,16 +308,16 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
   }, [t]);
 
   const handleCopy = useCallback(() => {
-    if (!finalTextHtml) return;
+    if (!finalDisplayHtml) return;
     const tmp = document.createElement('div');
-    tmp.innerHTML = finalTextHtml;
+    tmp.innerHTML = finalDisplayHtml;
     const text = tmp.innerText.trim();
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     }).catch(() => {});
-  }, [finalTextHtml]);
+  }, [finalDisplayHtml]);
 
   return (
     <div className="message-group assistant">
@@ -287,7 +368,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
             <span className="chain-summary-status">{chainExpanded ? '已展开' : '已折叠'}</span>
           </button>
         )}
-        {displayBlocks.map((block, i) => {
+        {visibleBlocks.map((block, i) => {
           if (isAutoCollapsibleChainBlock(block, i)) {
             const chainVisible = !hasCollapsibleChain || chainExpanded;
             return (
@@ -302,6 +383,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
                     agentName={displayName}
                     yuan={displayYuan}
                     dimmed={hasPrimaryText && block.type !== 'text'}
+                    animate={isLiveStreamMessage}
                   />
                 </div>
               </div>
@@ -311,8 +393,11 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
           const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
           if (isFinalTextBlock) {
             return (
-              <div key={i} className={`assistant-final-reply${isStreaming ? ' streaming' : ''}`}>
-                <MarkdownContent html={isStreaming ? smoothedFinalTextHtml : block.html} className={isStreaming ? 'md-content stream-live' : 'md-content'} />
+              <div key={i} className={`assistant-final-reply${(isStreaming || replayFinalText) ? ' streaming' : ''}`}>
+                <MarkdownContent
+                  html={finalDisplayHtml || block.html}
+                  className={(isStreaming || replayFinalText) ? 'md-content stream-live' : 'md-content'}
+                />
                 <button
                   className={`msg-copy-btn${copied ? ' copied' : ''}`}
                   onClick={handleCopy}
@@ -340,6 +425,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
               agentName={displayName}
               yuan={displayYuan}
               dimmed={hasPrimaryText && block.type !== 'text'}
+              animate={isLiveStreamMessage}
             />
           );
         })}
@@ -350,19 +436,20 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
 
 // ── ContentBlock 分发 ──
 
-const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan, dimmed }: {
+const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan, dimmed, animate }: {
   block: ContentBlock;
   agentName: string;
   yuan: string;
   dimmed?: boolean;
+  animate?: boolean;
 }) {
   switch (block.type) {
     case 'thinking':
-      return <ThinkingBlock content={block.content} sealed={block.sealed} dimmed={!!dimmed} />;
+      return <ThinkingBlock content={block.content} sealed={block.sealed} dimmed={!!dimmed} streamLike={!!animate} />;
     case 'mood':
       return <MoodBlock yuan={block.yuan} text={block.text} />;
     case 'tool_group':
-      return <ToolGroupBlock tools={block.tools} agentName={agentName} dimmed={!!dimmed} />;
+      return <ToolGroupBlock tools={block.tools} agentName={agentName} dimmed={!!dimmed} animate={!!animate} />;
     case 'text':
       return <MarkdownContent html={block.html} />;
     case 'xing':

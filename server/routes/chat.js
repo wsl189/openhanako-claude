@@ -38,6 +38,11 @@ const TOOL_ARG_LONG_TEXT_MAX_LEN = 12_000;
 const TOOL_ARG_ARRAY_MAX_ITEMS = 12;
 const TOOL_ARG_OBJECT_MAX_KEYS = 40;
 const TOOL_ARG_LONG_TEXT_KEYS = new Set(["content", "old_string", "new_string", "old_text", "new_text"]);
+const CHAT_TURN_TIMEOUT_MS = (() => {
+  const raw = Number.parseInt(process.env.HANAKO_CHAT_TURN_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return 8 * 60 * 1000;
+})();
 
 function toModelRef(model) {
   if (!model || typeof model !== "object") return "";
@@ -140,6 +145,24 @@ function shouldSuppressUserFacingErrorMessage(message) {
   );
 }
 
+function createTurnTimeoutError(timeoutMs) {
+  const err = new Error(`Turn timed out after ${timeoutMs}ms`);
+  err.code = "TURN_TIMEOUT";
+  err.timeoutMs = timeoutMs;
+  return err;
+}
+
+function isTurnTimeoutError(err) {
+  return err?.code === "TURN_TIMEOUT";
+}
+
+function getTurnTimeoutMessage(timeoutMs) {
+  const sec = Math.max(1, Math.round(timeoutMs / 1000));
+  const translated = t("error.replyTimeout", { sec: String(sec) });
+  if (translated && translated !== "error.replyTimeout") return translated;
+  return `等待模型回复超时（${sec} 秒），已自动停止。请重试。`;
+}
+
 /**
  * 从内容块中提取纯文本
  */
@@ -208,6 +231,12 @@ function extractToolResultText(content, details) {
   return "";
 }
 
+function resolveToolEndSuccess(event) {
+  if (typeof event?.success === "boolean") return event.success;
+  const error = event?.details?.error;
+  return !(typeof error === "string" && error.trim().length > 0);
+}
+
 function extractTitleSourceText(content) {
   return extractText(content)
     .replace(/\r/g, "")
@@ -267,9 +296,13 @@ function compactSdkMessage(message) {
   if (!role || !content.length) return null;
 
   if (role === "assistant") {
+    const messageId = String(message.messageId || message.id || "").trim();
+    const messageUuid = String(message.uuid || "").trim();
     return {
       role,
       content: compactAssistantSnapshotContent(content),
+      ...(messageId ? { messageId } : {}),
+      ...(messageUuid ? { uuid: messageUuid } : {}),
     };
   }
 
@@ -282,9 +315,13 @@ function compactSdkMessage(message) {
         is_error: block.is_error === true,
       }));
     if (!toolResults.length) return null;
+    const messageId = String(message.messageId || message.id || "").trim();
+    const messageUuid = String(message.uuid || "").trim();
     return {
       role,
       content: toolResults,
+      ...(messageId ? { messageId } : {}),
+      ...(messageUuid ? { uuid: messageUuid } : {}),
     };
   }
 
@@ -700,14 +737,13 @@ export default async function chatRoute(app, { engine, hub }) {
     } else if (event.type === "tool_end") {
       if (!ss) return;
       const details = event.details;
-      const hasDetailsError = typeof details?.error === "string" && details.error.trim().length > 0;
       const args = compactToolArgs(event.args);
       const resultText = extractToolResultText(event.content, details);
       emitStreamEvent(sessionPath, ss, {
         type: "tool_end",
         name: event.name || "",
         toolCallId: event.toolCallId || null,
-        success: event.success !== false && !hasDetailsError,
+        success: resolveToolEndSuccess(event),
         args,
         details,
         resultText,
@@ -1181,6 +1217,7 @@ export default async function chatRoute(app, { engine, hub }) {
           }
         }
         const ss = getState(promptSessionPath);
+        let timeoutTimer = null;
         try {
           ss.thinkTagParser.reset();
           ss.xingParser.reset();
@@ -1196,14 +1233,37 @@ export default async function chatRoute(app, { engine, hub }) {
           broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath });
           // 透传图片给主对话模型：支持原生多模态模型直接看图回复，
           // 同时仍保留 pendingImages 供 describe_images 工具按需使用。
-          await hub.send(promptText, { sessionPath: promptSessionPath, images: msg.images });
+          const sendPromise = hub.send(promptText, { sessionPath: promptSessionPath, images: msg.images });
+          // 防止上游 provider/SDK 卡死导致前端一直“运行中”无反馈。
+          sendPromise.catch(() => {});
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutTimer = setTimeout(async () => {
+              debugLog()?.warn("ws", `turn timeout ${CHAT_TURN_TIMEOUT_MS}ms, abort session=${promptSessionPath || "unknown"}`);
+              try {
+                await hub.abort(promptSessionPath);
+              } catch {}
+              reject(createTurnTimeoutError(CHAT_TURN_TIMEOUT_MS));
+            }, CHAT_TURN_TIMEOUT_MS);
+          });
+          await Promise.race([sendPromise, timeoutPromise]);
           broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
         } catch (err) {
-          const errorMessage = String(err?.message || "").trim();
+          if (isTurnTimeoutError(err)) {
+            ss.userAborted = true;
+            finalizeAbortedTurn(promptSessionPath, ss);
+          }
+          const errorMessage = isTurnTimeoutError(err)
+            ? getTurnTimeoutMessage(err?.timeoutMs || CHAT_TURN_TIMEOUT_MS)
+            : String(err?.message || "").trim();
           if (!ss.hadError && !shouldSuppressUserFacingErrorMessage(errorMessage)) {
             wsSend(ws, { type: "error", message: errorMessage || t("error.modelNoResponse") });
           }
           broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
+        } finally {
+          if (timeoutTimer) {
+            clearTimeout(timeoutTimer);
+            timeoutTimer = null;
+          }
         }
       }
     });

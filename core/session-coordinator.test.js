@@ -28,6 +28,28 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     expect(translated).toContainEqual({ type: "assistant_snapshot", content });
   });
 
+  it("keeps assistant sdk_message identity fields for frontend de-dup", () => {
+    const coordinator = new SessionCoordinator({});
+    const translated = coordinator._translateClaudeEvent({
+      type: "assistant",
+      uuid: "assistant-uuid-1",
+      message: {
+        id: "assistant-message-1",
+        content: [{ type: "thinking", thinking: "plan" }],
+      },
+    }, "/tmp/session-with-assistant-id");
+
+    expect(translated).toContainEqual({
+      type: "sdk_message",
+      message: {
+        role: "assistant",
+        messageId: "assistant-message-1",
+        uuid: "assistant-uuid-1",
+        content: [{ type: "thinking", thinking: "plan" }],
+      },
+    });
+  });
+
   it("emits sdk_message for user tool_result blocks", () => {
     const coordinator = new SessionCoordinator({});
 
@@ -198,6 +220,33 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     expect(translated).toContainEqual(expect.objectContaining({
       type: "tool_end",
       name: "Bash",
+      success: true,
+    }));
+  });
+
+  it("prefers explicit tool_end success over details.error for custom tools", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-custom-tool-success";
+
+    coordinator._translateClaudeEvent({
+      type: "tool_start",
+      name: "mcp__hanako__generate_images",
+      toolCallId: "custom-tool-1",
+      args: { prompt: "a cute puppy" },
+    }, sessionPath);
+
+    const translated = coordinator._translateClaudeEvent({
+      type: "tool_end",
+      name: "mcp__hanako__generate_images",
+      toolCallId: "custom-tool-1",
+      success: true,
+      details: { error: "legacy-warning", imageCount: 1 },
+      content: [{ type: "text", text: "generated successfully" }],
+    }, sessionPath);
+
+    expect(translated).toContainEqual(expect.objectContaining({
+      type: "tool_end",
+      toolCallId: "custom-tool-1",
       success: true,
     }));
   });

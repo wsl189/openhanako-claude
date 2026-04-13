@@ -40,7 +40,7 @@ export type ContentBlock =
   | { type: 'thinking'; content: string; sealed: boolean }
   | { type: 'mood'; yuan: string; text: string }
   | { type: 'tool_group'; tools: ToolCall[]; collapsed: boolean }
-  | { type: 'text'; html: string }
+  | { type: 'text'; html: string; raw?: string }
   | { type: 'xing'; title: string; content: string; sealed: boolean }
   | { type: 'file_output'; filePath: string; label: string; ext: string }
   | { type: 'artifact'; artifactId: string; artifactType: string; title: string; content: string; language?: string }

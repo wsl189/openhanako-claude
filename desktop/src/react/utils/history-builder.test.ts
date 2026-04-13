@@ -103,4 +103,33 @@ describe('buildItemsFromHistory', () => {
 
     expect(blocks.map((b) => b.type)).toEqual(['tool_group', 'text']);
   });
+
+  it('preserves multiple adjacent thinking blocks from structured history', () => {
+    const blocks = getFirstAssistantBlocks({
+      messages: [{
+        id: 'a-5',
+        role: 'assistant',
+        content: '最终回答',
+        contentBlocks: [
+          { type: 'thinking', thinking: '第一段思考。' },
+          { type: 'thinking', thinking: '第二段思考。' },
+          { type: 'text', text: '最终回答' },
+        ],
+      }],
+    });
+
+    expect(blocks.map((b) => b.type)).toEqual(['thinking', 'thinking', 'text']);
+    const first = blocks[0];
+    const second = blocks[1];
+    expect(first?.type).toBe('thinking');
+    expect(second?.type).toBe('thinking');
+    if (first?.type === 'thinking') {
+      expect(first.content).toContain('第一段思考');
+      expect(first.content).not.toContain('第二段思考');
+    }
+    if (second?.type === 'thinking') {
+      expect(second.content).toContain('第二段思考');
+      expect(second.content).not.toContain('第一段思考');
+    }
+  });
 });

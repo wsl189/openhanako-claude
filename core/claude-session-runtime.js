@@ -121,6 +121,12 @@ function extractResultErrorMessage(message) {
   return "";
 }
 
+function getMcpAttachTimeoutMs() {
+  const raw = Number.parseInt(process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return 8_000;
+}
+
 function toContextUsageSnapshot(usage, fallbackUsage = null) {
   if (!usage && !fallbackUsage) return null;
   const fallbackTokens = fallbackUsage
@@ -242,7 +248,26 @@ export class ClaudeSessionRuntime {
       && Object.keys(this.options.mcpServers).length > 0
       && typeof this._query?.setMcpServers === "function"
     ) {
-      await this._query.setMcpServers(this.options.mcpServers);
+      const timeoutMs = getMcpAttachTimeoutMs();
+      let settled = false;
+      let timeoutId = null;
+      const attachPromise = Promise.resolve()
+        .then(() => this._query.setMcpServers(this.options.mcpServers))
+        .catch((err) => {
+          if (!settled) {
+            console.warn(`[runtime] setMcpServers failed: ${err?.message || err}`);
+          }
+        });
+      const timeoutPromise = new Promise((resolve) => {
+        timeoutId = setTimeout(() => {
+          if (settled) return resolve();
+          console.warn(`[runtime] setMcpServers timeout (${timeoutMs}ms), continue without waiting`);
+          resolve();
+        }, timeoutMs);
+      });
+      await Promise.race([attachPromise, timeoutPromise]);
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
     }
     this._pumpActive = true;
     this._pumpPromise = this._pump();

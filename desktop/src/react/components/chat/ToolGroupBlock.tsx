@@ -2,7 +2,7 @@
  * ToolGroupBlock — 工具调用组，含展开/折叠
  */
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { extractToolDetail } from '../../utils/message-parser';
 import type { ToolCall } from '../../stores/chat-types';
 import { useSmoothStream } from '../../hooks/use-smooth-stream';
@@ -13,6 +13,7 @@ interface Props {
   tools: ToolCall[];
   agentName: string;
   dimmed?: boolean;
+  animate?: boolean;
 }
 
 const TOOL_PANEL_TEXT_MAX_LEN = 10_000;
@@ -293,12 +294,23 @@ function getDetailsText(tool: ToolCall): string {
   return stringifyPreview(details);
 }
 
-export const ToolGroupBlock = memo(function ToolGroupBlock({ tools, agentName, dimmed = false }: Props) {
+export const ToolGroupBlock = memo(function ToolGroupBlock({
+  tools,
+  agentName,
+  dimmed = false,
+  animate = false,
+}: Props) {
   return (
-    <div className={`tool-group proma-like${dimmed ? ' dimmed' : ''}`}>
+    <div className={`tool-group proma-like${dimmed ? ' dimmed' : ''}${animate ? ' streaming' : ''}`}>
       <div className="tool-group-content">
         {tools.map((tool, i) => (
-          <ToolIndicator key={tool.toolUseId || `${tool.name}-${i}`} tool={tool} agentName={agentName} />
+          <ToolIndicator
+            key={tool.toolUseId || `${tool.name}-${i}`}
+            tool={tool}
+            agentName={agentName}
+            order={i}
+            animateCompletedOnMount={animate}
+          />
         ))}
       </div>
     </div>
@@ -307,17 +319,32 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({ tools, agentName, d
 
 // ── ToolIndicator ──
 
-const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: ToolCall; agentName: string }) {
+const ToolIndicator = memo(function ToolIndicator({
+  tool,
+  agentName,
+  order,
+  animateCompletedOnMount,
+}: {
+  tool: ToolCall;
+  agentName: string;
+  order: number;
+  animateCompletedOnMount: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [replayDoneStreaming, setReplayDoneStreaming] = useState(
+    () => animateCompletedOnMount && tool.done,
+  );
+  const prevDoneRef = useRef(tool.done);
   const detail = extractToolDetail(tool.name, tool.args);
   const phase = (tool.done ? (tool.success ? 'done' : 'failed') : 'running') as 'running' | 'done' | 'failed';
   const label = getToolLabel(tool.name, phase, agentName, tool.args);
   const actionLine = buildToolActionLine(tool.name, phase, detail);
+  const streamActionLine = !tool.done || replayDoneStreaming;
   const { displayedContent: smoothActionLine } = useSmoothStream({
     content: actionLine,
-    isStreaming: !tool.done,
+    isStreaming: streamActionLine,
     minDelay: 14,
-    startFromEmptyWhenStreaming: true,
+    startFromEmptyWhenStreaming: streamActionLine,
   });
   const t = (window as any).t;
   const doneText = stripLeadingEmoji(t?.('tool._line.done') || '完成');
@@ -325,11 +352,37 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
   const outputText = useMemo(() => getOutputText(tool), [tool.resultText, tool.details]);
   const canExpand = !!outputText;
 
+  useEffect(() => {
+    const wasDone = prevDoneRef.current;
+    prevDoneRef.current = tool.done;
+
+    if (!tool.done) {
+      setReplayDoneStreaming(false);
+      return;
+    }
+    if (!animateCompletedOnMount) return;
+    // 仅“已完成状态直接挂载”时回放慢速 action line，
+    // 避免 running -> done 正常流转时从头打字。
+    if (wasDone) setReplayDoneStreaming(true);
+  }, [tool.done, animateCompletedOnMount, tool.toolUseId]);
+
+  useEffect(() => {
+    if (!replayDoneStreaming) return;
+    const duration = Math.min(900, Math.max(180, actionLine.length * 8));
+    const timer = window.setTimeout(() => setReplayDoneStreaming(false), duration);
+    return () => window.clearTimeout(timer);
+  }, [replayDoneStreaming, actionLine.length]);
+
   // 如果 args 里有 tag 类型信息（如 agent 名）
   const tag = tool.args?.agentId as string | undefined;
 
   return (
-    <div className={`tool-item ${expanded ? 'expanded' : ''}`} data-phase={phase} data-tool={tool.name}>
+    <div
+      className={`tool-item ${expanded ? 'expanded' : ''}`}
+      data-phase={phase}
+      data-tool={tool.name}
+      style={{ animationDelay: `${Math.min(order, 10) * 45}ms` }}
+    >
       <button
         type="button"
         className={`tool-indicator ${phase}${canExpand ? ' expandable' : ''}`}

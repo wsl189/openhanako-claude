@@ -643,12 +643,6 @@ export class Agent {
     const enabledCustom = Array.isArray(toolProfile?.tools?.custom_enabled)
       ? toolProfile.tools.custom_enabled.filter((name) => runtimeCustomNames.has(name))
       : [...runtimeCustomNames];
-    const builtinRequired = Array.isArray(toolProfile?.tool_catalog?.builtin_required)
-      ? toolProfile.tool_catalog.builtin_required
-      : ["read", "grep", "find", "ls"];
-    const builtinOptional = Array.isArray(toolProfile?.tool_catalog?.builtin_optional)
-      ? toolProfile.tool_catalog.builtin_optional
-      : ["write", "edit", "bash"];
     const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
 
     const readFile = (filePath) => {
@@ -735,21 +729,6 @@ export class Agent {
         ));
       }
     }
-
-    const optionalEnabled = builtinOptional.filter((name) => enabledBuiltin.includes(name));
-    parts.push(
-      isZh
-        ? "\n## 可用工具\n\n" +
-          `内置工具（必开）：${builtinRequired.join(", ")}\n` +
-          `内置工具（已开启）：${optionalEnabled.length ? optionalEnabled.join(", ") : "无"}\n` +
-          `自定义工具（已开启）：${enabledCustom.length ? enabledCustom.join(", ") : "无"}\n\n` +
-          "如果工具不在以上清单中，视为不可用，不要尝试调用。"
-        : "\n## Available Tools\n\n" +
-          `Built-in required: ${builtinRequired.join(", ")}\n` +
-          `Built-in enabled: ${optionalEnabled.length ? optionalEnabled.join(", ") : "none"}\n` +
-          `Custom enabled: ${enabledCustom.length ? enabledCustom.join(", ") : "none"}\n\n` +
-          "If a tool is not listed above, treat it as unavailable and do not call it."
-    );
 
     // 设置工具路由
     parts.push(hasTool("update_settings")

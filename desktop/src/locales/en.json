@@ -1217,6 +1217,7 @@
     "agentDeleteActive": "Cannot delete the currently active agent",
     "agentNotExists": "Agent \"{id}\" does not exist",
     "modelNoResponse": "Model returned no content. Please check API configuration and network connection.",
+    "replyTimeout": "Model response timed out ({sec}s). Stopped automatically, please try again.",
     "noActiveSession": "No active session",
     "modelSwitchBusy": "Please wait for the reply or compaction to finish before switching models",
     "compacting": "Compaction in progress",

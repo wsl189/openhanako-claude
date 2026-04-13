@@ -216,6 +216,19 @@ function pickUserFacingResultErrorMessage(event) {
   return "Claude execution failed";
 }
 
+function hasToolDetailsError(details) {
+  if (!details || typeof details !== "object") return false;
+  const error = details.error;
+  if (typeof error === "string") return error.trim().length > 0;
+  if (Array.isArray(error)) return error.some((item) => String(item || "").trim().length > 0);
+  return false;
+}
+
+function resolveToolEndSuccess(event) {
+  if (typeof event?.success === "boolean") return event.success;
+  return !hasToolDetailsError(event?.details);
+}
+
 const MAX_CACHED_SESSIONS = 20;
 const TEXT_TOOL_MARKUP_RE = /<(?:glob|read|write|edit|bash|grep|function_call|function_calls|minimax:tool_call)\b|<assistant\b[^>]*\bto=|\[TOOL_CALL\]|\bfunction_call\s*\n\s*\{|\btool_call(?:_start|_end)?\s*:/i;
 
@@ -372,12 +385,21 @@ export class SessionCoordinator {
       }
     } else if (event?.type === "assistant") {
       const content = event.message?.content || [];
+      const assistantMessageId = String(event.message?.id || "").trim();
+      const assistantUuid = String(event.uuid || "").trim();
+      const sdkAssistantMessage = {
+        role: "assistant",
+        content: Array.isArray(content) ? content : [],
+      };
+      if (assistantMessageId) {
+        sdkAssistantMessage.messageId = assistantMessageId;
+      }
+      if (assistantUuid) {
+        sdkAssistantMessage.uuid = assistantUuid;
+      }
       translated.push({
         type: "sdk_message",
-        message: {
-          role: "assistant",
-          content: Array.isArray(content) ? content : [],
-        },
+        message: sdkAssistantMessage,
       });
       const structuredToolUses = extractToolUsesFromAssistantContent(content);
       if (structuredToolUses.length > 0) {
@@ -419,12 +441,21 @@ export class SessionCoordinator {
       const content = Array.isArray(event.message?.content) ? event.message.content : [];
       const toolResultContent = content.filter((block) => block?.type === "tool_result" && block.tool_use_id);
       if (toolResultContent.length) {
+        const userMessageId = String(event.message?.id || "").trim();
+        const userUuid = String(event.uuid || "").trim();
+        const sdkUserMessage = {
+          role: "user",
+          content: toolResultContent,
+        };
+        if (userMessageId) {
+          sdkUserMessage.messageId = userMessageId;
+        }
+        if (userUuid) {
+          sdkUserMessage.uuid = userUuid;
+        }
         translated.push({
           type: "sdk_message",
-          message: {
-            role: "user",
-            content: toolResultContent,
-          },
+          message: sdkUserMessage,
         });
       }
       for (const block of content) {
@@ -506,7 +537,7 @@ export class SessionCoordinator {
         name: event.name || toolMeta.name || "",
         toolCallId: matchedToolUseId,
         args: event.args || toolMeta.args,
-        success: event.success !== false && !event.details?.error,
+        success: resolveToolEndSuccess(event),
         content: event.content || [],
         details: event.details,
       });

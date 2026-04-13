@@ -426,6 +426,177 @@ describe('mergeDelta', () => {
     }
   });
 
+  it('keeps discrete sdk_message thinking blocks separated', () => {
+    streamBufferManager.handle({
+      type: 'sdk_message',
+      sessionPath,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: '第一段思考。' }],
+      },
+    });
+    streamBufferManager.handle({
+      type: 'sdk_message',
+      sessionPath,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: '第二段思考。' }],
+      },
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['thinking', 'thinking']);
+      const first = blocks[0];
+      const second = blocks[1];
+      if (first?.type === 'thinking') {
+        expect(first.content).toContain('第一段思考');
+        expect(first.content).not.toContain('第二段思考');
+      }
+      if (second?.type === 'thinking') {
+        expect(second.content).toContain('第二段思考');
+        expect(second.content).not.toContain('第一段思考');
+      }
+    }
+  });
+
+  it('does not let assistant_snapshot fold discrete sdk_message thinking into first block', () => {
+    streamBufferManager.handle({
+      type: 'sdk_message',
+      sessionPath,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: '第一段思考。' }],
+      },
+    });
+    streamBufferManager.handle({
+      type: 'sdk_message',
+      sessionPath,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: '第二段思考。' }],
+      },
+    });
+    // 模拟后续 snapshot 仅回传当前单段 thinking（非累计快照）
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [{ type: 'thinking', thinking: '第二段思考。' }],
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      const thinkingBlocks = blocks.filter((b) => b.type === 'thinking');
+      expect(thinkingBlocks).toHaveLength(2);
+      const first = thinkingBlocks[0];
+      const second = thinkingBlocks[1];
+      if (first?.type === 'thinking') {
+        expect(first.content).toContain('第一段思考');
+        expect(first.content).not.toContain('第二段思考');
+      }
+      if (second?.type === 'thinking') {
+        expect(second.content).toContain('第二段思考');
+        expect(second.content).not.toContain('第一段思考');
+      }
+    }
+  });
+
+  it('splits thinking blocks when sdk_message messageId changes without thinking_end', () => {
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '第一段思考。' });
+    streamBufferManager.handle({
+      type: 'sdk_message',
+      sessionPath,
+      message: {
+        role: 'assistant',
+        messageId: 'assistant-msg-1',
+        content: [{ type: 'thinking', thinking: '第一段思考。' }],
+      },
+    });
+
+    // 模拟 provider 没有及时发 thinking_end，直接进入下一段离散 assistant thinking。
+    streamBufferManager.handle({
+      type: 'sdk_message',
+      sessionPath,
+      message: {
+        role: 'assistant',
+        messageId: 'assistant-msg-2',
+        content: [{ type: 'thinking', thinking: '第二段思考。' }],
+      },
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      const thinkingBlocks = blocks.filter((b) => b.type === 'thinking');
+      expect(thinkingBlocks).toHaveLength(2);
+      const first = thinkingBlocks[0];
+      const second = thinkingBlocks[1];
+      if (first?.type === 'thinking') {
+        expect(first.content).toContain('第一段思考');
+        expect(first.content).not.toContain('第二段思考');
+      }
+      if (second?.type === 'thinking') {
+        expect(second.content).toContain('第二段思考');
+        expect(second.content).not.toContain('第一段思考');
+      }
+    }
+  });
+
+  it('does not let cumulative snapshot thinking collapse event-segmented blocks', () => {
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '第一段思考。' });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '第二段思考。' });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+
+    // 模拟 provider snapshot 把 thinking 以“累计单段”回传。
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        { type: 'thinking', thinking: '第一段思考。第二段思考。' },
+      ],
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      const thinkingBlocks = blocks.filter((b) => b.type === 'thinking');
+      expect(thinkingBlocks).toHaveLength(2);
+      const first = thinkingBlocks[0];
+      const second = thinkingBlocks[1];
+      if (first?.type === 'thinking') {
+        expect(first.content).toContain('第一段思考');
+        expect(first.content).not.toContain('第二段思考');
+      }
+      if (second?.type === 'thinking') {
+        expect(second.content).toContain('第二段思考');
+        expect(second.content).not.toContain('第一段思考');
+      }
+    }
+  });
+
   it('implicitly starts thinking when only thinking_delta arrives', () => {
     streamBufferManager.handle({
       type: 'thinking_delta',

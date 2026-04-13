@@ -16,7 +16,7 @@ import { applyChatStreamLiveEvent, upsertCronConfirmation } from '../utils/chat-
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // 更高刷新频率，让前端流式文字更接近连续输出观感
-const FLUSH_INTERVAL = 90;
+const FLUSH_INTERVAL = 56;
 const NAMED_TOOL_TAGS = [
   'glob',
   'read',
@@ -83,6 +83,7 @@ interface Buffer {
   textAnchorIndex: number | null;
   thinkingAcc: string;
   hadThinking: boolean;
+  sawThinkingStreamEvent: boolean;
   xingAcc: string;
   xingTitle: string;
   liveBlocks: ContentBlock[];
@@ -92,6 +93,8 @@ interface Buffer {
   flushTimer: ReturnType<typeof setTimeout> | null;
   /** 当前 turn 是否已追加了空 assistant message */
   messageAppended: boolean;
+  /** 最近一次 assistant sdk_message 的离散消息 key（messageId/uuid） */
+  lastSdkAssistantMessageKey: string | null;
 }
 
 function isReasoningLikeType(type: unknown): boolean {
@@ -227,6 +230,7 @@ function createBuffer(sessionPath: string): Buffer {
     textAnchorIndex: null,
     thinkingAcc: '',
     hadThinking: false,
+    sawThinkingStreamEvent: false,
     xingAcc: '',
     xingTitle: '',
     liveBlocks: [],
@@ -235,7 +239,91 @@ function createBuffer(sessionPath: string): Buffer {
     lastFlushTime: 0,
     flushTimer: null,
     messageAppended: false,
+    lastSdkAssistantMessageKey: null,
   };
+}
+
+function countSealedThinkingBlocks(buf: Buffer): number {
+  let count = 0;
+  for (const block of buf.liveBlocks) {
+    if (block?.type === 'thinking' && block.sealed) count += 1;
+  }
+  return count;
+}
+
+function appendSealedThinkingSegmentsForDiscreteMessage(
+  buf: Buffer,
+  thinkingSegments: string[],
+  options: { allowUpdateLastSealed: boolean },
+): void {
+  for (const segment of thinkingSegments) {
+    const thinking = sanitizeBufferedThinkingText(String(segment || ''));
+    if (!thinking.trim()) continue;
+
+    const last = buf.liveBlocks[buf.liveBlocks.length - 1];
+    if (options.allowUpdateLastSealed && last?.type === 'thinking' && last.sealed) {
+      const prev = String(last.content || '');
+      if (!prev) {
+        last.content = thinking;
+        continue;
+      }
+      // 仅做“重复/累计快照”去重，不做任意拼接。
+      if (thinking === prev || prev.startsWith(thinking)) {
+        continue;
+      }
+      if (thinking.startsWith(prev)) {
+        last.content = thinking;
+        continue;
+      }
+    }
+
+    buf.liveBlocks.push({
+      type: 'thinking',
+      content: thinking,
+      sealed: true,
+    });
+  }
+}
+
+function applySdkMessageThinking(
+  buf: Buffer,
+  snapshotThinkingSegments: string[],
+  sdkMessageKey: string | null,
+  options: { preferUpdateLastSealed: boolean },
+): void {
+  if (snapshotThinkingSegments.length === 0) return;
+
+  const sameSdkMessage = !!(
+    sdkMessageKey
+    && buf.lastSdkAssistantMessageKey
+    && buf.lastSdkAssistantMessageKey === sdkMessageKey
+  );
+
+  buf.hadThinking = true;
+  // sdk_message 的 assistant 内容是离散消息，不是累计快照。
+  // 这里把每段 thinking 作为独立块追加，避免后续段落回写到第一段。
+  buf.sawThinkingStreamEvent = true;
+  const allowUpdateLastSealed = sameSdkMessage || options.preferUpdateLastSealed;
+
+  if (buf.inThinking) {
+    const closedThinkingSegments = snapshotThinkingSegments.slice(0, -1);
+    const inProgressSegment = snapshotThinkingSegments[snapshotThinkingSegments.length - 1] || '';
+    if (closedThinkingSegments.length > 0) {
+      appendSealedThinkingSegmentsForDiscreteMessage(buf, closedThinkingSegments, {
+        allowUpdateLastSealed,
+      });
+    }
+    const sanitizedInProgress = sanitizeBufferedThinkingText(inProgressSegment);
+    if (sanitizedInProgress.trim()) {
+      buf.thinkingAcc = mergeSnapshotText(buf.thinkingAcc, sanitizedInProgress);
+    }
+    return;
+  }
+
+  appendSealedThinkingSegmentsForDiscreteMessage(buf, snapshotThinkingSegments, {
+    allowUpdateLastSealed,
+  });
+  buf.thinkingAcc = '';
 }
 
 function hasBufferedRenderableState(buf: Buffer): boolean {
@@ -273,7 +361,7 @@ function sanitizeBufferedThinkingText(text: string): string {
 function buildTextBlockFromBufferedText(text: string): Extract<ContentBlock, { type: 'text' }> | null {
   const displayText = sanitizeBufferedStreamText(text);
   if (!displayText.trim()) return null;
-  return { type: 'text', html: renderMarkdown(displayText) };
+  return { type: 'text', html: renderMarkdown(displayText), raw: displayText };
 }
 
 function appendSealedThinkingBlock(buf: Buffer, rawThinking: string): void {
@@ -374,6 +462,13 @@ function applySnapshotThinking(buf: Buffer, content: any[]): void {
   if (snapshotThinkingSegments.length === 0) {
     if (!buf.inThinking) buf.thinkingAcc = '';
     return;
+  }
+
+  // 当本轮已收到显式 thinking_start/delta/end 时，
+  // 以事件流分段为准，避免 snapshot 的累计 thinking 把多段合并回首段。
+  if (buf.sawThinkingStreamEvent) {
+    const knownSegments = countSealedThinkingBlocks(buf) + (buf.inThinking ? 1 : 0);
+    if (snapshotThinkingSegments.length <= knownSegments) return;
   }
 
   buf.hadThinking = true;
@@ -540,19 +635,45 @@ class StreamBufferManager {
         const role = String(msg.message?.role || '');
         const content = Array.isArray(msg.message?.content) ? msg.message.content : [];
         if (role === 'assistant') {
-          if (!hasRenderableAssistantSnapshot(content) && !buf.messageAppended) break;
-          this.ensureMessage(buf);
-          applySnapshotThinking(buf, content);
-
+          const sdkMessageKey = String(
+            msg.message?.messageId || msg.message?.id || msg.message?.uuid || '',
+          ).trim() || null;
+          const snapshotThinkingSegments = extractSnapshotThinkingSegments(content);
           const snapshotText = stripStreamToolMarkup(
             stripSdkDiagnosticLines(extractSnapshotTextContent(content)),
           );
+          const toolUses = extractSnapshotToolUses(content);
+
+          if (!hasRenderableAssistantSnapshot(content) && !buf.messageAppended) break;
+          this.ensureMessage(buf);
+          const hadOpenThinkingBeforeBoundary = (
+            buf.inThinking
+            && !!sanitizeBufferedThinkingText(String(buf.thinkingAcc || '')).trim()
+          );
+
+          // 某些 provider 在 structured 模式下不会及时发 thinking_end。
+          // 当离散 sdk_message 已出现边界（换 messageId / 进入 text / tool_use）时，主动封口当前 thinking。
+          if (
+            buf.inThinking
+            && (
+              (sdkMessageKey && sdkMessageKey !== buf.lastSdkAssistantMessageKey)
+              || !!snapshotText
+              || toolUses.length > 0
+              || snapshotThinkingSegments.length === 0
+            )
+          ) {
+            closeOpenThinkingIfNeeded(buf);
+          }
+
+          applySdkMessageThinking(buf, snapshotThinkingSegments, sdkMessageKey, {
+            preferUpdateLastSealed: hadOpenThinkingBeforeBoundary,
+          });
+
           if (snapshotText) {
             if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
             buf.textAcc = mergeSnapshotText(buf.textAcc, snapshotText);
           }
 
-          const toolUses = extractSnapshotToolUses(content);
           if (toolUses.length > 0) finalizeBufferedTextSegment(buf);
           for (const toolUse of toolUses) {
             buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
@@ -562,6 +683,7 @@ class StreamBufferManager {
               args: toolUse.args,
             });
           }
+          buf.lastSdkAssistantMessageKey = sdkMessageKey;
         } else if (role === 'user') {
           const toolResults = extractSdkToolResults(content);
           if (toolResults.length === 0 && !buf.messageAppended) break;
@@ -630,6 +752,7 @@ class StreamBufferManager {
         finalizeBufferedTextSegment(buf);
         finalizeBufferedThinkingSegment(buf);
         this.ensureMessage(buf);
+        buf.sawThinkingStreamEvent = true;
         buf.inThinking = true;
         buf.hadThinking = true;
         buf.thinkingAcc = '';
@@ -638,6 +761,7 @@ class StreamBufferManager {
 
       case 'thinking_delta':
         {
+          buf.sawThinkingStreamEvent = true;
           if (!buf.inThinking) {
             finalizeBufferedTextSegment(buf);
             finalizeBufferedThinkingSegment(buf);
@@ -652,6 +776,7 @@ class StreamBufferManager {
         break;
 
       case 'thinking_end':
+        buf.sawThinkingStreamEvent = true;
         buf.inThinking = false;
         finalizeBufferedThinkingSegment(buf);
         this.flush(buf);
@@ -769,11 +894,13 @@ class StreamBufferManager {
         buf.textAnchorIndex = null;
         buf.thinkingAcc = '';
         buf.hadThinking = false;
+        buf.sawThinkingStreamEvent = false;
         buf.xingAcc = '';
         buf.liveBlocks = [];
         buf.inThinking = false;
         buf.inXing = false;
         buf.messageAppended = false;
+        buf.lastSdkAssistantMessageKey = null;
         break;
     }
   }

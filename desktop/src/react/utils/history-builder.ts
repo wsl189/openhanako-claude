@@ -142,7 +142,7 @@ function appendAssistantTextBlocks(blocks: ContentBlock[], text: string): void {
   if (!text) return;
   const { xingBlocks, text: mainText } = parseXingFromContent(text);
   if (mainText) {
-    blocks.push({ type: 'text', html: renderMarkdown(mainText) });
+    blocks.push({ type: 'text', html: renderMarkdown(mainText), raw: mainText });
   }
   for (const xb of xingBlocks) {
     blocks.push({ type: 'xing', title: xb.title, content: xb.content, sealed: true });
@@ -254,13 +254,7 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
           if (!sb || typeof sb !== 'object') continue;
           if (sb.type === 'thinking' && typeof sb.thinking === 'string') {
             hasThinkingBlock = true;
-            const prev = blocks[blocks.length - 1];
-            if (prev?.type === 'thinking') {
-              prev.content = `${prev.content}${sb.thinking}`;
-              prev.sealed = true;
-            } else {
-              blocks.push({ type: 'thinking', content: sb.thinking, sealed: true });
-            }
+            blocks.push({ type: 'thinking', content: sb.thinking, sealed: true });
             continue;
           }
 
