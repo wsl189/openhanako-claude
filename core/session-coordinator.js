@@ -29,7 +29,6 @@ const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]/i;
 export const PATROL_TOOLS_DEFAULT = [
   "search_memory", "pin_memory", "unpin_memory",
   "recall_experience", "record_experience",
-  "web_fetch",
   "todo", "cron", "notify",
   "present_files", "message_agent", "channel",
 ];
@@ -573,6 +572,20 @@ export class SessionCoordinator {
         details: event.details,
       });
       if (matchedToolUseId) state.toolCalls.delete(matchedToolUseId);
+    } else if (event?.type === "plan_mode_confirmation") {
+      translated.push({
+        type: "plan_mode_confirmation",
+        confirmId: event.confirmId || null,
+        phase: event.phase === "exit" ? "exit" : "enter",
+        prompt: typeof event.prompt === "string" ? event.prompt : "",
+        allowedPrompts: Array.isArray(event.allowedPrompts) ? event.allowedPrompts : [],
+      });
+    } else if (event?.type === "ask_user_confirmation") {
+      translated.push({
+        type: "ask_user_confirmation",
+        confirmId: event.confirmId || null,
+        questions: Array.isArray(event.questions) ? event.questions : [],
+      });
     } else if (event?.type === "compaction_start") {
       if (event.trigger === "auto") {
         translated.push({ type: "auto_compaction_start" });
@@ -681,6 +694,8 @@ export class SessionCoordinator {
       systemAppend,
       model,
       env,
+      confirmStore: this._d.getConfirmStore?.() || null,
+      sessionPath,
       createToolContext: () => ({
         sessionManager: runtime?.sessionManager,
       }),

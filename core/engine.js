@@ -138,6 +138,7 @@ export class HanaEngine {
       switchAgentOnly: (id) => this._agentMgr.switchAgentOnly(id),
       getConfig: () => this.config,
       getPrefs: () => this._prefs,
+      getConfirmStore: () => this._confirmStore,
       getAgents: () => this._agentMgr.agents,
       getActivityStore: (id) => this.getActivityStore(id),
       getAgentById: (id) => this._agentMgr.getAgent(id),
@@ -794,7 +795,6 @@ export class HanaEngine {
   static PATROL_TOOLS_DEFAULT = [
     "search_memory", "pin_memory", "unpin_memory",
     "recall_experience", "record_experience",
-    "web_fetch",
     "todo", "cron", "notify",
     "present_files", "message_agent", "channel",
   ];

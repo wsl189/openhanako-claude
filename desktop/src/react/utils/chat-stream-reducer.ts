@@ -383,6 +383,38 @@ export function applyChatStreamLiveEvent(
       return next;
     }
 
+    case 'ask_user_confirmation': {
+      const existingIdx = next.findIndex(
+        (block: any) => block.type === 'ask_user_confirm' && block.confirmId === msg.confirmId,
+      );
+      const incoming: Extract<ContentBlock, { type: 'ask_user_confirm' }> = {
+        type: 'ask_user_confirm',
+        confirmId: msg.confirmId,
+        questions: Array.isArray(msg.questions) ? msg.questions : [],
+        status: 'pending',
+      };
+      if (existingIdx >= 0) next[existingIdx] = incoming;
+      else next.push(incoming);
+      return next;
+    }
+
+    case 'plan_mode_confirmation': {
+      const existingIdx = next.findIndex(
+        (block: any) => block.type === 'plan_mode_confirm' && block.confirmId === msg.confirmId,
+      );
+      const incoming: Extract<ContentBlock, { type: 'plan_mode_confirm' }> = {
+        type: 'plan_mode_confirm',
+        confirmId: msg.confirmId,
+        phase: msg.phase === 'exit' ? 'exit' : 'enter',
+        prompt: msg.prompt || '',
+        allowedPrompts: Array.isArray(msg.allowedPrompts) ? msg.allowedPrompts : [],
+        status: 'pending',
+      };
+      if (existingIdx >= 0) next[existingIdx] = incoming;
+      else next.push(incoming);
+      return next;
+    }
+
     default:
       return blocks;
   }

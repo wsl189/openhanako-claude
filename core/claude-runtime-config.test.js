@@ -195,6 +195,99 @@ describe("buildClaudeRuntimeConfig env", () => {
     }
   });
 
+  it("requests confirmation for EnterPlanMode/ExitPlanMode when confirmStore is available", async () => {
+    const emitted = [];
+    let createCount = 0;
+    const confirmStore = {
+      create: () => {
+        createCount += 1;
+        if (createCount === 1) {
+          return { confirmId: "plan-enter-1", promise: Promise.resolve({ action: "confirmed" }) };
+        }
+        return { confirmId: "plan-exit-1", promise: Promise.resolve({ action: "rejected" }) };
+      },
+    };
+    const config = createConfig({
+      sessionPath: "/tmp/session-plan.jsonl",
+      confirmStore,
+      emitToolEvent: (event) => emitted.push(event),
+    });
+
+    const enter = await config.options.canUseTool("EnterPlanMode", {
+      prompt: "Draft a plan first",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-plan-enter",
+    });
+    expect(enter).toMatchObject({
+      behavior: "allow",
+    });
+
+    const exit = await config.options.canUseTool("ExitPlanMode", {
+      allowedPrompts: [{ tool: "Bash", prompt: "npm test" }],
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-plan-exit",
+    });
+    expect(exit).toMatchObject({
+      behavior: "deny",
+    });
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "plan_mode_confirmation",
+        confirmId: "plan-enter-1",
+        phase: "enter",
+      }),
+      expect.objectContaining({
+        type: "plan_mode_confirmation",
+        confirmId: "plan-exit-1",
+        phase: "exit",
+        allowedPrompts: [{ tool: "Bash", prompt: "npm test" }],
+      }),
+    ]);
+  });
+
+  it("requests AskUserQuestion answers and injects them into updatedInput", async () => {
+    const emitted = [];
+    const confirmStore = {
+      create: () => ({
+        confirmId: "ask-user-1",
+        promise: Promise.resolve({
+          action: "confirmed",
+          value: { goal: "ship it", risk: "low" },
+        }),
+      }),
+    };
+    const config = createConfig({
+      sessionPath: "/tmp/session-ask.jsonl",
+      confirmStore,
+      emitToolEvent: (event) => emitted.push(event),
+    });
+    const decision = await config.options.canUseTool("AskUserQuestion", {
+      questions: [
+        { id: "goal", question: "What is your goal?" },
+        { id: "risk", question: "Risk tolerance?", options: [{ label: "low" }, { label: "high" }] },
+      ],
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-ask-user",
+    });
+
+    expect(decision).toMatchObject({
+      behavior: "allow",
+      updatedInput: {
+        answers: { goal: "ship it", risk: "low" },
+      },
+    });
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "ask_user_confirmation",
+        confirmId: "ask-user-1",
+      }),
+    ]);
+  });
+
   it("denies Bash calls that explicitly try to disable sandbox", async () => {
     const config = createConfig();
     const decision = await config.options.canUseTool("Bash", {

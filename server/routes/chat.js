@@ -908,6 +908,40 @@ export default async function chatRoute(app, { engine, hub }) {
           frontend: event.frontend,
         });
       }
+    } else if (event.type === "plan_mode_confirmation") {
+      if (ss) {
+        emitStreamEvent(sessionPath, ss, {
+          type: "plan_mode_confirmation",
+          confirmId: event.confirmId,
+          phase: event.phase === "exit" ? "exit" : "enter",
+          prompt: event.prompt || "",
+          allowedPrompts: Array.isArray(event.allowedPrompts) ? event.allowedPrompts : [],
+        });
+      } else {
+        broadcast({
+          type: "plan_mode_confirmation",
+          sessionPath: sessionPath || null,
+          confirmId: event.confirmId,
+          phase: event.phase === "exit" ? "exit" : "enter",
+          prompt: event.prompt || "",
+          allowedPrompts: Array.isArray(event.allowedPrompts) ? event.allowedPrompts : [],
+        });
+      }
+    } else if (event.type === "ask_user_confirmation") {
+      if (ss) {
+        emitStreamEvent(sessionPath, ss, {
+          type: "ask_user_confirmation",
+          confirmId: event.confirmId,
+          questions: Array.isArray(event.questions) ? event.questions : [],
+        });
+      } else {
+        broadcast({
+          type: "ask_user_confirmation",
+          sessionPath: sessionPath || null,
+          confirmId: event.confirmId,
+          questions: Array.isArray(event.questions) ? event.questions : [],
+        });
+      }
     } else if (event.type === "confirmation_resolved") {
       broadcast({
         type: "confirmation_resolved",

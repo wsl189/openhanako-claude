@@ -6,9 +6,6 @@ export const CLAUDE_BUILTIN_TOOL_NAMES = [
   "Task",
   "AskUserQuestion",
   "Bash",
-  "CronCreate",
-  "CronDelete",
-  "CronList",
   "Edit",
   "EnterPlanMode",
   "EnterWorktree",
@@ -26,7 +23,6 @@ export const CLAUDE_BUILTIN_TOOL_NAMES = [
   "TaskStop",
   "TodoWrite",
   "WebFetch",
-  "WebSearch",
   "Write",
 ];
 
@@ -218,12 +214,190 @@ function detectBashBypassAttempt(toolName, input = {}, opts = {}) {
   return null;
 }
 
+function parseAllowedPrompts(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      tool: String(item.tool || "Bash"),
+      prompt: String(item.prompt || "").trim(),
+    }))
+    .filter((item) => item.prompt.length > 0);
+}
+
+function parseAskUserQuestions(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item) => item && typeof item === "object")
+    .map((item, index) => {
+      const id = String(item.id || "").trim() || `q_${index + 1}`;
+      const question = String(item.question || "").trim();
+      const header = String(item.header || "").trim();
+      const options = Array.isArray(item.options)
+        ? item.options
+          .filter((option) => option && typeof option === "object")
+          .map((option) => ({
+            label: String(option.label || "").trim(),
+            description: String(option.description || "").trim(),
+          }))
+          .filter((option) => option.label.length > 0)
+        : [];
+      return {
+        id,
+        question,
+        header,
+        options,
+        multiSelect: item.multiSelect === true,
+      };
+    })
+    .filter((item) => item.question.length > 0 || item.header.length > 0);
+}
+
+async function waitForPlanModeConfirmation({
+  confirmStore,
+  emitToolEvent,
+  sessionPath,
+  phase,
+  input,
+}) {
+  if (!confirmStore || typeof confirmStore.create !== "function") {
+    return { action: "confirmed" };
+  }
+  const payload = {
+    phase,
+    prompt: String(input?.prompt || "").trim(),
+    allowedPrompts: phase === "exit"
+      ? parseAllowedPrompts(input?.allowedPrompts)
+      : [],
+  };
+  const { confirmId, promise } = confirmStore.create(
+    "plan_mode",
+    payload,
+    sessionPath || null,
+  );
+  if (typeof emitToolEvent === "function") {
+    emitToolEvent({
+      type: "plan_mode_confirmation",
+      confirmId,
+      phase,
+      prompt: payload.prompt,
+      allowedPrompts: payload.allowedPrompts,
+    });
+  }
+  return promise;
+}
+
+async function waitForAskUserConfirmation({
+  confirmStore,
+  emitToolEvent,
+  sessionPath,
+  input,
+}) {
+  if (!confirmStore || typeof confirmStore.create !== "function") {
+    return { action: "confirmed", value: {} };
+  }
+  const questions = parseAskUserQuestions(input?.questions);
+  const { confirmId, promise } = confirmStore.create(
+    "ask_user",
+    { questions },
+    sessionPath || null,
+  );
+  if (typeof emitToolEvent === "function") {
+    emitToolEvent({
+      type: "ask_user_confirmation",
+      confirmId,
+      questions,
+    });
+  }
+  return promise;
+}
+
 function buildCanUseToolHandler(permissionStrategy, opts = {}) {
   if (permissionStrategy !== "auto_allow") return undefined;
   const strictSandbox = opts.sandboxMode === "standard";
   const allowedRoots = strictSandbox ? resolveAllowedRoots(opts.workspace, opts.pathRules) : [];
   const cwd = opts.cwd;
+  const confirmStore = opts.confirmStore;
+  const sessionPath = opts.sessionPath || null;
+  const emitToolEvent = opts.emitToolEvent;
+  let planModeEntered = false;
+
   return async (toolName, input = {}) => {
+    const payload = (input && typeof input === "object") ? input : {};
+
+    if (toolName === "AskUserQuestion") {
+      const decision = await waitForAskUserConfirmation({
+        confirmStore,
+        emitToolEvent,
+        sessionPath,
+        input: payload,
+      });
+      if (decision?.action === "confirmed") {
+        const answers = decision?.value && typeof decision.value === "object"
+          ? decision.value
+          : {};
+        return {
+          behavior: "allow",
+          updatedInput: {
+            ...payload,
+            answers,
+          },
+        };
+      }
+      return {
+        behavior: "deny",
+        message: "AskUserQuestion was rejected by the user.",
+      };
+    }
+
+    if (toolName === "EnterPlanMode") {
+      const decision = await waitForPlanModeConfirmation({
+        confirmStore,
+        emitToolEvent,
+        sessionPath,
+        phase: "enter",
+        input: payload,
+      });
+      if (decision?.action === "confirmed") {
+        planModeEntered = true;
+        return {
+          behavior: "allow",
+          updatedInput: payload,
+        };
+      }
+      return {
+        behavior: "deny",
+        message: "Entering plan mode was rejected by the user.",
+      };
+    }
+
+    if (toolName === "ExitPlanMode") {
+      if (!planModeEntered) {
+        return {
+          behavior: "allow",
+          updatedInput: payload,
+        };
+      }
+      const decision = await waitForPlanModeConfirmation({
+        confirmStore,
+        emitToolEvent,
+        sessionPath,
+        phase: "exit",
+        input: payload,
+      });
+      if (decision?.action === "confirmed") {
+        planModeEntered = false;
+        return {
+          behavior: "allow",
+          updatedInput: payload,
+        };
+      }
+      return {
+        behavior: "deny",
+        message: "Exiting plan mode was rejected by the user.",
+      };
+    }
+
     const denyReason = detectBashBypassAttempt(toolName, input, {
       strictSandbox,
       allowedRoots,
@@ -252,6 +426,8 @@ export function buildClaudeRuntimeConfig({
   noMemory = false,
   model,
   env = {},
+  confirmStore = null,
+  sessionPath = null,
 } = {}) {
   const explicitClaudeConfigDir = String(env?.CLAUDE_CONFIG_DIR || "").trim();
   const runtimeEnv = {
@@ -272,6 +448,9 @@ export function buildClaudeRuntimeConfig({
     workspace,
     pathRules,
     cwd,
+    confirmStore,
+    sessionPath,
+    emitToolEvent,
   });
   const settingSources = resolveSettingSources(agent, runtimeEnv);
   const builtinEnabled = noTools

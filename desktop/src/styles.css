@@ -6580,6 +6580,237 @@ body.resizing .jian-sidebar-inner {
     color: var(--error, #c75050);
 }
 
+/* 输入区上方确认浮层（Proma 风格） */
+.input-prompt-panel {
+    position: relative;
+    margin-bottom: 0.45rem;
+    padding: 0.72rem 0.78rem 0.76rem;
+    border-radius: 14px;
+    border: 1px solid color-mix(in oklab, var(--accent) 20%, var(--line) 80%);
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--bg-card) 96%, white 4%),
+        color-mix(in oklab, var(--bg-card) 92%, var(--accent) 8%)
+      );
+    box-shadow:
+      0 12px 28px -18px rgba(0, 0, 0, 0.45),
+      0 4px 12px -10px rgba(0, 0, 0, 0.35);
+    animation: input-prompt-rise 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.input-prompt-panel::before {
+    content: "";
+    position: absolute;
+    left: 14px;
+    bottom: -5px;
+    width: 10px;
+    height: 10px;
+    border-right: 1px solid color-mix(in oklab, var(--accent) 20%, var(--line) 80%);
+    border-bottom: 1px solid color-mix(in oklab, var(--accent) 20%, var(--line) 80%);
+    background: color-mix(in oklab, var(--bg-card) 94%, var(--accent) 6%);
+    transform: rotate(45deg);
+}
+
+.input-prompt-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    margin-bottom: 0.32rem;
+}
+
+.input-prompt-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.69rem;
+    font-weight: 600;
+    color: color-mix(in oklab, var(--accent) 50%, var(--text-muted) 50%);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.input-prompt-kicker::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--accent) 64%, white 36%);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 16%, transparent);
+}
+
+.input-prompt-queue {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.input-prompt-title {
+    font-size: 0.94rem;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.35;
+}
+
+.input-prompt-subtitle,
+.input-prompt-text {
+    margin-top: 0.3rem;
+    color: color-mix(in oklab, var(--text) 84%, var(--text-muted) 16%);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.input-prompt-plan-list {
+    margin-top: 0.42rem;
+    border-top: 1px dashed color-mix(in oklab, var(--accent) 24%, transparent);
+    padding-top: 0.42rem;
+}
+
+.input-prompt-plan-item {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: color-mix(in oklab, var(--text) 82%, var(--text-muted) 18%);
+    white-space: pre-wrap;
+}
+
+.input-prompt-plan-item + .input-prompt-plan-item {
+    margin-top: 0.26rem;
+}
+
+.input-prompt-question {
+    margin-top: 0.48rem;
+    border-top: 1px solid color-mix(in oklab, var(--line) 70%, transparent);
+    padding-top: 0.46rem;
+}
+
+.input-prompt-question-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: color-mix(in oklab, var(--text) 88%, var(--text-muted) 12%);
+    line-height: 1.35;
+}
+
+.input-prompt-question-desc {
+    margin-top: 0.24rem;
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.input-prompt-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.38rem;
+    margin-top: 0.34rem;
+}
+
+.input-prompt-option {
+    border: 1px solid color-mix(in oklab, var(--line) 82%, transparent);
+    background: color-mix(in oklab, var(--bg-card) 90%, transparent);
+    color: color-mix(in oklab, var(--text) 72%, var(--text-muted) 28%);
+    border-radius: 999px;
+    font-size: 0.74rem;
+    line-height: 1;
+    padding: 0.42rem 0.7rem;
+    cursor: pointer;
+    transition: all 120ms ease;
+}
+
+.input-prompt-option:hover:not(:disabled) {
+    border-color: color-mix(in oklab, var(--accent) 28%, var(--line) 72%);
+    color: color-mix(in oklab, var(--accent) 46%, var(--text) 54%);
+}
+
+.input-prompt-option.selected {
+    border-color: color-mix(in oklab, var(--accent) 50%, var(--line) 50%);
+    background: color-mix(in oklab, var(--accent) 10%, var(--bg-card) 90%);
+    color: color-mix(in oklab, var(--accent) 66%, var(--text) 34%);
+}
+
+.input-prompt-answer {
+    width: 100%;
+    margin-top: 0.32rem;
+    padding: 0.44rem 0.56rem;
+    border-radius: 8px;
+    border: 1px solid color-mix(in oklab, var(--line) 72%, transparent);
+    background: color-mix(in oklab, var(--bg) 92%, var(--bg-card) 8%);
+    color: var(--text);
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.input-prompt-answer:focus {
+    outline: none;
+    border-color: color-mix(in oklab, var(--accent) 44%, var(--line) 56%);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 16%, transparent);
+}
+
+.input-prompt-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.42rem;
+    margin-top: 0.58rem;
+}
+
+.input-prompt-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 0.4rem 0.78rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 140ms ease;
+}
+
+.input-prompt-btn.approve {
+    color: color-mix(in oklab, var(--accent) 70%, var(--text) 30%);
+    border-color: color-mix(in oklab, var(--accent) 40%, var(--line) 60%);
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+.input-prompt-btn.approve:hover:not(:disabled) {
+    color: white;
+    background: color-mix(in oklab, var(--accent) 74%, black 26%);
+    border-color: color-mix(in oklab, var(--accent) 74%, black 26%);
+}
+
+.input-prompt-btn.reject {
+    color: var(--text-muted);
+    border-color: color-mix(in oklab, var(--line) 82%, transparent);
+    background: transparent;
+}
+
+.input-prompt-btn.reject:hover:not(:disabled) {
+    color: var(--text);
+    border-color: color-mix(in oklab, var(--line) 62%, transparent);
+    background: color-mix(in oklab, var(--bg) 95%, var(--line) 5%);
+}
+
+.input-prompt-btn:disabled,
+.input-prompt-option:disabled,
+.input-prompt-answer:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+@keyframes input-prompt-rise {
+    from {
+        opacity: 0;
+        transform: translateY(4px) scale(0.99);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
 /* 输入框容器（双行布局） */
 .input-wrapper {
     display: flex;
@@ -13636,6 +13867,16 @@ a.about-link:hover {
     .input-area {
         padding-left: var(--space-md);
         padding-right: var(--space-md);
+    }
+    .input-prompt-panel {
+        padding: 0.66rem 0.68rem 0.7rem;
+    }
+    .input-prompt-actions {
+        width: 100%;
+    }
+    .input-prompt-btn {
+        flex: 1;
+        justify-content: center;
     }
     .channel-header,
     .channel-messages,

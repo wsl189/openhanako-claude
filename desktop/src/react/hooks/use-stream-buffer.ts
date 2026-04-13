@@ -885,6 +885,20 @@ class StreamBufferManager {
         this.flush(buf);
         break;
 
+      case 'ask_user_confirmation':
+        finalizeBufferedTextSegment(buf);
+        this.ensureMessage(buf);
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
+        this.flush(buf);
+        break;
+
+      case 'plan_mode_confirmation':
+        finalizeBufferedTextSegment(buf);
+        this.ensureMessage(buf);
+        buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
+        this.flush(buf);
+        break;
+
       case 'compaction_start':
         // 分隔项插入前先落盘当前缓冲，避免“最后一项不再是 message”导致本轮内容丢失。
         finalizeBufferedTextSegment(buf);

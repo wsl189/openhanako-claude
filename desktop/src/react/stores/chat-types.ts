@@ -47,6 +47,8 @@ export type ContentBlock =
   | { type: 'browser_screenshot'; base64: string; mimeType: string }
   | { type: 'skill'; skillName: string; skillFilePath: string }
   | { type: 'cron_confirm'; confirmId?: string; jobData: Record<string, unknown>; status: 'pending' | 'approved' | 'rejected' }
+  | { type: 'ask_user_confirm'; confirmId: string; questions: Array<{ id: string; question: string; header?: string; options?: Array<{ label: string; description?: string }>; multiSelect?: boolean }>; status: 'pending' | 'confirmed' | 'rejected' | 'timeout' }
+  | { type: 'plan_mode_confirm'; confirmId: string; phase: 'enter' | 'exit'; prompt?: string; allowedPrompts?: Array<{ tool: string; prompt: string }>; status: 'pending' | 'confirmed' | 'rejected' | 'timeout' }
   | { type: 'settings_confirm'; confirmId: string; settingKey: string; cardType: 'toggle' | 'list' | 'text'; currentValue: string; proposedValue: string; options?: string[]; optionLabels?: Record<string, string>; label: string; description?: string; frontend?: boolean; status: 'pending' | 'confirmed' | 'rejected' | 'timeout' };
 
 // ── 消息 ──

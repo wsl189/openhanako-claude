@@ -9,6 +9,7 @@
 import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useStore } from '../stores';
+import { resolveInputSessionKey } from '../stores/misc-slice';
 import { loadSessions as loadSessionsAction } from '../stores/session-actions';
 import { handleArtifact } from '../stores/artifact-actions';
 import { loadDeskFiles } from '../stores/desk-actions';
@@ -32,9 +33,18 @@ const REACT_CHAT_EVENTS = new Set([
   'xing_start', 'xing_text', 'xing_end',
   'tool_start', 'tool_end', 'turn_end',
   'file_output', 'skill_activated', 'artifact',
-  'browser_screenshot', 'cron_confirmation', 'settings_confirmation',
+  'browser_screenshot', 'cron_confirmation', 'settings_confirmation', 'ask_user_confirmation',
+  'plan_mode_confirmation',
   'compaction_start', 'compaction_end',
 ]);
+
+function resolvePromptSessionKey(sessionPath: string | null | undefined): string {
+  const state = useStore.getState();
+  return resolveInputSessionKey(
+    sessionPath || state.currentSessionPath || null,
+    !!state.pendingNewSession,
+  );
+}
 
 function notifyBrowserSessionsChanged(): void {
   window.dispatchEvent(new Event('hana-browser-sessions-changed'));
@@ -138,6 +148,26 @@ export function handleServerMessage(msg: any): void {
 
   // ── React 聊天渲染路径：聊天相关事件走 StreamBufferManager ──
   if (REACT_CHAT_EVENTS.has(msg.type)) {
+    if (msg.type === 'ask_user_confirmation' && msg.confirmId) {
+      useStore.getState().enqueuePendingInputPrompt(resolvePromptSessionKey(msg.sessionPath), {
+        kind: 'ask_user',
+        confirmId: msg.confirmId,
+        questions: Array.isArray(msg.questions) ? msg.questions : [],
+        createdAt: Date.now(),
+      });
+    }
+
+    if (msg.type === 'plan_mode_confirmation' && msg.confirmId) {
+      useStore.getState().enqueuePendingInputPrompt(resolvePromptSessionKey(msg.sessionPath), {
+        kind: 'plan_mode',
+        confirmId: msg.confirmId,
+        phase: msg.phase === 'exit' ? 'exit' : 'enter',
+        prompt: msg.prompt || '',
+        allowedPrompts: Array.isArray(msg.allowedPrompts) ? msg.allowedPrompts : [],
+        createdAt: Date.now(),
+      });
+    }
+
     const live = useStore.getState();
     const currentSessionPath = live.currentSessionPath;
     const sameCurrentSession = !!msg.sessionPath && msg.sessionPath === currentSessionPath;
@@ -411,6 +441,9 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'confirmation_resolved': {
+      if (msg.confirmId) {
+        useStore.getState().removePendingInputPrompt(msg.confirmId);
+      }
       // 更新所有 session 中匹配 confirmId 的确认卡片状态（不能只改最后一条）
       useStore.setState((prev: any) => {
         const chatSessions = prev.chatSessions || {};
@@ -427,11 +460,23 @@ export function handleServerMessage(msg: any): void {
 
             let msgChanged = false;
             const nextBlocks = item.data.blocks.map((b: any) => {
-              if ((b.type !== 'settings_confirm' && b.type !== 'cron_confirm') || b.confirmId !== msg.confirmId) return b;
+              if ((b.type !== 'settings_confirm' && b.type !== 'cron_confirm' && b.type !== 'plan_mode_confirm' && b.type !== 'ask_user_confirm') || b.confirmId !== msg.confirmId) return b;
 
               msgChanged = true;
               if (b.type === 'settings_confirm') {
-                return { ...b, status: msg.action === 'confirmed' ? 'confirmed' : 'rejected' };
+                if (msg.action === 'confirmed') return { ...b, status: 'confirmed' };
+                if (msg.action === 'timeout') return { ...b, status: 'timeout' };
+                return { ...b, status: 'rejected' };
+              }
+              if (b.type === 'plan_mode_confirm') {
+                if (msg.action === 'confirmed') return { ...b, status: 'confirmed' };
+                if (msg.action === 'timeout') return { ...b, status: 'timeout' };
+                return { ...b, status: 'rejected' };
+              }
+              if (b.type === 'ask_user_confirm') {
+                if (msg.action === 'confirmed') return { ...b, status: 'confirmed' };
+                if (msg.action === 'timeout') return { ...b, status: 'timeout' };
+                return { ...b, status: 'rejected' };
               }
               return { ...b, status: msg.action === 'confirmed' ? 'approved' : 'rejected' };
             });

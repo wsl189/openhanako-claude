@@ -113,4 +113,42 @@ describe('applyChatStreamLiveEvent', () => {
       details: { summary: 'listed files' },
     });
   });
+
+  it('stores plan mode confirmation cards', () => {
+    let blocks: ContentBlock[] = [];
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'plan_mode_confirmation',
+      confirmId: 'plan-confirm-1',
+      phase: 'exit',
+      prompt: 'Ready to run the planned changes',
+      allowedPrompts: [{ tool: 'Bash', prompt: 'npm test' }],
+    });
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: 'plan_mode_confirm',
+      confirmId: 'plan-confirm-1',
+      phase: 'exit',
+      prompt: 'Ready to run the planned changes',
+      status: 'pending',
+    });
+  });
+
+  it('stores ask user confirmation cards', () => {
+    let blocks: ContentBlock[] = [];
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'ask_user_confirmation',
+      confirmId: 'ask-user-1',
+      questions: [
+        { id: 'goal', question: 'What is your goal?' },
+      ],
+    });
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: 'ask_user_confirm',
+      confirmId: 'ask-user-1',
+      status: 'pending',
+    });
+  });
 });

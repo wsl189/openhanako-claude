@@ -12,6 +12,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { ensureSession, loadSessions } from '../stores/session-actions';
 import { loadDeskFiles } from '../stores/desk-actions';
+import { resolveInputSessionKey, type PendingInputPrompt } from '../stores/misc-slice';
 import { getWebSocket } from '../services/websocket';
 import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { SVG_ICONS } from '../utils/icons';
@@ -100,14 +101,6 @@ interface SlashCommand {
   execute: () => Promise<void>;
 }
 
-const PENDING_INPUT_SESSION_KEY = '__pending_new_session__';
-
-function resolveInputSessionKey(sessionPath: string | null, pendingNewSession: boolean): string {
-  if (sessionPath) return sessionPath;
-  if (pendingNewSession) return PENDING_INPUT_SESSION_KEY;
-  return '__no_session__';
-}
-
 // ── 主组件 ──
 
 export function InputArea() {
@@ -133,6 +126,8 @@ function InputAreaInner() {
   const agentYuan = useStore(s => s.agentYuan);
   const thinkingLevel = useStore(s => s.thinkingLevel);
   const setThinkingLevel = useStore(s => s.setThinkingLevel);
+  const pendingInputPromptsBySession = useStore(s => s.pendingInputPromptsBySession);
+  const removePendingInputPrompt = useStore(s => s.removePendingInputPrompt);
 
   const isDraftSession = pendingNewSession && !currentSessionPath;
   const currentModelInfo = useMemo(() => {
@@ -178,6 +173,11 @@ function InputAreaInner() {
     () => resolveInputSessionKey(currentSessionPath, pendingNewSession),
     [currentSessionPath, pendingNewSession],
   );
+  const pendingInputPrompts = useMemo(
+    () => pendingInputPromptsBySession[inputSessionKey] || [],
+    [pendingInputPromptsBySession, inputSessionKey],
+  );
+  const activeInputPrompt = pendingInputPrompts[0] || null;
   const prevInputSessionKeyRef = useRef(inputSessionKey);
 
   // Focus trigger from store
@@ -668,6 +668,14 @@ function InputAreaInner() {
         </div>
       )}
 
+      {activeInputPrompt && (
+        <InputPromptPanel
+          prompt={activeInputPrompt}
+          queueSize={pendingInputPrompts.length}
+          onResolved={(confirmId) => removePendingInputPrompt(confirmId, inputSessionKey)}
+        />
+      )}
+
       <div className="input-wrapper">
         <textarea
           ref={textareaRef}
@@ -746,6 +754,249 @@ function TodoDisplay({ todos }: { todos: Array<{ text: string; done: boolean }> 
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function InputPromptPanel({
+  prompt,
+  queueSize,
+  onResolved,
+}: {
+  prompt: PendingInputPrompt;
+  queueSize: number;
+  onResolved: (confirmId: string) => void;
+}) {
+  const [submittingAction, setSubmittingAction] = useState<'confirmed' | 'rejected' | null>(null);
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string | string[]>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const isZh = String((window as any).i18n?.locale || '').startsWith('zh');
+
+  useEffect(() => {
+    setSubmittingAction(null);
+    setAnswers({});
+    if (prompt.kind !== 'ask_user') {
+      setSelectedOptions({});
+      return;
+    }
+    const init: Record<string, string | string[]> = {};
+    for (const question of prompt.questions || []) {
+      const id = String(question?.id || '').trim();
+      if (!id) continue;
+      const firstOption = String(question?.options?.[0]?.label || '').trim();
+      if (!firstOption) continue;
+      if (question.multiSelect) init[id] = [firstOption];
+      else init[id] = firstOption;
+    }
+    setSelectedOptions(init);
+  }, [prompt]);
+
+  const submitPrompt = useCallback(async (
+    action: 'confirmed' | 'rejected',
+    value?: Record<string, unknown>,
+  ) => {
+    if (submittingAction) return;
+    setSubmittingAction(action);
+    try {
+      await hanaFetch(`/api/confirm/${prompt.confirmId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(value ? { action, value } : { action }),
+      });
+      onResolved(prompt.confirmId);
+    } catch (err) {
+      const fallback = isZh ? '确认提交失败，请重试。' : 'Failed to submit confirmation, please retry.';
+      showToast(extractFetchErrorMessage(err, fallback), 'error', 5000);
+    } finally {
+      setSubmittingAction(null);
+    }
+  }, [prompt.confirmId, submittingAction, onResolved, isZh]);
+
+  const handleAskApprove = useCallback(async () => {
+    if (prompt.kind !== 'ask_user') return;
+    const finalAnswers: Record<string, unknown> = {};
+    for (let i = 0; i < prompt.questions.length; i += 1) {
+      const question = prompt.questions[i];
+      const id = String(question?.id || '').trim() || `q_${i + 1}`;
+      const freeText = String(answers[id] || '').trim();
+      if (freeText) {
+        finalAnswers[id] = freeText;
+        continue;
+      }
+
+      const fallback = String(question?.options?.[0]?.label || '').trim();
+      if (question.multiSelect) {
+        const selected = selectedOptions[id];
+        const labels = Array.isArray(selected)
+          ? selected.map((item) => String(item || '').trim()).filter(Boolean)
+          : (typeof selected === 'string' && selected.trim() ? [selected.trim()] : []);
+        if (labels.length > 0) {
+          finalAnswers[id] = labels.join(', ');
+        } else if (fallback) {
+          finalAnswers[id] = fallback;
+        }
+        continue;
+      }
+
+      const selected = selectedOptions[id];
+      const selectedText = typeof selected === 'string' ? selected.trim() : '';
+      const value = selectedText || fallback;
+      if (value) finalAnswers[id] = value;
+    }
+    await submitPrompt('confirmed', finalAnswers);
+  }, [prompt, answers, selectedOptions, submitPrompt]);
+
+  const handleReject = useCallback(async () => {
+    await submitPrompt('rejected');
+  }, [submitPrompt]);
+
+  const isSubmitting = !!submittingAction;
+
+  if (prompt.kind === 'plan_mode') {
+    const isEnter = prompt.phase === 'enter';
+    const title = isEnter
+      ? (isZh ? '请求进入计划模式' : 'Request to Enter Plan Mode')
+      : (isZh ? '请求退出计划模式' : 'Request to Exit Plan Mode');
+    const subtitle = isEnter
+      ? (isZh ? 'Agent 想先给出计划，再执行操作。' : 'Agent wants to provide a plan before execution.')
+      : (isZh ? 'Agent 已完成计划，请确认是否结束计划模式。' : 'Agent has finished planning, confirm whether to exit plan mode.');
+    const planItems = Array.isArray(prompt.allowedPrompts)
+      ? prompt.allowedPrompts.filter((item) => item?.prompt)
+      : [];
+
+    return (
+      <div className="input-prompt-panel" role="group" aria-live="polite">
+        <div className="input-prompt-head">
+          <span className="input-prompt-kicker">{isZh ? '等待确认' : 'Pending Confirmation'}</span>
+          {queueSize > 1 && (
+            <span className="input-prompt-queue">
+              {isZh ? `后续还有 ${queueSize - 1} 项` : `${queueSize - 1} more pending`}
+            </span>
+          )}
+        </div>
+        <div className="input-prompt-title">{title}</div>
+        <div className="input-prompt-subtitle">{subtitle}</div>
+        {prompt.prompt ? <div className="input-prompt-text">{prompt.prompt}</div> : null}
+        {planItems.length > 0 ? (
+          <div className="input-prompt-plan-list">
+            {planItems.map((item, idx) => (
+              <div key={`${item.tool}-${idx}`} className="input-prompt-plan-item">
+                {idx + 1}. [{item.tool || 'Bash'}] {item.prompt}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="input-prompt-actions">
+          <button
+            type="button"
+            className="input-prompt-btn approve"
+            disabled={isSubmitting}
+            onClick={() => submitPrompt('confirmed')}
+          >
+            {isZh ? '确认' : 'Approve'}
+          </button>
+          <button
+            type="button"
+            className="input-prompt-btn reject"
+            disabled={isSubmitting}
+            onClick={handleReject}
+          >
+            {isZh ? '拒绝' : 'Reject'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="input-prompt-panel" role="group" aria-live="polite">
+      <div className="input-prompt-head">
+        <span className="input-prompt-kicker">{isZh ? '等待输入' : 'Needs Input'}</span>
+        {queueSize > 1 && (
+          <span className="input-prompt-queue">
+            {isZh ? `后续还有 ${queueSize - 1} 项` : `${queueSize - 1} more pending`}
+          </span>
+        )}
+      </div>
+      <div className="input-prompt-title">{isZh ? 'Agent 需要你的输入' : 'Agent Needs Your Input'}</div>
+      {prompt.questions.map((question, idx) => {
+        const id = String(question?.id || '').trim() || `q_${idx + 1}`;
+        const title = String(question?.header || '').trim() || String(question?.question || '').trim() || `${isZh ? '问题' : 'Question'} ${idx + 1}`;
+        const description = String(question?.header || '').trim() && String(question?.question || '').trim()
+          ? String(question.question || '').trim()
+          : '';
+        const options = Array.isArray(question?.options)
+          ? question.options.filter((option) => option?.label)
+          : [];
+
+        return (
+          <div key={id} className="input-prompt-question">
+            <div className="input-prompt-question-title">{title}</div>
+            {description ? <div className="input-prompt-question-desc">{description}</div> : null}
+            {options.length > 0 ? (
+              <div className="input-prompt-options">
+                {options.map((option) => {
+                  const current = selectedOptions[id];
+                  const selected = question.multiSelect
+                    ? Array.isArray(current) && current.includes(option.label)
+                    : current === option.label;
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      className={`input-prompt-option${selected ? ' selected' : ''}`}
+                      title={option.description || option.label}
+                      disabled={isSubmitting}
+                      onClick={() => {
+                        setSelectedOptions((prev) => {
+                          if (!question.multiSelect) {
+                            return { ...prev, [id]: option.label };
+                          }
+                          const currentList = Array.isArray(prev[id]) ? (prev[id] as string[]) : [];
+                          const list = [...currentList];
+                          const existing = list.includes(option.label);
+                          const next = existing
+                            ? list.filter((item) => item !== option.label)
+                            : [...list, option.label];
+                          return { ...prev, [id]: next };
+                        });
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            <input
+              type="text"
+              className="input-prompt-answer"
+              value={answers[id] || ''}
+              disabled={isSubmitting}
+              placeholder={isZh ? '可选：补充说明（留空则使用已选项）' : 'Optional: add details (blank = selected option)'}
+              onChange={(e) => setAnswers((prev) => ({ ...prev, [id]: e.target.value }))}
+            />
+          </div>
+        );
+      })}
+      <div className="input-prompt-actions">
+        <button
+          type="button"
+          className="input-prompt-btn approve"
+          disabled={isSubmitting}
+          onClick={handleAskApprove}
+        >
+          {isZh ? '提交' : 'Submit'}
+        </button>
+        <button
+          type="button"
+          className="input-prompt-btn reject"
+          disabled={isSubmitting}
+          onClick={handleReject}
+        >
+          {isZh ? '拒绝' : 'Reject'}
+        </button>
       </div>
     </div>
   );

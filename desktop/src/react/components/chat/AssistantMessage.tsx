@@ -37,16 +37,20 @@ function removeRedundantOutputToolLines(blocks: ContentBlock[]): ContentBlock[] 
   if (!Array.isArray(blocks) || blocks.length === 0) return blocks;
 
   const hasCronCard = blocks.some((block) => block.type === 'cron_confirm');
+  const hasAskUserCard = blocks.some((block) => block.type === 'ask_user_confirm');
   const hasFileCard = blocks.some((block) => block.type === 'file_output');
   const hasArtifactCard = blocks.some((block) => block.type === 'artifact');
   const hasImageCard = blocks.some((block) => block.type === 'browser_screenshot');
+  const hasPlanModeCard = blocks.some((block) => block.type === 'plan_mode_confirm');
 
   const shouldHideToolLine = (toolName: string): boolean => {
     const name = normalizeToolName(toolName);
     if (name === 'cron') return hasCronCard;
+    if (name === 'askuserquestion') return hasAskUserCard;
     if (name === 'present_files') return hasFileCard;
     if (name === 'create_artifact') return hasArtifactCard;
     if (name === 'generate_images') return hasImageCard;
+    if (name === 'enterplanmode' || name === 'exitplanmode') return hasPlanModeCard;
     return false;
   };
 
@@ -319,6 +323,8 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     }).catch(() => {});
   }, [finalDisplayHtml]);
 
+  if (visibleBlocks.length === 0) return null;
+
   return (
     <div className="message-group assistant">
       {showAvatar && (
@@ -464,6 +470,10 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan
       return <SkillCard skillName={block.skillName} skillFilePath={block.skillFilePath} />;
     case 'cron_confirm':
       return <CronConfirmCard confirmId={(block as any).confirmId} jobData={block.jobData} status={block.status} />;
+    case 'ask_user_confirm':
+      return null;
+    case 'plan_mode_confirm':
+      return null;
     case 'settings_confirm':
       return <SettingsConfirmCard {...block} />;
     default:
@@ -710,6 +720,244 @@ const ImageLightbox = memo(function ImageLightbox({
         style={{ transform: `scale(${scale})` }}
         onClick={(e) => e.stopPropagation()}
       />
+    </div>
+  );
+});
+
+type AskUserQuestionCardItem = {
+  id: string;
+  question: string;
+  header?: string;
+  options?: Array<{ label: string; description?: string }>;
+  multiSelect?: boolean;
+};
+
+const AskUserConfirmCard = memo(function AskUserConfirmCard({
+  confirmId,
+  questions,
+  status: initialStatus,
+}: {
+  confirmId: string;
+  questions: AskUserQuestionCardItem[];
+  status: 'pending' | 'confirmed' | 'rejected' | 'timeout';
+}) {
+  const [status, setStatus] = useState(initialStatus);
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const isZh = String((window as any).i18n?.locale || '').startsWith('zh');
+
+  useEffect(() => {
+    setStatus(initialStatus);
+  }, [initialStatus]);
+
+  useEffect(() => {
+    const init: Record<string, string> = {};
+    for (const item of questions || []) {
+      const id = String(item?.id || '').trim();
+      if (!id) continue;
+      const firstOption = item.options?.[0]?.label;
+      if (firstOption) init[id] = String(firstOption);
+    }
+    setSelectedOptions(init);
+    setAnswers({});
+  }, [questions]);
+
+  const doneText = useMemo(() => {
+    if (status === 'confirmed') return (isZh ? '已提交' : 'Submitted');
+    if (status === 'timeout') return (isZh ? '已超时' : 'Timed out');
+    return (isZh ? '已拒绝' : 'Rejected');
+  }, [status, isZh]);
+
+  const handleApprove = useCallback(async () => {
+    const finalAnswers: Record<string, string> = {};
+    for (let i = 0; i < (questions || []).length; i += 1) {
+      const q = questions[i];
+      const id = String(q?.id || '').trim() || `q_${i + 1}`;
+      const freeText = String(answers[id] || '').trim();
+      const selected = String(selectedOptions[id] || '').trim();
+      const fallback = String(q?.options?.[0]?.label || '').trim();
+      const value = freeText || selected || fallback;
+      if (value) finalAnswers[id] = value;
+    }
+
+    try {
+      await hanaFetch(`/api/confirm/${confirmId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'confirmed', value: finalAnswers }),
+      });
+      setStatus('confirmed');
+    } catch { /* silent */ }
+  }, [confirmId, questions, answers, selectedOptions]);
+
+  const handleReject = useCallback(async () => {
+    try {
+      await hanaFetch(`/api/confirm/${confirmId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rejected' }),
+      });
+      setStatus('rejected');
+    } catch { /* silent */ }
+  }, [confirmId]);
+
+  if (status !== 'pending') {
+    return (
+      <div className={`cron-confirm-card done ${status === 'confirmed' ? 'approved' : 'rejected'}`}>
+        <div className="cron-confirm-head">
+          <div className={`cron-confirm-status ${status === 'confirmed' ? 'approved' : 'rejected'}`}>{doneText}</div>
+        </div>
+        <div className="cron-confirm-title">{isZh ? 'Agent 需要你的输入' : 'Agent Needs Your Input'}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cron-confirm-card pending">
+      <div className="cron-confirm-head">
+        <div className="cron-confirm-status pending">{(window as any).t('automation.cardPending')}</div>
+      </div>
+      <div className="cron-confirm-title">{isZh ? 'Agent 需要你的输入' : 'Agent Needs Your Input'}</div>
+      {(questions || []).map((q, idx) => {
+        const id = String(q?.id || '').trim() || `q_${idx + 1}`;
+        const qTitle = String(q?.question || '').trim();
+        const qHeader = String(q?.header || '').trim();
+        const qOptions = Array.isArray(q?.options) ? q.options.filter((item) => item?.label) : [];
+        return (
+          <div key={id} className="cron-confirm-meta" style={{ marginTop: 8 }}>
+            <div style={{ fontWeight: 600 }}>{qHeader || qTitle || `Question ${idx + 1}`}</div>
+            {qHeader && qTitle ? <div style={{ marginTop: 4 }}>{qTitle}</div> : null}
+            {qOptions.length > 0 ? (
+              <div className="cron-confirm-actions" style={{ marginTop: 6 }}>
+                {qOptions.map((opt) => (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    className={`cron-confirm-btn ${selectedOptions[id] === opt.label ? 'approve' : 'reject'}`}
+                    onClick={() => setSelectedOptions((prev) => ({ ...prev, [id]: opt.label }))}
+                    title={opt.description || opt.label}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <input
+              type="text"
+              value={answers[id] || ''}
+              placeholder={isZh ? '可选：输入补充说明（留空则使用已选项）' : 'Optional: add details (blank = selected option)'}
+              onChange={(e) => setAnswers((prev) => ({ ...prev, [id]: e.target.value }))}
+              style={{
+                marginTop: 6,
+                width: '100%',
+                boxSizing: 'border-box',
+                borderRadius: 8,
+                border: '1px solid var(--line)',
+                background: 'var(--panel)',
+                color: 'var(--text)',
+                padding: '8px 10px',
+              }}
+            />
+          </div>
+        );
+      })}
+      <div className="cron-confirm-actions">
+        <button className="cron-confirm-btn approve" onClick={handleApprove}>{(window as any).t('common.approve')}</button>
+        <button className="cron-confirm-btn reject" onClick={handleReject}>{(window as any).t('common.reject')}</button>
+      </div>
+    </div>
+  );
+});
+
+const PlanModeConfirmCard = memo(function PlanModeConfirmCard({
+  confirmId,
+  phase,
+  prompt,
+  allowedPrompts,
+  status: initialStatus,
+}: {
+  confirmId: string;
+  phase: 'enter' | 'exit';
+  prompt?: string;
+  allowedPrompts?: Array<{ tool: string; prompt: string }>;
+  status: 'pending' | 'confirmed' | 'rejected' | 'timeout';
+}) {
+  const [status, setStatus] = useState(initialStatus);
+  const isEnter = phase === 'enter';
+  const isZh = String((window as any).i18n?.locale || '').startsWith('zh');
+
+  useEffect(() => {
+    setStatus(initialStatus);
+  }, [initialStatus]);
+
+  const title = isEnter
+    ? (isZh ? '请求进入计划模式' : 'Request To Enter Plan Mode')
+    : (isZh ? '请求退出计划模式' : 'Request To Exit Plan Mode');
+
+  const subtitle = isEnter
+    ? (isZh ? 'Agent 想先给出计划，再执行操作。' : 'Agent wants to plan before execution.')
+    : (isZh ? 'Agent 已完成计划，请确认是否结束计划模式。' : 'Agent finished planning, confirm whether to exit plan mode.');
+
+  const doneText = useMemo(() => {
+    if (status === 'confirmed') return (isZh ? '已确认' : 'Confirmed');
+    if (status === 'timeout') return (isZh ? '已超时' : 'Timed out');
+    return (isZh ? '已拒绝' : 'Rejected');
+  }, [status, isZh]);
+
+  const handleApprove = useCallback(async () => {
+    try {
+      await hanaFetch(`/api/confirm/${confirmId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'confirmed' }),
+      });
+      setStatus('confirmed');
+    } catch { /* silent */ }
+  }, [confirmId]);
+
+  const handleReject = useCallback(async () => {
+    try {
+      await hanaFetch(`/api/confirm/${confirmId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rejected' }),
+      });
+      setStatus('rejected');
+    } catch { /* silent */ }
+  }, [confirmId]);
+
+  const planItems = Array.isArray(allowedPrompts) ? allowedPrompts.filter((item) => item?.prompt) : [];
+
+  if (status !== 'pending') {
+    return (
+      <div className={`cron-confirm-card done ${status === 'confirmed' ? 'approved' : 'rejected'}`}>
+        <div className="cron-confirm-head">
+          <div className={`cron-confirm-status ${status === 'confirmed' ? 'approved' : 'rejected'}`}>{doneText}</div>
+        </div>
+        <div className="cron-confirm-title">{title}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cron-confirm-card pending">
+      <div className="cron-confirm-head">
+        <div className="cron-confirm-status pending">{(window as any).t('automation.cardPending')}</div>
+      </div>
+      <div className="cron-confirm-title">{title}</div>
+      <div className="cron-confirm-meta">{subtitle}</div>
+      {prompt ? (
+        <div className="cron-confirm-meta">{prompt}</div>
+      ) : null}
+      {planItems.length > 0 ? (
+        <div className="cron-confirm-meta" style={{ whiteSpace: 'pre-wrap' }}>
+          {planItems.map((item, idx) => `${idx + 1}. [${item.tool || 'Bash'}] ${item.prompt}`).join('\n')}
+        </div>
+      ) : null}
+      <div className="cron-confirm-actions">
+        <button className="cron-confirm-btn approve" onClick={handleApprove}>{(window as any).t('common.approve')}</button>
+        <button className="cron-confirm-btn reject" onClick={handleReject}>{(window as any).t('common.reject')}</button>
+      </div>
     </div>
   );
 });

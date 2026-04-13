@@ -15,7 +15,6 @@ import { createTodoTool } from "../lib/tools/todo.js";
 import { createDeskManager } from "../lib/desk/desk-manager.js";
 import { CronStore } from "../lib/desk/cron-store.js";
 import { createCronTool } from "../lib/tools/cron-tool.js";
-import { createWebFetchTool } from "../lib/tools/web-fetch.js";
 import { createPresentFilesTool } from "../lib/tools/output-file-tool.js";
 import { createArtifactTool } from "../lib/tools/artifact-tool.js";
 import { createChannelTool } from "../lib/tools/channel-tool.js";
@@ -25,9 +24,7 @@ import { createBrowserTool } from "../lib/tools/browser-tool.js";
 import { createPinnedMemoryTools } from "../lib/tools/pinned-memory.js";
 import { createExperienceTools } from "../lib/tools/experience.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
-import { createUpdateSettingsTool } from "../lib/tools/update-settings-tool.js";
 import { createDelegateTool } from "../lib/tools/delegate-tool.js";
-import { createClaudeCoreTool } from "../lib/tools/claude-core-tool.js";
 import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
 import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
@@ -70,7 +67,6 @@ export class Agent {
     this._summaryManager = null;
     this._memoryTicker = null;
     this._memorySearchTool = null;
-    this._webFetchTool = null;
     this._todoTool = null;
     this._pinnedMemoryTools = [];
     this._experienceTools = [];
@@ -90,7 +86,6 @@ export class Agent {
     this._notifyTool = null;
     this._describeImagesTool = null;
     this._generateImagesTool = null;
-    this._claudeCoreTool = null;
   }
 
   // ════════════════════════════
@@ -229,7 +224,6 @@ export class Agent {
     // 7. 创建工具（记忆 + 通用）
     log(`  [agent] 7. 创建工具...`);
     this._memorySearchTool = createMemorySearchTool(this._factStore);
-    this._webFetchTool = createWebFetchTool();
     this._todoTool = createTodoTool();
     this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir);
     this._experienceTools = createExperienceTools(this.agentDir);
@@ -253,14 +247,6 @@ export class Agent {
     this._browserTool = createBrowserTool();
     this._notifyTool = createNotifyTool({
       onNotify: (title, body, opts) => this._notifyHandler?.(title, body, opts),
-    });
-
-    // 10. 设置修改工具
-    this._updateSettingsTool = createUpdateSettingsTool({
-      getEngine: () => this._engine,
-      getConfirmStore: () => this._engine?.confirmStore,
-      getSessionPath: () => this._engine?._sessionCoord?.currentSessionPath,
-      emitEvent: (event) => this._engine?._emitEvent(event, this._engine?._sessionCoord?.currentSessionPath),
     });
 
     this._describeImagesTool = createDescribeImagesTool({
@@ -371,7 +357,6 @@ export class Agent {
       resolveUtilityModel: () => this._memoryModel || this._utilityModel || null,
       readOnlyBuiltinTools: READ_ONLY_BUILTIN_TOOLS,
     });
-    this._claudeCoreTool = createClaudeCoreTool();
 
     // 12. 组装 system prompt
     log(`  [agent] 9. buildSystemPrompt...`);
@@ -434,7 +419,6 @@ export class Agent {
       this._memorySearchTool,
       ...this._pinnedMemoryTools,
       ...this._experienceTools,
-      this._webFetchTool,
       this._todoTool,
       this._cronTool,
       this._presentFilesTool,
@@ -446,9 +430,7 @@ export class Agent {
       this._describeImagesTool,
       this._generateImagesTool,
       this._notifyTool,
-      this._updateSettingsTool,
       this._delegateTool,
-      this._claudeCoreTool,
     ].filter(Boolean);
   }
   get tools() {
@@ -459,7 +441,6 @@ export class Agent {
     ] : [];
     return [
       ...memTools,
-      this._webFetchTool,
       this._todoTool,
       this._cronTool,
       this._presentFilesTool,
@@ -471,9 +452,7 @@ export class Agent {
       this._describeImagesTool,
       this._generateImagesTool,
       this._notifyTool,
-      this._updateSettingsTool,
       this._delegateTool,
-      this._claudeCoreTool,
     ].filter(Boolean);
   }
 
@@ -730,21 +709,12 @@ export class Agent {
       }
     }
 
-    // 设置工具路由
-    parts.push(hasTool("update_settings")
-      ? (isZh
-          ? "\n## 设置修改\n\n" +
-            "用户提到修改设置而未指明具体软件时，默认指本应用的设置。\n" +
-            "用户要求修改偏好设置（包括但不限于：外观主题、语言地区、模型选择、安全权限、记忆功能、个人信息、工作目录）时，使用 update_settings 工具。不要搜索网页，不要编辑配置文件。意图明确时直接 apply，不确定时先 search。"
-          : "\n## Settings Changes\n\n" +
-            "When the user mentions changing settings without specifying a particular application, assume they mean this application.\n" +
-            "When the user asks to change preferences (including but not limited to: appearance/theme, language/region, model selection, security/permissions, memory, personal info, working directory), use the update_settings tool. Do not search the web or edit config files. When intent is clear, apply directly; when unsure, search first.")
-      : (isZh
-          ? "\n## 设置修改\n\nupdate_settings 工具当前不可用。你不能声称已修改应用设置；需要明确告知用户该限制，并给出手动操作步骤。"
-          : "\n## Settings Changes\n\nThe update_settings tool is currently unavailable. Do not claim settings were changed; clearly explain this limit and provide manual steps.")
+    parts.push(isZh
+      ? "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
+      : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
     );
 
-    const hasSearchTool = hasTool("web_search") || hasTool("web_fetch");
+    const hasSearchTool = hasTool("web_search");
     if (!hasSearchTool && hasTool("browser")) {
       parts.push(isZh
         ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
@@ -753,12 +723,6 @@ export class Agent {
       parts.push(isZh
         ? "当前无可用联网检索工具（search/browser）；需要联网信息时请明确说明能力受限。"
         : "No web lookup tools are available (search/browser). If internet data is required, clearly state this limitation.");
-    }
-
-    if (hasTool("claude_core")) {
-      parts.push(isZh
-        ? "当任务涉及复杂编程、重构、多步骤调试或长链路实现时，优先调用 claude_core 工具处理。调用时请把任务目标、约束条件、验收标准和必要上下文写进 task 参数。若你判断是同一任务链路可设置 continue=true（会映射到 -c 续跑）；若是新任务则设 continue=false。"
-        : "For complex coding, refactoring, multi-step debugging, or long implementation chains, prefer the claude_core tool. Include goals, constraints, acceptance criteria, and necessary context in the task parameter. If it is the same task thread, set continue=true (maps to -c); for a new task, set continue=false.");
     }
 
     if (hasTool("describe_images")) {
