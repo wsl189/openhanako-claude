@@ -1,6 +1,7 @@
 import path from "path";
 import { createCustomToolsMcpServer } from "../lib/claude/custom-tool-adapter.js";
 import { extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
+import { resolveBrowserProvider } from "./browser-provider.js";
 
 export const CLAUDE_BUILTIN_TOOL_NAMES = [
   "Task",
@@ -487,9 +488,16 @@ export function buildClaudeRuntimeConfig({
   const customEnabled = noTools
     ? []
     : uniq(customEnabledOverride || toolProfile?.tools?.custom_enabled || []);
+  const browserProvider = resolveBrowserProvider(runtimeEnv, { cwd, workspace });
+  const useClaudeInChrome = !noTools && browserProvider.useClaudeInChrome === true;
   const filteredCustomTools = (customTools || []).filter((toolDef) => customEnabled.includes(toolDef?.name));
   const mcpServerKey = "hanako";
   const mcpServerName = "hanako";
+  // IMPORTANT: Claude Agent SDK can crash the Claude subprocess when an MCP
+  // server key contains '-' (e.g. "claude-in-chrome"), leading to:
+  // "Claude Code process exited with code 1".
+  // Use an underscore-only key and expose matching tool prefixes.
+  const claudeInChromeServerKey = "claude_in_chrome";
   // Claude Agent SDK MCP docs recommend allowing MCP tools via server-level
   // wildcard (mcp__<server>__*). Keep both key/name prefixes for compatibility
   // across SDK variants that may resolve server names differently.
@@ -499,7 +507,10 @@ export function buildClaudeRuntimeConfig({
       toMcpAllowedPrefix(mcpServerName),
     ].filter(Boolean))
     : [];
-  const allowedTools = uniq([...builtinEnabled, ...customAllowedTools]);
+  const claudeInChromeAllowedTools = useClaudeInChrome
+    ? [toMcpAllowedPrefix(claudeInChromeServerKey)].filter(Boolean)
+    : [];
+  const allowedTools = uniq([...builtinEnabled, ...customAllowedTools, ...claudeInChromeAllowedTools]);
   const canUseTool = buildCanUseToolHandler(permissionStrategy, {
     sandboxMode,
     workspace,
@@ -521,6 +532,9 @@ export function buildClaudeRuntimeConfig({
         onToolEnd: emitToolEvent,
       },
     );
+  }
+  if (useClaudeInChrome && browserProvider.claudeInChromeServer) {
+    mcpServers[claudeInChromeServerKey] = browserProvider.claudeInChromeServer;
   }
 
   const baseAppend = noMemory ? agent?.personality : agent?.buildSystemAppendPrompt?.();
@@ -571,6 +585,9 @@ export function buildClaudeRuntimeConfig({
       mcpServerKey,
       mcpServerName,
       customAllowedTools,
+      claudeInChromeAllowedTools,
+      browserProvider,
+      useClaudeInChrome,
     },
   };
 }

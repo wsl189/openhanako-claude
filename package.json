@@ -93,6 +93,7 @@
       "lib/**",
       "server/**",
       "desktop/**",
+      "extensions/**",
       "skills2set/**",
       "index.js",
       "package.json",

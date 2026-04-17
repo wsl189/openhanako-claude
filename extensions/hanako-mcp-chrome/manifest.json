@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Claude Core MCP Browser Bridge",
+  "description": "Local Chrome extension bridge for Claude Core MCP (no Anthropic account required).",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlSbyXBuBPDinwUz2ks24bHTuMNrVsLJTTJ/P8f430zg7HIFWnLoLJyDasB1AAevhcLddd+H/rij6OJQ1W77Ga6QuKbIm0SK5A2K6ewz0huFsbC0tbpjEoQLP4yLzV68N3edfk5PO08EpBNoCEPkl24QkBK3hSyJvlSWfci0hvuArt/zlS3iaDmrCzfZRucyBVm6vASp6fpeb4m2kubPrcdALFVkDfu860GquGVrma7y4wM7hgue6+9DmuFHdOksB/TrYknQiPhc68KzndyAJ+tE2LuOFE/9AVCFBCHOHPlnrIWG6k7+TFglRGCtWE6tz2WIxSKdfsRNZE6viswmsvwIDAQAB",
+  "background": {
+    "service_worker": "service_worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "tabGroups",
+    "windows",
+    "scripting",
+    "storage",
+    "downloads",
+    "debugger",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Claude Core MCP Browser Bridge"
+  },
+  "minimum_chrome_version": "120"
+}

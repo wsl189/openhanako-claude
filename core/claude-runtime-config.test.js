@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { buildClaudeRuntimeConfig } from "./claude-runtime-config.js";
 
 function createConfig(overrides = {}) {
+  const { env: envOverride = {}, ...rest } = overrides;
+  const mergedEnv = {
+    HANAKO_BROWSER_PROVIDER: "embedded",
+    HANAKO_CLAUDE_IN_CHROME_INSTALLED: "0",
+    ...envOverride,
+  };
   return buildClaudeRuntimeConfig({
     agent: {
       agentDir: "/tmp/agent",
@@ -10,7 +16,8 @@ function createConfig(overrides = {}) {
     },
     cwd: "/tmp",
     workspace: "/tmp",
-    ...overrides,
+    env: mergedEnv,
+    ...rest,
   });
 }
 
@@ -172,6 +179,56 @@ describe("buildClaudeRuntimeConfig env", () => {
       "Glob",
       "mcp__hanako__*",
     ]);
+  });
+
+  it("auto-attaches claude-in-chrome MCP server when extension is installed", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_BROWSER_PROVIDER: "auto",
+        HANAKO_CLAUDE_IN_CHROME_INSTALLED: "1",
+      },
+    });
+
+    expect(config.options.mcpServers.claude_in_chrome?.type).toBe("stdio");
+    expect(config.options.mcpServers.claude_in_chrome?.command).toBe(process.execPath);
+    expect(config.options.mcpServers.claude_in_chrome?.args?.[0]).toContain("/lib/claude-in-chrome/entry.js");
+    expect(config.options.mcpServers.claude_in_chrome?.args?.[1]).toBe("--claude-in-chrome-mcp");
+    expect(config.options.allowedTools).toContain("mcp__claude_in_chrome__*");
+    expect(config.diagnostics?.browserProvider?.activeProvider).toBe("claude-in-chrome");
+  });
+
+  it("respects explicit claude-in-chrome command override", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_BROWSER_PROVIDER: "claude-in-chrome",
+        HANAKO_CLAUDE_IN_CHROME_COMMAND: "bun",
+        HANAKO_CLAUDE_IN_CHROME_ARGS:
+          "[\"/tmp/claude-core/src/entrypoints/cli.tsx\",\"--claude-in-chrome-mcp\"]",
+      },
+    });
+
+    expect(config.options.mcpServers.claude_in_chrome).toEqual({
+      type: "stdio",
+      command: "bun",
+      args: ["/tmp/claude-core/src/entrypoints/cli.tsx", "--claude-in-chrome-mcp"],
+    });
+    expect(config.options.allowedTools).toContain("mcp__claude_in_chrome__*");
+  });
+
+  it("does not attach claude-in-chrome tools in noTools mode", () => {
+    const config = createConfig({
+      noTools: true,
+      env: {
+        HANAKO_BROWSER_PROVIDER: "claude-in-chrome",
+        HANAKO_CLAUDE_IN_CHROME_COMMAND: "bun",
+        HANAKO_CLAUDE_IN_CHROME_ARGS:
+          "[\"/tmp/claude-core/src/entrypoints/cli.tsx\",\"--claude-in-chrome-mcp\"]",
+      },
+    });
+
+    expect(config.options.mcpServers.claude_in_chrome).toBeUndefined();
+    expect(config.options.allowedTools).toEqual([]);
+    expect(config.diagnostics?.useClaudeInChrome).toBe(false);
   });
 
   it("installs canUseTool handler by default to avoid permission prompt deadlocks", async () => {

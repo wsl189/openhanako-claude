@@ -29,6 +29,7 @@ import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
 import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
 import { runCompatChecks } from "../lib/compat/index.js";
+import { resolveBrowserProvider } from "./browser-provider.js";
 import { t } from "../server/i18n.js";
 
 export class Agent {
@@ -83,6 +84,7 @@ export class Agent {
     this._artifactTool = null;
     this._channelTool = null;
     this._browserTool = null;
+    this._browserProvider = null;
     this._notifyTool = null;
     this._describeImagesTool = null;
     this._generateImagesTool = null;
@@ -244,7 +246,10 @@ export class Agent {
     });
     this._presentFilesTool = createPresentFilesTool();
     this._artifactTool = createArtifactTool();
-    this._browserTool = createBrowserTool();
+    this._browserProvider = this._resolveBrowserProvider();
+    this._browserTool = this._browserProvider.useEmbeddedBrowser
+      ? createBrowserTool()
+      : null;
     this._notifyTool = createNotifyTool({
       onNotify: (title, body, opts) => this._notifyHandler?.(title, body, opts),
     });
@@ -469,6 +474,16 @@ export class Agent {
     return isZh ? "用户" : "User";
   }
 
+  _resolveBrowserProvider() {
+    const agentId = path.basename(this.agentDir || "");
+    const workspace = this._engine?.getHomeFolder?.(agentId)
+      || this._config?.desk?.home_folder
+      || "";
+    const cwd = this._engine?.cwd || process.cwd();
+    this._browserProvider = resolveBrowserProvider(process.env, { cwd, workspace });
+    return this._browserProvider;
+  }
+
   // ════════════════════════════
   //  记忆开关
   // ════════════════════════════
@@ -613,6 +628,7 @@ export class Agent {
   buildSystemAppendPrompt() {
     const isZh = String(this._config.locale || "").startsWith("zh");
     const agentId = path.basename(this.agentDir || "");
+    const browserProvider = this._resolveBrowserProvider();
 
     const toolProfile = this._engine?.getAgentPermissionConfig?.(agentId) || null;
     const runtimeCustomNames = new Set((this.tools || []).map((tool) => tool?.name).filter(Boolean));
@@ -622,6 +638,9 @@ export class Agent {
     const enabledCustom = Array.isArray(toolProfile?.tools?.custom_enabled)
       ? toolProfile.tools.custom_enabled.filter((name) => runtimeCustomNames.has(name))
       : [...runtimeCustomNames];
+    const externalMcpTools = browserProvider?.useClaudeInChrome
+      ? ["mcp__claude_in_chrome__*"]
+      : [];
     const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
     const formatToolList = (list = []) => {
       const cleaned = [...new Set((list || []).map((item) => String(item || "").trim()).filter(Boolean))];
@@ -726,7 +745,8 @@ export class Agent {
           "",
           `当前会话可用的标准 Claude 工具（仅以下）：${formatToolList(enabledBuiltin)}`,
           `当前会话可用的 Hanako/MCP 工具（仅以下）：${formatToolList(enabledCustom)}`,
-          "当用户问“你有哪些工具”时，必须只基于以上两行回答。",
+          `当前会话可用的外部 MCP 工具前缀（仅以下）：${formatToolList(externalMcpTools)}`,
+          "当用户问“你有哪些工具”时，必须只基于以上三行回答。",
           "不要把未出现在列表里的工具说成可用；如果用户点名了未启用工具，明确回复“当前不可用”。",
         ].join("\n")
       : [
@@ -735,20 +755,33 @@ export class Agent {
           "",
           `Standard Claude tools available in this session (only these): ${formatToolList(enabledBuiltin)}`,
           `Hanako/MCP tools available in this session (only these): ${formatToolList(enabledCustom)}`,
-          "When the user asks what tools you have, answer strictly from the two lines above.",
+          `External MCP tool prefixes available in this session (only these): ${formatToolList(externalMcpTools)}`,
+          "When the user asks what tools you have, answer strictly from the three lines above.",
           "Do not claim availability for tools not listed; if asked about one, clearly say it is unavailable now.",
         ].join("\n")
     );
 
     const hasSearchTool = hasTool("web_search");
-    if (!hasSearchTool && hasTool("browser")) {
+    const hasEmbeddedBrowser = hasTool("browser");
+    const hasClaudeInChrome = browserProvider?.useClaudeInChrome === true;
+    if (!hasSearchTool && hasEmbeddedBrowser) {
       parts.push(isZh
         ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
         : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser.");
-    } else if (!hasSearchTool && !hasTool("browser")) {
+    } else if (!hasSearchTool && hasClaudeInChrome) {
       parts.push(isZh
-        ? "当前无可用联网检索工具（search/browser）；需要联网信息时请明确说明能力受限。"
-        : "No web lookup tools are available (search/browser). If internet data is required, clearly state this limitation.");
+        ? "如果当前没有可用搜索工具且需要联网检索，请使用 mcp__claude_in_chrome__* 工具访问已登录 Chrome，并先调用 mcp__claude_in_chrome__tabs_context_mcp 获取标签页上下文。"
+        : "If no search tool is available and web lookup is needed, use mcp__claude_in_chrome__* tools against logged-in Chrome, and call mcp__claude_in_chrome__tabs_context_mcp first.");
+    } else if (!hasSearchTool && !hasEmbeddedBrowser && !hasClaudeInChrome) {
+      parts.push(isZh
+        ? "当前无可用联网检索工具（search/browser/claude-in-chrome）；需要联网信息时请明确说明能力受限。"
+        : "No web lookup tools are available (search/browser/claude-in-chrome). If internet data is required, clearly state this limitation.");
+    }
+
+    if (hasClaudeInChrome) {
+      parts.push(isZh
+        ? "当用户要求使用自己已登录的 Chrome（例如复用登录态、处理 OAuth、操作真实标签页）时，优先使用 mcp__claude_in_chrome__* 工具。每轮浏览器自动化建议先调用 mcp__claude_in_chrome__tabs_context_mcp。"
+        : "When the user asks to use their logged-in Chrome (session reuse, OAuth, real tabs), prioritize mcp__claude_in_chrome__* tools. Start each browser automation flow with mcp__claude_in_chrome__tabs_context_mcp.");
     }
 
     if (hasTool("describe_images")) {

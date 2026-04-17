@@ -13,6 +13,7 @@ const os = require("os");
 const path = require("path");
 const { fork, execFileSync, execFile } = require("child_process");
 const fs = require("fs");
+const WebSocket = require("ws");
 
 // Windows 通知必须绑定 AppUserModelID，否则常见“任务触发但通知不弹窗”。
 if (process.platform === "win32") {
@@ -60,6 +61,27 @@ let _browserWebView = null;        // 当前活跃的 WebContentsView
 const _browserViews = new Map();   // sessionPath → WebContentsView（挂起的浏览器）
 let _currentBrowserSession = null; // 当前浏览器绑定的 sessionPath
 const _browserDownloadHookedSessions = new WeakSet();
+let _browserBackend = null; // "embedded" | "external"
+
+// 外部 Chrome（通过 CDP）模式：
+// - off  : 永远使用内嵌 BrowserView（默认）
+// - auto : 若检测到本机 Chrome 开了 remote-debugging-port，则接管该浏览器；否则回退内嵌
+// - on   : 强制使用外部 Chrome，若不可用直接报错
+const EXTERNAL_CHROME_MODE = String(process.env.HANA_BROWSER_EXTERNAL_CHROME || "off").toLowerCase();
+const EXTERNAL_CHROME_HOST = process.env.HANA_BROWSER_EXTERNAL_CHROME_HOST || "127.0.0.1";
+const EXTERNAL_CHROME_PORT = Number(process.env.HANA_BROWSER_EXTERNAL_CHROME_PORT || 9222);
+
+const _externalChrome = {
+  active: false,
+  ws: null,
+  pending: new Map(), // id -> {resolve,reject,timer}
+  eventWaiters: new Map(), // method -> [{resolve,reject,timer}]
+  nextId: 1,
+  targetId: null,
+  wsUrl: null,
+  currentUrl: null,
+  suspended: false,
+};
 
 /** 页面统一加载（优先 dist-renderer，fallback 到 src） */
 const _distRenderer = path.join(__dirname, "dist-renderer");
@@ -1066,11 +1088,416 @@ function _notifyViewerUrl(url) {
   }
 }
 
+function _externalChromeBaseUrl() {
+  return `http://${EXTERNAL_CHROME_HOST}:${EXTERNAL_CHROME_PORT}`;
+}
+
+async function _externalChromeGetJson(pathname, timeoutMs = 1200) {
+  const res = await fetch(`${_externalChromeBaseUrl()}${pathname}`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error(`External Chrome HTTP ${res.status}`);
+  return await res.json();
+}
+
+async function _externalChromeProbeVersion(timeoutMs = 800) {
+  try {
+    return await _externalChromeGetJson("/json/version", timeoutMs);
+  } catch {
+    return null;
+  }
+}
+
+function _externalChromeRejectAllPending(err) {
+  for (const [, entry] of _externalChrome.pending) {
+    clearTimeout(entry.timer);
+    entry.reject(err);
+  }
+  _externalChrome.pending.clear();
+
+  for (const [, waiters] of _externalChrome.eventWaiters) {
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(err);
+    }
+  }
+  _externalChrome.eventWaiters.clear();
+}
+
+function _externalChromeDisconnect() {
+  const ws = _externalChrome.ws;
+  _externalChrome.ws = null;
+  _externalChrome.active = false;
+  _externalChrome.wsUrl = null;
+  if (ws) {
+    try { ws.close(); } catch {}
+  }
+  _externalChromeRejectAllPending(new Error("External Chrome disconnected"));
+}
+
+function _externalChromeDispatchEvent(method, params) {
+  const waiters = _externalChrome.eventWaiters.get(method);
+  if (!waiters || waiters.length === 0) return;
+  _externalChrome.eventWaiters.delete(method);
+  for (const waiter of waiters) {
+    clearTimeout(waiter.timer);
+    waiter.resolve(params);
+  }
+}
+
+async function _externalChromeConnectWs(wsUrl) {
+  if (_externalChrome.ws && _externalChrome.wsUrl === wsUrl && _externalChrome.ws.readyState === WebSocket.OPEN) {
+    return;
+  }
+  _externalChromeDisconnect();
+
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { handshakeTimeout: 5000 });
+    let settled = false;
+    const onFail = (err) => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch {}
+      reject(err instanceof Error ? err : new Error(String(err || "WebSocket connect failed")));
+    };
+    ws.once("open", () => {
+      if (settled) return;
+      settled = true;
+      _externalChrome.ws = ws;
+      _externalChrome.wsUrl = wsUrl;
+      ws.on("message", (raw) => {
+        let msg;
+        try { msg = JSON.parse(raw.toString()); } catch { return; }
+        if (typeof msg.id === "number" && _externalChrome.pending.has(msg.id)) {
+          const entry = _externalChrome.pending.get(msg.id);
+          _externalChrome.pending.delete(msg.id);
+          clearTimeout(entry.timer);
+          if (msg.error) entry.reject(new Error(msg.error.message || "CDP command failed"));
+          else entry.resolve(msg.result || {});
+          return;
+        }
+        if (msg.method) {
+          _externalChromeDispatchEvent(msg.method, msg.params || {});
+        }
+      });
+      ws.on("error", (err) => {
+        console.warn("[browser:external] ws error:", err?.message || err);
+      });
+      ws.on("close", () => {
+        _externalChromeDisconnect();
+      });
+      resolve();
+    });
+    ws.once("error", onFail);
+  });
+}
+
+function _externalChromeSend(method, params = {}, timeoutMs = 15000) {
+  if (!_externalChrome.ws || _externalChrome.ws.readyState !== WebSocket.OPEN) {
+    throw new Error("External Chrome is not connected");
+  }
+  const id = _externalChrome.nextId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      _externalChrome.pending.delete(id);
+      reject(new Error(`CDP timeout: ${method}`));
+    }, timeoutMs);
+    _externalChrome.pending.set(id, { resolve, reject, timer });
+    _externalChrome.ws.send(JSON.stringify({ id, method, params }), (err) => {
+      if (!err) return;
+      clearTimeout(timer);
+      _externalChrome.pending.delete(id);
+      reject(err);
+    });
+  });
+}
+
+function _externalChromeWaitEvent(method, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const arr = _externalChrome.eventWaiters.get(method) || [];
+      const idx = arr.findIndex((x) => x.resolve === resolve);
+      if (idx >= 0) arr.splice(idx, 1);
+      if (arr.length === 0) _externalChrome.eventWaiters.delete(method);
+      reject(new Error(`CDP event timeout: ${method}`));
+    }, timeoutMs);
+    const arr = _externalChrome.eventWaiters.get(method) || [];
+    arr.push({ resolve, reject, timer });
+    _externalChrome.eventWaiters.set(method, arr);
+  });
+}
+
+async function _externalChromeEvalRaw(expression, { timeoutMs = 15000, returnByValue = true } = {}) {
+  const result = await _externalChromeSend("Runtime.evaluate", {
+    expression,
+    returnByValue,
+    awaitPromise: true,
+  }, timeoutMs);
+  if (result?.exceptionDetails) {
+    const msg = result.exceptionDetails.text
+      || result.exceptionDetails.exception?.description
+      || "Runtime.evaluate failed";
+    throw new Error(msg);
+  }
+  return result.result || {};
+}
+
+async function _externalChromeEvalValue(expression, timeoutMs = 15000) {
+  const raw = await _externalChromeEvalRaw(expression, { timeoutMs, returnByValue: true });
+  return raw.value;
+}
+
+function _externalChromeSerializeRuntimeValue(raw) {
+  if (!raw) return "undefined";
+  if (raw.value !== undefined) {
+    if (typeof raw.value === "string") return raw.value;
+    try { return JSON.stringify(raw.value, null, 2); } catch {}
+    return String(raw.value);
+  }
+  if (raw.description) return String(raw.description);
+  return String(raw.type || "undefined");
+}
+
+async function _externalChromeEnsureTarget() {
+  const list = await _externalChromeGetJson("/json/list", 1200);
+  const pages = Array.isArray(list)
+    ? list.filter((x) => x?.type === "page" && x?.webSocketDebuggerUrl)
+    : [];
+
+  let target = pages.find((x) => x.id === _externalChrome.targetId);
+  if (!target) {
+    target = pages.find((x) => typeof x.url === "string" && !x.url.startsWith("devtools://")) || null;
+  }
+
+  if (!target) {
+    const created = await fetch(`${_externalChromeBaseUrl()}/json/new?about:blank`, {
+      method: "PUT",
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!created.ok) throw new Error(`External Chrome create tab failed: HTTP ${created.status}`);
+    target = await created.json();
+  }
+
+  if (!target?.webSocketDebuggerUrl) {
+    throw new Error("External Chrome target missing webSocketDebuggerUrl");
+  }
+  _externalChrome.targetId = target.id || null;
+  _externalChrome.currentUrl = target.url || _externalChrome.currentUrl;
+  await _externalChromeConnectWs(target.webSocketDebuggerUrl);
+  await _externalChromeSend("Page.enable", {}, 5000);
+  await _externalChromeSend("Runtime.enable", {}, 5000);
+}
+
+async function _externalChromeWaitReady(timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const rs = await _externalChromeEvalValue("document.readyState", 2000);
+      if (rs === "interactive" || rs === "complete") return;
+    } catch {}
+    await _delay(180);
+  }
+}
+
+async function _externalChromeSnapshot() {
+  const snap = await _externalChromeEvalValue(SNAPSHOT_SCRIPT, 15000);
+  if (!snap || typeof snap !== "object") {
+    throw new Error("External Chrome snapshot failed");
+  }
+  _externalChrome.currentUrl = snap.currentUrl || _externalChrome.currentUrl;
+  return snap;
+}
+
+async function _shouldUseExternalChromeBackend() {
+  if (EXTERNAL_CHROME_MODE === "off") return false;
+  const version = await _externalChromeProbeVersion(700);
+  if (version) return true;
+  if (EXTERNAL_CHROME_MODE === "on") {
+    throw new Error(
+      `External Chrome unavailable. Start Chrome with --remote-debugging-port=${EXTERNAL_CHROME_PORT}, ` +
+      `or set HANA_BROWSER_EXTERNAL_CHROME=off`
+    );
+  }
+  return false;
+}
+
+async function _externalChromeLaunch() {
+  await _externalChromeEnsureTarget();
+  _externalChrome.active = true;
+  _externalChrome.suspended = false;
+}
+
+async function handleExternalChromeCommand(cmd, params) {
+  switch (cmd) {
+    case "launch": {
+      await _externalChromeLaunch();
+      return {};
+    }
+    case "close": {
+      _externalChromeDisconnect();
+      _externalChrome.targetId = null;
+      _externalChrome.currentUrl = null;
+      _browserBackend = null;
+      return {};
+    }
+    case "suspend": {
+      _externalChrome.suspended = true;
+      return {};
+    }
+    case "resume": {
+      if (_externalChrome.active) {
+        _externalChrome.suspended = false;
+        return { found: true, url: _externalChrome.currentUrl || null };
+      }
+      return { found: false };
+    }
+    case "destroyView": {
+      return {};
+    }
+    case "navigate": {
+      if (!isAllowedBrowserUrl(params.url)) throw new Error("Only http/https URLs are allowed");
+      await _externalChromeEnsureTarget();
+      const nav = await _externalChromeSend("Page.navigate", { url: params.url }, 15000);
+      if (nav?.errorText) throw new Error(nav.errorText);
+      await Promise.race([
+        _externalChromeWaitEvent("Page.loadEventFired", 12000),
+        _delay(1200),
+      ]);
+      await _externalChromeWaitReady(6000);
+      const snap = await _externalChromeSnapshot();
+      return { url: snap.currentUrl, title: snap.title, snapshot: snap.text };
+    }
+    case "snapshot": {
+      await _externalChromeEnsureTarget();
+      const snap = await _externalChromeSnapshot();
+      return { currentUrl: snap.currentUrl, text: snap.text };
+    }
+    case "screenshot": {
+      await _externalChromeEnsureTarget();
+      const cap = await _externalChromeSend("Page.captureScreenshot", {
+        format: "jpeg",
+        quality: 75,
+      }, 15000);
+      return { base64: cap.data };
+    }
+    case "thumbnail": {
+      // 外部浏览器模式避免每次状态轮询都抓大图，返回空缩略图即可。
+      return { base64: null };
+    }
+    case "click": {
+      await _externalChromeEnsureTarget();
+      const clickRef = Number(params.ref);
+      await _externalChromeEvalRaw(
+        "(function(){ var el = document.querySelector('[data-hana-ref=\"" + clickRef + "\"]');" +
+        " if (!el) throw new Error('Element [" + clickRef + "] not found');" +
+        " el.scrollIntoView({block:'center'}); el.click(); })()",
+        { returnByValue: true, timeoutMs: 8000 }
+      );
+      await _delay(700);
+      const snap = await _externalChromeSnapshot();
+      return { currentUrl: snap.currentUrl, text: snap.text };
+    }
+    case "type": {
+      await _externalChromeEnsureTarget();
+      if (params.ref != null) {
+        const typeRef = Number(params.ref);
+        await _externalChromeEvalRaw(
+          "(function(){ var el = document.querySelector('[data-hana-ref=\"" + typeRef + "\"]');" +
+          " if (!el) throw new Error('Element [" + typeRef + "] not found');" +
+          " el.scrollIntoView({block:'center'}); el.focus(); if (el.select) el.select(); })()",
+          { returnByValue: true, timeoutMs: 8000 }
+        );
+        await _delay(100);
+      }
+      await _externalChromeSend("Input.insertText", { text: String(params.text || "") }, 6000);
+      if (params.pressEnter) {
+        await _externalChromeSend("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }, 4000);
+        await _externalChromeSend("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }, 4000);
+        await _delay(600);
+      }
+      await _delay(250);
+      const snap = await _externalChromeSnapshot();
+      return { currentUrl: snap.currentUrl, text: snap.text };
+    }
+    case "scroll": {
+      await _externalChromeEnsureTarget();
+      const delta = (params.direction === "up" ? -1 : 1) * (params.amount || 3) * 300;
+      await _externalChromeEvalRaw(`window.scrollBy({top:${delta},behavior:'smooth'})`, { timeoutMs: 6000 });
+      await _delay(450);
+      const snap = await _externalChromeSnapshot();
+      return { text: snap.text };
+    }
+    case "select": {
+      await _externalChromeEnsureTarget();
+      const selRef = Number(params.ref);
+      const safeValue = JSON.stringify(params.value);
+      await _externalChromeEvalRaw(
+        "(function(){ var el = document.querySelector('[data-hana-ref=\"" + selRef + "\"]');" +
+        " if (!el) throw new Error('Element [" + selRef + "] not found');" +
+        " el.value = " + safeValue + "; el.dispatchEvent(new Event('change',{bubbles:true})); })()",
+        { timeoutMs: 8000 }
+      );
+      await _delay(250);
+      const snap = await _externalChromeSnapshot();
+      return { text: snap.text };
+    }
+    case "pressKey": {
+      await _externalChromeEnsureTarget();
+      const parts = String(params.key || "").split("+");
+      const keyCode = parts[parts.length - 1];
+      const keyMap = { Enter: ["Enter", 13], Escape: ["Escape", 27], Tab: ["Tab", 9], Backspace: ["Backspace", 8], Delete: ["Delete", 46], Space: [" ", 32] };
+      const mapped = keyMap[keyCode] || [keyCode, keyCode.length === 1 ? keyCode.toUpperCase().charCodeAt(0) : 0];
+      await _externalChromeSend("Input.dispatchKeyEvent", { type: "keyDown", key: mapped[0], code: keyCode, windowsVirtualKeyCode: mapped[1], nativeVirtualKeyCode: mapped[1] }, 4000);
+      await _externalChromeSend("Input.dispatchKeyEvent", { type: "keyUp", key: mapped[0], code: keyCode, windowsVirtualKeyCode: mapped[1], nativeVirtualKeyCode: mapped[1] }, 4000);
+      await _delay(220);
+      const snap = await _externalChromeSnapshot();
+      return { text: snap.text };
+    }
+    case "wait": {
+      await _externalChromeEnsureTarget();
+      const timeout = Math.min(params.timeout || 5000, 10000);
+      await _delay(timeout);
+      const snap = await _externalChromeSnapshot();
+      return { text: snap.text };
+    }
+    case "evaluate": {
+      if (!params.expression || params.expression.length > 10000) {
+        throw new Error("Expression too long (max 10000 chars)");
+      }
+      await _externalChromeEnsureTarget();
+      const raw = await _externalChromeEvalRaw(params.expression, { timeoutMs: 12000, returnByValue: true });
+      return { value: _externalChromeSerializeRuntimeValue(raw) };
+    }
+    case "show": {
+      if (_externalChrome.targetId) {
+        try {
+          await fetch(`${_externalChromeBaseUrl()}/json/activate/${_externalChrome.targetId}`, {
+            signal: AbortSignal.timeout(1500),
+          });
+        } catch {}
+      }
+      return {};
+    }
+    default:
+      throw new Error("Unknown browser command: " + cmd);
+  }
+}
+
 async function handleBrowserCommand(cmd, params) {
+  if (cmd === "launch" && !_browserBackend) {
+    const useExternal = await _shouldUseExternalChromeBackend();
+    _browserBackend = useExternal ? "external" : "embedded";
+  }
+
+  if (_browserBackend === "external") {
+    return handleExternalChromeCommand(cmd, params || {});
+  }
+
   switch (cmd) {
 
     // ── launch ──
     case "launch": {
+      _browserBackend = "embedded";
       if (_browserWebView) return {};
       const ses = session.fromPartition("persist:hana-browser");
       attachBrowserDownloadHandler(ses);
@@ -1141,6 +1568,7 @@ async function handleBrowserCommand(cmd, params) {
         _browserWebView = null;
         _currentBrowserSession = null;
       }
+      _browserBackend = null;
       // 通知浮窗状态变化，但不自动隐藏（让用户自己决定关不关）
       if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
         browserViewerWindow.webContents.send("browser-update", { running: false });
@@ -1211,9 +1639,31 @@ async function handleBrowserCommand(cmd, params) {
     // ── screenshot ──
     case "screenshot": {
       _ensureBrowser();
-      const img = await _browserWebView.webContents.capturePage();
-      const jpeg = img.toJPEG(75);
-      return { base64: jpeg.toString("base64") };
+      const captureBase64 = async () => {
+        const img = await _browserWebView.webContents.capturePage();
+        const jpeg = img.toJPEG(75);
+        return jpeg.toString("base64");
+      };
+      try {
+        return { base64: await captureBase64() };
+      } catch (err) {
+        const msg = String(err?.message || "");
+        // 某些系统上窗口隐藏时会报 "Current display surface not available for capture"。
+        // screenshot 动作可接受拉起窗口后重试一次，提升稳定性。
+        if (
+          /display surface not available/i.test(msg)
+          && browserViewerWindow
+          && !browserViewerWindow.isDestroyed()
+        ) {
+          browserViewerWindow.show();
+          browserViewerWindow.focus();
+          if (_browserWebView) _browserWebView.webContents.focus();
+          _updateBrowserViewBounds();
+          await _delay(150);
+          return { base64: await captureBase64() };
+        }
+        throw err;
+      }
     }
 
     // ── thumbnail ──
