@@ -7,6 +7,32 @@ import knownModels from '../../../../lib/known-models.json';
 
 const platform = (window as any).platform;
 
+export function normalizeModelRef(value: any): string {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object') return '';
+
+  const rawId = value.id ?? value.modelId ?? value.model ?? value.name ?? '';
+  const rawProvider = value.provider ?? value.providerId ?? value.vendor ?? '';
+  const id = String(rawId || '').trim();
+  const provider = String(rawProvider || '').trim();
+  if (!id) return '';
+
+  return provider && !id.includes('/') ? `${provider}/${id}` : id;
+}
+
+export function normalizeFavoriteRefs(values: any): string[] {
+  if (!Array.isArray(values)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of values) {
+    const ref = normalizeModelRef(item);
+    if (!ref || seen.has(ref)) continue;
+    seen.add(ref);
+    out.push(ref);
+  }
+  return out;
+}
+
 export function t(key: string, params?: Record<string, any>): any {
   return (window as any).t?.(key, params) ?? key;
 }
@@ -127,10 +153,11 @@ export function autoSaveModels() {
   _saveFavTimer = setTimeout(async () => {
     const store = useSettingsStore.getState();
     try {
+      const favorites = normalizeFavoriteRefs([...store.pendingFavorites]);
       await hanaFetch('/api/favorites', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ favorites: [...store.pendingFavorites] }),
+        body: JSON.stringify({ favorites }),
       });
       store.showToast(t('settings.autoSaved'), 'success');
       platform?.settingsChanged?.('models-changed');

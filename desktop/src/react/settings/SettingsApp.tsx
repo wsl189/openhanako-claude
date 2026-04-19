@@ -20,6 +20,7 @@ import { MemoryViewer } from './overlays/MemoryViewer';
 import { CompiledMemoryViewer } from './overlays/CompiledMemoryViewer';
 import { ClearMemoryConfirm } from './overlays/ClearMemoryConfirm';
 import { BridgeTutorial } from './overlays/BridgeTutorial';
+import { WechatQrcodeOverlay } from './overlays/WechatQrcodeOverlay';
 
 const platform = (window as any).platform;
 const titlebarEl = document.querySelector('.titlebar');
@@ -81,6 +82,7 @@ export function SettingsApp() {
       <CompiledMemoryViewer />
       <ClearMemoryConfirm />
       <BridgeTutorial />
+      <WechatQrcodeOverlay />
 
       {!ready && <div className="settings-loading-mask" id="settingsLoadingMask" />}
 

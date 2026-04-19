@@ -3,6 +3,7 @@
  */
 import { useSettingsStore } from './store';
 import { hanaFetch, hanaUrl } from './api';
+import { normalizeFavoriteRefs, normalizeModelRef } from './helpers';
 
 export async function loadAgents() {
   const store = useSettingsStore.getState();
@@ -78,21 +79,22 @@ export async function loadSettingsConfig() {
     const experienceData = await experienceRes.json();
     config._experience = experienceData.content || '';
 
-    // favorites
+    // favorites：兼容旧格式（如 { id, provider }）
+    const fallbackFavorites = normalizeFavoriteRefs(config.models?.favorites);
     try {
       const favRes = await hanaFetch('/api/favorites');
       const favData = await favRes.json();
-      store.set({ pendingFavorites: new Set(favData.favorites || []) });
+      store.set({ pendingFavorites: new Set(normalizeFavoriteRefs(favData.favorites)) });
     } catch {
-      store.set({ pendingFavorites: new Set(config.models?.favorites || []) });
+      store.set({ pendingFavorites: new Set(fallbackFavorites) });
     }
 
     store.set({
       settingsConfig: config,
       globalModelsConfig: globalModels,
       homeFolder: config.desk?.home_folder || null,
-      currentPins: pinnedData.pins || [],
-      pendingDefaultModel: config.models?.chat || '',
+      currentPins: Array.isArray(pinnedData.pins) ? pinnedData.pins.map((x: any) => String(x ?? '')).filter(Boolean) : [],
+      pendingDefaultModel: normalizeModelRef(config.models?.chat),
     });
   } catch (err) {
     console.error('[settings] load failed:', err);

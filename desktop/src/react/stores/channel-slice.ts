@@ -1,6 +1,15 @@
 import type { Channel, ChannelMessage } from '../types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 
+const I18N_ERROR_KEY_RE = /^error\.[a-zA-Z0-9_.-]+$/i;
+
+function safeDisplayName(raw: unknown, fallback: string): string {
+  const text = String(raw ?? '').trim();
+  if (!text) return fallback;
+  if (I18N_ERROR_KEY_RE.test(text)) return fallback;
+  return text;
+}
+
 export interface ChannelSlice {
   channels: Channel[];
   currentChannel: string | null;
@@ -84,24 +93,33 @@ export const createChannelSlice = (
       const chData = chRes.ok ? await chRes.json() : { channels: [] };
       const dmData = dmRes.ok ? await dmRes.json() : { dms: [] };
 
-      const channels: Channel[] = (chData.channels || []).map((ch: any) => ({
-        ...ch,
-        isDM: false,
-      }));
+      const channels: Channel[] = (chData.channels || []).map((ch: any) => {
+        const id = String(ch?.id || '').trim();
+        return {
+          ...ch,
+          id,
+          name: safeDisplayName(ch?.name, id),
+          isDM: false,
+        };
+      });
 
-      const dms: Channel[] = (dmData.dms || []).map((dm: any) => ({
-        id: `dm:${dm.peerId}`,
-        name: dm.peerName || dm.peerId,
-        members: [dm.peerId],
-        lastMessage: dm.lastMessage || '',
-        lastSender: dm.lastSender || '',
-        lastTimestamp: dm.lastTimestamp || '',
-        newMessageCount: 0,
-        messageCount: dm.messageCount || 0,
-        isDM: true,
-        peerId: dm.peerId,
-        peerName: dm.peerName,
-      }));
+      const dms: Channel[] = (dmData.dms || []).map((dm: any) => {
+        const peerId = String(dm?.peerId || '').trim();
+        const peerName = safeDisplayName(dm?.peerName, peerId);
+        return {
+          id: `dm:${peerId}`,
+          name: peerName || peerId,
+          members: [peerId],
+          lastMessage: dm.lastMessage || '',
+          lastSender: dm.lastSender || '',
+          lastTimestamp: dm.lastTimestamp || '',
+          newMessageCount: 0,
+          messageCount: dm.messageCount || 0,
+          isDM: true,
+          peerId,
+          peerName,
+        };
+      });
 
       const allChannels = [...channels, ...dms];
       const totalUnread = allChannels.reduce((sum, ch) => sum + (ch.newMessageCount || 0), 0);
@@ -133,8 +151,9 @@ export const createChannelSlice = (
       // 防止异步请求回写过期选择
       if (get!().channelWelcomeSelectedId !== channelId) return;
 
+      const previewName = safeDisplayName(data?.name, ch.name || channelId);
       set({
-        channelPreviewInfoName: data.name || channelId,
+        channelPreviewInfoName: previewName,
         channelPreviewMembers: Array.isArray(data.members) ? data.members : [],
         channelPreviewAnnouncement: String(data.announcement || ''),
       });
@@ -161,13 +180,14 @@ export const createChannelSlice = (
         const res = await hanaFetch(`/api/dm/${encodeURIComponent(peerId)}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        const displayPeerName = safeDisplayName(data?.peerName, ch?.peerName || peerId);
         set({
           channelMessages: data.messages || [],
           channelMembers: [peerId],
-          channelHeaderName: data.peerName || peerId,
+          channelHeaderName: displayPeerName,
           channelHeaderMembersText: '',
           channelIsDM: true,
-          channelInfoName: data.peerName || peerId,
+          channelInfoName: displayPeerName,
           channelAnnouncement: '',
           channelMemoryEnabled: true,
           channelMemoryLoading: false,
@@ -178,17 +198,18 @@ export const createChannelSlice = (
         const data = await res.json();
         const members = data.members || [];
         const displayMembers = [s.userName || 'user', ...members];
+        const channelName = safeDisplayName(data?.name, ch?.name || channelId);
         set({
           channelMessages: data.messages || [],
           channelMembers: members,
-          channelHeaderName: data.name || channelId,
+          channelHeaderName: channelName,
           channelHeaderMembersText: `${displayMembers.length} ${t('channel.membersCount')}`,
           channelIsDM: false,
-          channelInfoName: data.name || channelId,
+          channelInfoName: channelName,
           channelAnnouncement: String(data.announcement || ''),
           channelMemoryEnabled: data.memoryEnabled !== false,
           channelMemoryLoading: false,
-          channelPreviewInfoName: data.name || channelId,
+          channelPreviewInfoName: channelName,
           channelPreviewMembers: members,
           channelPreviewAnnouncement: String(data.announcement || ''),
         });

@@ -30,6 +30,14 @@ interface BridgeStatus {
   qq?: {
     bots?: BridgeBotStatus[];
   };
+  wechat?: {
+    enabled?: boolean;
+    status?: string;
+    error?: string | null;
+    token?: string;
+    agentId?: string | null;
+    agentName?: string | null;
+  };
 }
 
 type BridgePlatform = 'telegram' | 'feishu' | 'qq';
@@ -131,6 +139,8 @@ export function BridgeTab() {
   const [tgBots, setTgBots] = useState<BridgeBotStatus[]>([]);
   const [fsBots, setFsBots] = useState<BridgeBotStatus[]>([]);
   const [qqBots, setQqBots] = useState<BridgeBotStatus[]>([]);
+  const [wechatStatus, setWechatStatus] = useState<BridgeStatus['wechat']>({});
+  const [wechatAgentId, setWechatAgentId] = useState('');
 
   const [newDrafts, setNewDrafts] = useState<Record<BridgePlatform, BotDraft | null>>({
     telegram: null,
@@ -202,6 +212,8 @@ export function BridgeTab() {
       setTgBots((data.telegram?.bots || []) as BridgeBotStatus[]);
       setFsBots((data.feishu?.bots || []) as BridgeBotStatus[]);
       setQqBots((data.qq?.bots || []) as BridgeBotStatus[]);
+      setWechatStatus(data.wechat || {});
+      setWechatAgentId((prev) => (data.wechat?.agentId as string | null) || prev || defaultAgentId || '');
     } catch (err) {
       console.error('[bridge] load status failed:', err);
     }
@@ -210,6 +222,18 @@ export function BridgeTab() {
   useEffect(() => {
     loadStatus();
   }, []);
+
+  useEffect(() => {
+    const onReload = () => { void loadStatus(); };
+    window.addEventListener('hana-bridge-reload', onReload);
+    return () => window.removeEventListener('hana-bridge-reload', onReload);
+  }, []);
+
+  useEffect(() => {
+    if (!wechatAgentId && defaultAgentId) {
+      setWechatAgentId(defaultAgentId);
+    }
+  }, [wechatAgentId, defaultAgentId]);
 
   const setDraftField = (
     platform: BridgePlatform,
@@ -429,6 +453,59 @@ export function BridgeTab() {
     }
   };
 
+  const saveWechatConfig = async (
+    credentials: Record<string, any> | null,
+    enabled?: boolean,
+    agentIdOverride?: string | null,
+  ) => {
+    const selectedAgentId = (agentIdOverride ?? wechatAgentId) || (wechatStatus?.agentId as string | null) || defaultAgentId || null;
+    await hanaFetch('/api/bridge/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        platform: 'wechat',
+        credentials: credentials || undefined,
+        enabled,
+        agentId: selectedAgentId,
+      }),
+    });
+  };
+
+  const toggleWechatEnabled = async (on: boolean) => {
+    try {
+      if (on && !wechatStatus?.token) {
+        showToast(t('settings.bridge.wechatNeedScan'), 'error');
+        return;
+      }
+      await saveWechatConfig(null, on);
+      await loadStatus();
+      showToast(t('settings.saved'), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+    }
+  };
+
+  const handleWechatAgentChange = async (id: string) => {
+    setWechatAgentId(id);
+    try {
+      await saveWechatConfig(null, undefined, id);
+      await loadStatus();
+      showToast(t('settings.saved'), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+    }
+  };
+
+  const unbindWechat = async () => {
+    try {
+      await saveWechatConfig({ botToken: '' }, false);
+      await loadStatus();
+      showToast(t('settings.bridge.wechatUnbound'), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+    }
+  };
+
   const renderConfigCard = (
     platform: BridgePlatform,
     target: 'new' | string,
@@ -632,6 +709,71 @@ export function BridgeTab() {
           </section>
         );
       })}
+
+      <section className="settings-section bridge-unified-section">
+        <div className="bridge-unified-head">
+          <div className="bridge-unified-divider">
+            <span>{t('settings.bridge.wechat')}</span>
+          </div>
+        </div>
+
+        <div className="bridge-unified-list">
+          <div className="bridge-unified-item">
+            <div className="bridge-unified-summary">
+              <button
+                className="bridge-unified-summary-main"
+                onClick={() => window.dispatchEvent(new CustomEvent('hana-show-wechat-qrcode', { detail: { agentId: wechatAgentId || (wechatStatus?.agentId as string | null) || defaultAgentId || null } }))}
+              >
+                <BridgeStatusDot status={wechatStatus?.status} />
+                <div className="bridge-unified-summary-meta">
+                  <span className="bridge-unified-summary-name">
+                    {wechatStatus?.token ? t('settings.bridge.wechatLoggedIn') : t('settings.bridge.wechatNeedScan')}
+                  </span>
+                  <span className="bridge-unified-summary-agent">
+                    {getAgentName(wechatAgentId || (wechatStatus?.agentId as string | null) || defaultAgentId, wechatStatus?.agentName || null)}
+                  </span>
+                </div>
+              </button>
+              <Toggle
+                on={!!wechatStatus?.enabled}
+                onChange={(on) => { void toggleWechatEnabled(on); }}
+              />
+            </div>
+
+            <div className="bridge-unified-form-row">
+              <label className="bridge-unified-form-label">Agent</label>
+              <div className="bridge-unified-form-input">
+                <AgentSelect
+                  agents={agents}
+                  value={wechatAgentId || defaultAgentId}
+                  onChange={(id) => { void handleWechatAgentChange(id); }}
+                />
+              </div>
+            </div>
+
+            <div className="bridge-wechat-actions">
+              <button
+                className="bridge-test-btn"
+                onClick={() => window.dispatchEvent(new CustomEvent('hana-show-wechat-qrcode', { detail: { agentId: wechatAgentId || (wechatStatus?.agentId as string | null) || defaultAgentId || null } }))}
+              >
+                {wechatStatus?.token ? t('settings.bridge.wechatRescan') : t('settings.bridge.wechatScan')}
+              </button>
+              {!!wechatStatus?.token && (
+                <button className="bridge-test-btn" onClick={() => { void unbindWechat(); }}>
+                  {t('settings.bridge.wechatUnbind')}
+                </button>
+              )}
+            </div>
+
+            <span className="settings-field-hint">
+              {t('settings.bridge.wechatHint')}
+            </span>
+            <span className="settings-field-hint">
+              {t('settings.bridge.wechatExclusive')}
+            </span>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch, hanaUrl, yuanFallbackAvatar } from '../api';
-import { t, autoSaveConfig, savePins } from '../helpers';
+import { t, autoSaveConfig, savePins, normalizeModelRef } from '../helpers';
 import { SelectWidget } from '../widgets/SelectWidget';
 import { browseAgent, loadSettingsConfig, loadAgents } from '../actions';
 import { formatSessionDate } from '../../utils/format';
@@ -370,9 +370,12 @@ export function AgentTab() {
   const currentYuan = settingsConfig?.agent?.yuan || 'hanako';
 
   // Agent 对话模型
-  const currentModel = settingsConfig?.models?.chat || pendingDefaultModel || '';
-  const modelOptions = [...pendingFavorites].map(mid => ({ value: mid, label: mid }));
-  if (currentModel && !pendingFavorites.has(currentModel)) {
+  const currentModel = normalizeModelRef(settingsConfig?.models?.chat) || pendingDefaultModel || '';
+  const favoriteModelIds = [...pendingFavorites]
+    .map((mid) => normalizeModelRef(mid))
+    .filter(Boolean);
+  const modelOptions = favoriteModelIds.map(mid => ({ value: mid, label: mid }));
+  if (currentModel && !favoriteModelIds.includes(currentModel)) {
     modelOptions.unshift({ value: currentModel, label: currentModel });
   }
 

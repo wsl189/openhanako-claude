@@ -60,6 +60,25 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.env.CLAUDE_CONFIG_DIR).toBe("/tmp/custom-claude-dir");
   });
 
+  it("pins Claude SDK executable to current process executable", () => {
+    const config = createConfig();
+    expect(config.options.executable).toBe(process.execPath);
+  });
+
+  it("supports explicit Claude SDK executable override", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_CLAUDE_CODE_EXECUTABLE: "/tmp/custom-node",
+        HANAKO_CLAUDE_CODE_EXECUTABLE_ARGS: "[\"--trace-warnings\"]",
+        HANAKO_CLAUDE_CODE_CLI_PATH: "/tmp/custom-cli.js",
+      },
+    });
+
+    expect(config.options.executable).toBe("/tmp/custom-node");
+    expect(config.options.executableArgs).toEqual(["--trace-warnings"]);
+    expect(config.options.pathToClaudeCodeExecutable).toBe("/tmp/custom-cli.js");
+  });
+
   it("uses non-partial streaming and bypass permission mode", () => {
     const config = createConfig();
     expect(config.options.includePartialMessages).toBe(false);
@@ -468,6 +487,72 @@ describe("buildClaudeRuntimeConfig env", () => {
       toolUseID: "tool-bash-6",
     });
     expect(allowedWhitelist).toMatchObject({ behavior: "allow" });
+  });
+
+  it("denies Write/Edit paths outside workspace/path_rules in strict mode", async () => {
+    const config = createConfig({
+      workspace: "/tmp/workspace",
+      toolProfile: {
+        sandbox: {
+          mode: "standard",
+          path_rules: [{ path: "/tmp/extra", access: "read_write" }],
+        },
+      },
+    });
+
+    const denied = await config.options.canUseTool("Write", {
+      file_path: "/tmp/outside/file.txt",
+      content: "x",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-write-outside",
+    });
+    expect(denied).toMatchObject({ behavior: "deny" });
+    expect(String(denied.message || "")).toContain("/tmp/outside/file.txt");
+
+    const allowedWorkspace = await config.options.canUseTool("Write", {
+      file_path: "/tmp/workspace/file.txt",
+      content: "x",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-write-workspace",
+    });
+    expect(allowedWorkspace).toMatchObject({ behavior: "allow" });
+
+    const allowedPathRule = await config.options.canUseTool("Edit", {
+      file_path: "/tmp/extra/file.txt",
+      old_string: "a",
+      new_string: "b",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-edit-allow-rule",
+    });
+    expect(allowedPathRule).toMatchObject({ behavior: "allow" });
+  });
+
+  it("denies project-local memory folder access under agent projects", async () => {
+    const config = createConfig({
+      agent: { agentDir: "/tmp/agent" },
+      workspace: "/tmp/workspace",
+    });
+
+    const deniedWrite = await config.options.canUseTool("Write", {
+      file_path: "/tmp/agent/projects/-Users-demo/memory/MEMORY.md",
+      content: "noop",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-project-memory-write",
+    });
+    expect(deniedWrite).toMatchObject({ behavior: "deny" });
+    expect(String(deniedWrite.message || "")).toContain("project-local memory files");
+
+    const deniedRead = await config.options.canUseTool("Read", {
+      file_path: "/tmp/agent/projects/-Users-demo/memory/user_role.md",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-project-memory-read",
+    });
+    expect(deniedRead).toMatchObject({ behavior: "deny" });
   });
 
   it("allows outside path inspection in balanced mode (sandbox policy governs runtime execution)", async () => {

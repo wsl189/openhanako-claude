@@ -33,6 +33,32 @@ export const SHARED_MODEL_KEYS = [
   ["compiler",       "compiler_model"],
 ];
 
+function normalizeFavoriteRef(raw) {
+  if (typeof raw === "string") return raw.trim();
+  if (!raw || typeof raw !== "object") return "";
+
+  const rawId = raw.id ?? raw.modelId ?? raw.model ?? raw.name ?? "";
+  const rawProvider = raw.provider ?? raw.providerId ?? raw.vendor ?? "";
+  const id = String(rawId || "").trim();
+  const provider = String(rawProvider || "").trim();
+  if (!id) return "";
+
+  return provider && !id.includes("/") ? `${provider}/${id}` : id;
+}
+
+function normalizeFavoriteRefs(values) {
+  if (!Array.isArray(values)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const ref = normalizeFavoriteRef(value);
+    if (!ref || seen.has(ref)) continue;
+    seen.add(ref);
+    out.push(ref);
+  }
+  return out;
+}
+
 export class ConfigCoordinator {
   /**
    * @param {object} deps
@@ -180,17 +206,28 @@ export class ConfigCoordinator {
   // ── Favorites ──
 
   readFavorites() {
-    return this._prefs().favorites || [];
+    const prefs = this._prefs();
+    const normalized = normalizeFavoriteRefs(prefs.favorites);
+    const prev = Array.isArray(prefs.favorites) ? prefs.favorites : [];
+    const changed = prev.length !== normalized.length
+      || prev.some((value, index) => normalizeFavoriteRef(value) !== normalized[index]);
+    if (changed) {
+      prefs.favorites = normalized;
+      this._savePrefs(prefs);
+      log.log(`readFavorites: migrated legacy favorites (${prev.length} -> ${normalized.length})`);
+    }
+    return normalized;
   }
 
   async saveFavorites(favorites) {
+    const normalized = normalizeFavoriteRefs(favorites);
     const prefs = this._prefs();
-    prefs.favorites = favorites;
+    prefs.favorites = normalized;
     this._savePrefs(prefs);
-    log.log(`saveFavorites: ${favorites.length} items`);
+    log.log(`saveFavorites: ${normalized.length} items`);
 
     try {
-      await this.syncModelsAndRefresh(favorites);
+      await this.syncModelsAndRefresh(normalized);
     } catch (err) {
       console.error("[config] favorites sync failed:", err.message);
     }

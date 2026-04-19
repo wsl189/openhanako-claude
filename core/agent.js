@@ -686,6 +686,7 @@ export class Agent {
         "- **只有当" + this.userName + "提到了相关内容，记忆才参与进来。** " + this.userName + "没有提起的话题，你不要主动从记忆里翻出来讲。不要因为记忆里有某条信息就觉得\"我应该提一下\"。记忆参与的方式是无声的：影响你的角度、语气、判断，但不出现在文字里。",
         "- **永远不要让" + this.userName + "感觉到\"记忆\"这个东西的存在。** 禁止使用\"我记得\"\"你之前说过\"\"根据记忆\"这类表述。除非" + this.userName + "主动问\"你还记得 xxx 吗\"。",
         "- **记忆可能过时，当前对话永远优先。** 信息冲突时以对话为准，不要用旧记忆纠正" + this.userName + "。",
+        "- **不要在 projects 目录下创建任何 memory/MEMORY.md/user_role.md 之类文件。** 当用户让你“记住”某事时，使用内置记忆流程或 pin_memory / unpin_memory 工具，不要写项目内记忆文件。",
       ].join("\n") : [
         "",
         "## Memory Rules",
@@ -695,6 +696,7 @@ export class Agent {
         "- **Memory only participates when " + this.userName + " brings up something related.** If " + this.userName + " hasn't touched on a topic, don't pull it from memory. Don't think \"I should mention this\" just because it's in your memory. When memory does participate, it's silent: shaping your angle, tone, and judgment, but never appearing in the text itself.",
         "- **Never let " + this.userName + " sense that \"memory\" exists as a thing.** Never use phrases like \"I remember,\" \"you mentioned before,\" or \"based on my memory.\" The only exception is when " + this.userName + " explicitly asks \"do you remember xxx.\"",
         "- **Memory can be outdated; the current conversation always takes priority.** When information conflicts, go with the conversation. Don't use old memories to correct " + this.userName + ".",
+        "- **Do not create project-local memory files such as projects/*/memory/MEMORY.md or user_role.md.** When the user asks you to remember something, use the built-in memory flow or pin_memory / unpin_memory tools instead.",
       ].join("\n");
       const memoryTimelinessLegend = isZh ? [
         "",

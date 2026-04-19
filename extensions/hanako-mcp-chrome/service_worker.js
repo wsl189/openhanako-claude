@@ -1458,14 +1458,26 @@ async function handleComputerMouse(tabId, action, args) {
     return errorResult('left_click_drag requires start_coordinate and coordinate')
   }
 
+  const mouseInput = {
+    action,
+    selector,
+    coordinate,
+    startCoordinate,
+    modifiers: typeof args?.modifiers === 'string' ? args.modifiers : '',
+  }
+
+  const debuggerResult = await tryComputerMouseViaDebugger(tabId, mouseInput)
+  if (debuggerResult.ok) {
+    await maybeRecordFrame(tabId, action)
+    return okTextResult(`Mouse action completed: ${action}`)
+  }
+
+  if (debuggerResult.error) {
+    log(`CDP mouse fallback (${action}): ${debuggerResult.error}`)
+  }
+
   const payload = await executeInTab(tabId, scriptMouseAction, [
-    {
-      action,
-      selector,
-      coordinate,
-      startCoordinate,
-      modifiers: typeof args?.modifiers === 'string' ? args.modifiers : '',
-    },
+    mouseInput,
   ])
 
   if (!isObject(payload) || !payload.ok) {
@@ -1474,6 +1486,202 @@ async function handleComputerMouse(tabId, action, args) {
 
   await maybeRecordFrame(tabId, action)
   return okTextResult(`Mouse action completed: ${action}`)
+}
+
+async function tryComputerMouseViaDebugger(tabId, input) {
+  const action = String(input?.action || '')
+  const supportedActions = new Set([
+    'hover',
+    'left_click',
+    'right_click',
+    'double_click',
+    'triple_click',
+    'left_click_drag',
+  ])
+
+  if (!supportedActions.has(action)) {
+    return { ok: false, error: `Unsupported debugger mouse action: ${action}` }
+  }
+
+  try {
+    let targetPoint = null
+    let startPoint = null
+
+    if (action === 'left_click_drag') {
+      const startResolved = await resolveMousePointForDebugger(tabId, {
+        coordinate: input?.startCoordinate,
+      })
+      if (!startResolved.ok) return startResolved
+
+      const endResolved = await resolveMousePointForDebugger(tabId, {
+        coordinate: input?.coordinate,
+      })
+      if (!endResolved.ok) return endResolved
+
+      startPoint = { x: startResolved.x, y: startResolved.y }
+      targetPoint = { x: endResolved.x, y: endResolved.y }
+    } else {
+      const resolved = await resolveMousePointForDebugger(tabId, {
+        selector: input?.selector,
+        coordinate: input?.coordinate,
+      })
+      if (!resolved.ok) return resolved
+      targetPoint = { x: resolved.x, y: resolved.y }
+    }
+
+    const modifierFlags = parseModifierFlags(String(input?.modifiers || ''))
+    const modifierMask = modifierFlagsToCdpMask(modifierFlags)
+
+    await ensureDebugger(tabId)
+    await dispatchDebuggerMouseAction(tabId, action, {
+      targetPoint,
+      startPoint,
+      modifierMask,
+    })
+
+    return { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+async function resolveMousePointForDebugger(tabId, input) {
+  const selector = typeof input?.selector === 'string' ? input.selector : null
+  const coordinate = Array.isArray(input?.coordinate) ? input.coordinate : null
+
+  if (selector) {
+    const payload = await executeInTab(tabId, scriptResolveMousePoint, [{ selector }])
+    if (!isObject(payload) || !payload.ok) {
+      return { ok: false, error: String(payload?.error || 'Failed to resolve target point') }
+    }
+    return { ok: true, x: Number(payload.x), y: Number(payload.y) }
+  }
+
+  if (coordinate && coordinate.length >= 2) {
+    const x = Number(coordinate[0])
+    const y = Number(coordinate[1])
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return { ok: false, error: 'Invalid mouse coordinate' }
+    }
+    return { ok: true, x: Math.round(x), y: Math.round(y) }
+  }
+
+  return { ok: false, error: 'Mouse action requires selector or coordinate' }
+}
+
+function scriptResolveMousePoint(input) {
+  const selector = typeof input?.selector === 'string' ? input.selector : ''
+  if (!selector) {
+    return { ok: false, error: 'selector is required' }
+  }
+
+  const element = document.querySelector(selector)
+  if (!(element instanceof Element)) {
+    return { ok: false, error: 'Target element not found' }
+  }
+
+  const rect = element.getBoundingClientRect()
+  if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width < 1 || rect.height < 1) {
+    return { ok: false, error: 'Target element has no visible box' }
+  }
+
+  const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || 1)
+  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1)
+  const rawX = rect.left + rect.width / 2
+  const rawY = rect.top + rect.height / 2
+  const x = Math.max(0, Math.min(viewportWidth - 1, Math.round(rawX)))
+  const y = Math.max(0, Math.min(viewportHeight - 1, Math.round(rawY)))
+
+  return { ok: true, x, y }
+}
+
+async function dispatchDebuggerMouseAction(tabId, action, input) {
+  const target = { tabId }
+  const point = input?.targetPoint || { x: 0, y: 0 }
+  const startPoint = input?.startPoint || point
+  const modifierMask = Number(input?.modifierMask || 0)
+
+  const sendMouse = async (type, x, y, extra = {}) => {
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type,
+      x: Number(x),
+      y: Number(y),
+      modifiers: modifierMask,
+      pointerType: 'mouse',
+      ...extra,
+    })
+  }
+
+  if (action === 'hover') {
+    await sendMouse('mouseMoved', point.x, point.y, { buttons: 0 })
+    return
+  }
+
+  if (action === 'left_click_drag') {
+    await sendMouse('mouseMoved', startPoint.x, startPoint.y, { buttons: 0 })
+    await sendMouse('mousePressed', startPoint.x, startPoint.y, {
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    })
+    await sendMouse('mouseMoved', point.x, point.y, { buttons: 1 })
+    await sendMouse('mouseReleased', point.x, point.y, {
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    })
+    return
+  }
+
+  const isRightClick = action === 'right_click'
+  const clickTimes = action === 'double_click' ? 2 : action === 'triple_click' ? 3 : 1
+  const button = isRightClick ? 'right' : 'left'
+  const buttonMask = isRightClick ? 2 : 1
+
+  await sendMouse('mouseMoved', point.x, point.y, { buttons: 0 })
+  for (let i = 1; i <= clickTimes; i += 1) {
+    await sendMouse('mousePressed', point.x, point.y, {
+      button,
+      buttons: buttonMask,
+      clickCount: i,
+    })
+    await sendMouse('mouseReleased', point.x, point.y, {
+      button,
+      buttons: 0,
+      clickCount: i,
+    })
+  }
+}
+
+function parseModifierFlags(raw) {
+  const bits = String(raw || '')
+    .toLowerCase()
+    .split('+')
+    .map(item => item.trim())
+    .filter(Boolean)
+
+  return {
+    ctrlKey: bits.includes('ctrl') || bits.includes('control'),
+    shiftKey: bits.includes('shift'),
+    altKey: bits.includes('alt') || bits.includes('option'),
+    metaKey:
+      bits.includes('cmd') ||
+      bits.includes('meta') ||
+      bits.includes('win') ||
+      bits.includes('windows'),
+  }
+}
+
+function modifierFlagsToCdpMask(flags) {
+  let mask = 0
+  if (flags?.altKey) mask |= 1
+  if (flags?.ctrlKey) mask |= 2
+  if (flags?.metaKey) mask |= 4
+  if (flags?.shiftKey) mask |= 8
+  return mask
 }
 
 function scriptMouseAction(input) {
@@ -1591,12 +1799,15 @@ function scriptMouseAction(input) {
     return { ok: true }
   }
 
-  dispatchMouse(target.element, 'click', target.x, target.y, {
-    ...modifiers,
-    button,
-    buttons: 0,
-    detail,
-  })
+  const clickedByNativeActivation = tryNativeClick(target.element)
+  if (!clickedByNativeActivation) {
+    dispatchMouse(target.element, 'click', target.x, target.y, {
+      ...modifiers,
+      button,
+      buttons: 0,
+      detail,
+    })
+  }
 
   if (target.element instanceof HTMLElement) {
     target.element.focus({ preventScroll: true })
@@ -1649,6 +1860,22 @@ function scriptMouseAction(input) {
         ...init,
       }),
     )
+  }
+
+  function tryNativeClick(targetEl) {
+    if (!(targetEl instanceof Element)) {
+      return false
+    }
+
+    // Prefer native click so default actions (e.g. form submit/navigation) can run.
+    if (typeof targetEl.click === 'function') {
+      try {
+        targetEl.click()
+        return true
+      } catch {}
+    }
+
+    return false
   }
 
   function parseModifiers(raw) {

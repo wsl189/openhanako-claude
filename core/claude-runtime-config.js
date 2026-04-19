@@ -1,7 +1,11 @@
+import fs from "fs";
 import path from "path";
+import { createRequire } from "module";
 import { createCustomToolsMcpServer } from "../lib/claude/custom-tool-adapter.js";
 import { extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
 import { resolveBrowserProvider } from "./browser-provider.js";
+
+const require = createRequire(import.meta.url);
 
 export const CLAUDE_BUILTIN_TOOL_NAMES = [
   "Task",
@@ -69,6 +73,95 @@ function normalizeAbsolutePath(rawPath) {
   const p = String(rawPath || "").trim();
   if (!p || !path.isAbsolute(p)) return null;
   return p;
+}
+
+function parseCommandArgs(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+      }
+    } catch {
+      // Fallback to whitespace split below.
+    }
+  }
+  return text.split(/\s+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function resolveClaudeCodeCliPath(env = {}) {
+  const explicitPath = String(
+    env?.HANAKO_CLAUDE_CODE_CLI_PATH
+      || env?.HANAKO_CLAUDE_CODE_ENTRY
+      || env?.HANA_CLAUDE_CODE_CLI_PATH
+      || env?.HANA_CLAUDE_CODE_ENTRY
+      || "",
+  ).trim();
+  if (explicitPath) return path.resolve(explicitPath);
+  try {
+    const sdkEntryPath = require.resolve("@anthropic-ai/claude-agent-sdk");
+    const candidate = path.join(path.dirname(sdkEntryPath), "cli.js");
+    if (fs.existsSync(candidate)) return candidate;
+  } catch {
+    // Fallback below.
+  }
+  try {
+    const pkgJsonPath = require.resolve("@anthropic-ai/claude-agent-sdk/package.json");
+    const candidate = path.join(path.dirname(pkgJsonPath), "cli.js");
+    if (fs.existsSync(candidate)) return candidate;
+  } catch {
+    // Fallback below.
+  }
+  try {
+    return require.resolve("@anthropic-ai/claude-agent-sdk/cli.js");
+  } catch {
+    return null;
+  }
+}
+
+function resolveClaudeSdkProcessConfig(runtimeEnv = {}) {
+  const explicitExecutable = String(
+    runtimeEnv?.HANAKO_CLAUDE_CODE_EXECUTABLE
+      || runtimeEnv?.HANAKO_CLAUDE_EXECUTABLE
+      || runtimeEnv?.HANA_CLAUDE_CODE_EXECUTABLE
+      || runtimeEnv?.HANA_CLAUDE_EXECUTABLE
+      || "",
+  ).trim();
+  const executable = explicitExecutable || process.execPath;
+  const executableArgsRaw = String(
+    runtimeEnv?.HANAKO_CLAUDE_CODE_EXECUTABLE_ARGS
+      || runtimeEnv?.HANAKO_CLAUDE_EXECUTABLE_ARGS
+      || runtimeEnv?.HANA_CLAUDE_CODE_EXECUTABLE_ARGS
+      || runtimeEnv?.HANA_CLAUDE_EXECUTABLE_ARGS
+      || "",
+  ).trim();
+  const executableArgs = parseCommandArgs(executableArgsRaw);
+  const pathToClaudeCodeExecutable = resolveClaudeCodeCliPath(runtimeEnv);
+
+  const resolvedEnv = {
+    ...(runtimeEnv || {}),
+  };
+  const executableBase = path.basename(String(executable || "")).toLowerCase();
+  const looksLikeNodeBinary = executableBase === "node"
+    || executableBase === "node.exe"
+    || executableBase.startsWith("node-v");
+  const shouldRunAsNode = !looksLikeNodeBinary && (
+    String(process?.versions?.electron || "").trim().length > 0
+    || /electron/i.test(executableBase)
+    || /hanako/i.test(executableBase)
+  );
+  if (shouldRunAsNode) {
+    resolvedEnv.ELECTRON_RUN_AS_NODE = "1";
+  }
+
+  return {
+    executable,
+    executableArgs,
+    pathToClaudeCodeExecutable,
+    env: resolvedEnv,
+  };
 }
 
 function buildSandboxConfig(mode, workspace, pathRules) {
@@ -166,6 +259,33 @@ function resolvePermissionStrategy(agent) {
 
 function isPathInside(target, base) {
   return target === base || target.startsWith(base + path.sep);
+}
+
+function resolveToolTargetPath(toolName, input = {}, cwd = process.cwd()) {
+  const payload = (input && typeof input === "object") ? input : {};
+  const readWriteTools = new Set(["Read", "Write", "Edit"]);
+  const treeTools = new Set(["Glob", "Grep"]);
+  let rawPath = "";
+  if (readWriteTools.has(toolName)) {
+    rawPath = String(payload.file_path || payload.path || "").trim();
+  } else if (treeTools.has(toolName)) {
+    rawPath = String(payload.path || "").trim();
+  }
+  if (!rawPath) return null;
+  return path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(cwd, rawPath);
+}
+
+function isAgentProjectMemoryPath(targetPath, agentDir) {
+  const base = normalizeAbsolutePath(agentDir);
+  const target = normalizeAbsolutePath(targetPath);
+  if (!base || !target) return false;
+  const projectsRoot = path.resolve(base, "projects");
+  if (!isPathInside(target, projectsRoot)) return false;
+  const rel = path.relative(projectsRoot, target);
+  if (!rel || rel.startsWith("..")) return false;
+  const parts = rel.split(path.sep).filter(Boolean);
+  // 仅屏蔽 projects/<project>/memory/**（历史遗留冗余目录）
+  return parts.length >= 2 && parts[1].toLowerCase() === "memory";
 }
 
 function resolveAllowedRoots(workspace, pathRules = []) {
@@ -348,6 +468,7 @@ function buildCanUseToolHandler(permissionStrategy, opts = {}) {
   const strictSandbox = opts.sandboxMode === "standard";
   const allowedRoots = strictSandbox ? resolveAllowedRoots(opts.workspace, opts.pathRules) : [];
   const cwd = opts.cwd;
+  const agentDir = opts.agentDir;
   const allowedToolMatcher = createAllowedToolMatcher(opts.allowedTools);
   const confirmStore = opts.confirmStore;
   const sessionPath = opts.sessionPath || null;
@@ -361,6 +482,23 @@ function buildCanUseToolHandler(permissionStrategy, opts = {}) {
         behavior: "deny",
         message: `Tool "${String(toolName || "").trim()}" is not allowed by current session policy.`,
       };
+    }
+
+    const targetPath = resolveToolTargetPath(toolName, payload, cwd);
+    if (targetPath && isAgentProjectMemoryPath(targetPath, agentDir)) {
+      return {
+        behavior: "deny",
+        message: `Tool "${toolName}" denied: writing/reading project-local memory files is disabled (${targetPath}).`,
+      };
+    }
+    if (strictSandbox && targetPath) {
+      const allowed = allowedRoots.some((root) => isPathInside(targetPath, root));
+      if (!allowed) {
+        return {
+          behavior: "deny",
+          message: `Tool "${toolName}" denied: path is outside strict sandbox scope (${targetPath}).`,
+        };
+      }
     }
 
     if (toolName === "AskUserQuestion") {
@@ -468,7 +606,7 @@ export function buildClaudeRuntimeConfig({
   sessionPath = null,
 } = {}) {
   const explicitClaudeConfigDir = String(env?.CLAUDE_CONFIG_DIR || "").trim();
-  const runtimeEnv = {
+  let runtimeEnv = {
     ...process.env,
     ...(env || {}),
   };
@@ -478,6 +616,8 @@ export function buildClaudeRuntimeConfig({
     // to the current agent directory, where Hanako stores per-agent skills.
     runtimeEnv.CLAUDE_CONFIG_DIR = agentConfigDir;
   }
+  const claudeSdkProcessConfig = resolveClaudeSdkProcessConfig(runtimeEnv);
+  runtimeEnv = claudeSdkProcessConfig.env;
   const sandboxMode = toolProfile?.sandbox?.mode || "standard";
   const pathRules = normalizePathRules(toolProfile?.sandbox?.path_rules);
   const permissionStrategy = resolvePermissionStrategy(agent);
@@ -516,6 +656,7 @@ export function buildClaudeRuntimeConfig({
     workspace,
     pathRules,
     cwd,
+    agentDir: agent?.agentDir,
     confirmStore,
     sessionPath,
     emitToolEvent,
@@ -545,6 +686,13 @@ export function buildClaudeRuntimeConfig({
   const options = {
     cwd,
     model,
+    executable: claudeSdkProcessConfig.executable,
+    ...(claudeSdkProcessConfig.executableArgs.length > 0
+      ? { executableArgs: claudeSdkProcessConfig.executableArgs }
+      : {}),
+    ...(claudeSdkProcessConfig.pathToClaudeCodeExecutable
+      ? { pathToClaudeCodeExecutable: claudeSdkProcessConfig.pathToClaudeCodeExecutable }
+      : {}),
     env: runtimeEnv,
     settings: {
       // Default to skipping WebFetch preflight blocklist checks so
@@ -588,6 +736,9 @@ export function buildClaudeRuntimeConfig({
       claudeInChromeAllowedTools,
       browserProvider,
       useClaudeInChrome,
+      claudeCodeExecutable: claudeSdkProcessConfig.executable,
+      claudeCodeExecutableArgs: claudeSdkProcessConfig.executableArgs,
+      claudeCodeCliPath: claudeSdkProcessConfig.pathToClaudeCodeExecutable,
     },
   };
 }

@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "Hanako - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -59,6 +59,7 @@
     "mammoth": "^1.11.0",
     "markdown-it": "^14.1.1",
     "node-telegram-bot-api": "^0.67.0",
+    "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "ws": "^8.18.0",

@@ -3300,6 +3300,13 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
 }
 
+.bridge-wechat-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin: var(--space-sm) 0;
+}
+
 @media (max-width: 900px) {
     .bridge-unified-form-row {
         grid-template-columns: 88px minmax(0, 1fr);
