@@ -39,6 +39,7 @@ export const HANAKO_TO_CLAUDE_BUILTIN = {
   write: "Write",
   edit: "Edit",
   bash: "Bash",
+  skill: "Skill",
 };
 
 function uniq(list = []) {

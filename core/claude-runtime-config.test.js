@@ -127,6 +127,18 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.diagnostics?.forcedToolsOption).toBe(true);
   });
 
+  it("normalizes lowercase skill alias in builtin_enabled", () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["skill", "read"],
+        },
+      },
+    });
+    expect(config.options.allowedTools).toEqual(["Skill", "Read"]);
+    expect(config.options.tools).toEqual(["Skill", "Read"]);
+  });
+
   it("supports settingSources override via env", () => {
     const config = createConfig({
       env: {

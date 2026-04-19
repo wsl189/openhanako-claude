@@ -4,6 +4,7 @@ import { HanaEngine } from "./engine.js";
 function createEngineLikeForPermissions({
   toolsConfig = undefined,
   customCatalog = ["web_fetch", "todo_write", "ask_agent"],
+  builtinOptional = ["Write", "Edit", "Bash", "Skill"],
 } = {}) {
   const agent = {
     config: {
@@ -18,13 +19,43 @@ function createEngineLikeForPermissions({
     _normalizePathRules: () => [],
     getToolCatalog: () => ({
       builtin_required: ["Read", "Glob", "Grep"],
-      builtin_optional: ["Write", "Edit", "Bash"],
+      builtin_optional: builtinOptional,
       custom: customCatalog,
     }),
   };
 }
 
 describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
+  it("treats legacy builtin default config as unrestricted builtin set", () => {
+    const engineLike = createEngineLikeForPermissions({
+      toolsConfig: {
+        builtin_enabled: ["write", "edit", "bash"],
+      },
+    });
+
+    const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
+    expect(permission.tools.builtin_enabled).toContain("Read");
+    expect(permission.tools.builtin_enabled).toContain("Glob");
+    expect(permission.tools.builtin_enabled).toContain("Grep");
+    expect(permission.tools.builtin_enabled).toContain("Write");
+    expect(permission.tools.builtin_enabled).toContain("Edit");
+    expect(permission.tools.builtin_enabled).toContain("Bash");
+    expect(permission.tools.builtin_enabled).toContain("Skill");
+    expect(permission.tools.builtin_enabled).toContain("Task");
+    expect(permission.tools.builtin_enabled).toContain("WebFetch");
+  });
+
+  it("accepts lowercase skill alias in builtin_enabled", () => {
+    const engineLike = createEngineLikeForPermissions({
+      toolsConfig: {
+        builtin_enabled: ["skill"],
+      },
+    });
+
+    const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
+    expect(permission.tools.builtin_enabled).toEqual(["Skill", "Read", "Glob", "Grep"]);
+  });
+
   it("allows all custom tools when custom_enabled is missing", () => {
     const engineLike = createEngineLikeForPermissions({
       toolsConfig: {

@@ -38,6 +38,7 @@ import { createSandboxedTools } from "../lib/sandbox/index.js";
 const REQUIRED_BUILTIN_TOOLS = ["Read", "Glob", "Grep"];
 const OPTIONAL_BUILTIN_TOOLS = CLAUDE_BUILTIN_TOOL_NAMES.filter((name) => !REQUIRED_BUILTIN_TOOLS.includes(name));
 const ALL_BUILTIN_TOOL_NAMES = [...REQUIRED_BUILTIN_TOOLS, ...OPTIONAL_BUILTIN_TOOLS];
+const LEGACY_OPTIONAL_BUILTIN_DEFAULT = new Set(["Write", "Edit", "Bash"]);
 const PATH_RULE_ACCESS = new Set(["read_only", "read_write"]);
 
 function uniqStrings(list = []) {
@@ -66,6 +67,13 @@ function normalizeBuiltinToolNames(list = []) {
     normalized.push(next);
   }
   return normalized;
+}
+
+function isLegacyBuiltinDefaultConfig(configuredBuiltin = []) {
+  const normalized = uniqStrings(configuredBuiltin);
+  if (normalized.includes("Skill")) return false;
+  if (normalized.length !== LEGACY_OPTIONAL_BUILTIN_DEFAULT.size) return false;
+  return normalized.every((name) => LEGACY_OPTIONAL_BUILTIN_DEFAULT.has(name));
 }
 
 export class HanaEngine {
@@ -600,9 +608,10 @@ export class HanaEngine {
 
     const hasBuiltinConfig = Array.isArray(ag?.config?.tools?.builtin_enabled);
     const configuredBuiltin = normalizeBuiltinToolNames(ag?.config?.tools?.builtin_enabled || []);
-    const builtin_enabled = hasBuiltinConfig
+    const isLegacyDefault = hasBuiltinConfig && isLegacyBuiltinDefaultConfig(configuredBuiltin);
+    const builtin_enabled = (hasBuiltinConfig && !isLegacyDefault)
       ? uniqStrings([...configuredBuiltin, ...REQUIRED_BUILTIN_TOOLS])
-          .filter(n => ALL_BUILTIN_TOOL_NAMES.includes(n))
+          .filter((n) => ALL_BUILTIN_TOOL_NAMES.includes(n))
       : uniqStrings([...REQUIRED_BUILTIN_TOOLS, ...OPTIONAL_BUILTIN_TOOLS]);
 
     const hasCustomConfig = Array.isArray(ag?.config?.tools?.custom_enabled);
