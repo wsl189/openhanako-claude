@@ -449,7 +449,7 @@ export class ChannelRouter {
                   + "Answer NO if: the question has already been adequately answered (you have nothing new to add), the topic is irrelevant to you, you can't contribute, or you just replied and no one followed up.\n"
                   + "Answer only YES or NO.");
 
-            const triageTimeout = AbortSignal.timeout(10_000);
+            const triageTimeout = AbortSignal.timeout(60_000);
             const triageSignal = signal
               ? AbortSignal.any([signal, triageTimeout])
               : triageTimeout;
@@ -462,7 +462,7 @@ export class ChannelRouter {
               messages: [{ role: "user", content: isZh ? `#${channelName} 频道最近消息：\n${msgText}` : `#${channelName} recent messages:\n${msgText}` }],
               temperature: 0,
               max_tokens: 10,
-              timeoutMs: 10_000,
+              timeoutMs: 60_000,
               signal: triageSignal,
             });
             shouldReply = answer.trim().toUpperCase().includes("YES");
