@@ -187,10 +187,20 @@ export class BridgeSessionManager {
     const existingPath = existingFile ? path.join(bridgeDir, existingFile) : null;
 
     if (existingPath && fs.existsSync(existingPath)) {
-      const metadata = patchSessionMetadata(existingPath, {
-        bridge: meta || raw?.bridge || null,
-      });
-      return { sessionPath: existingPath, metadata, index, existingFile, bridgeDir, subDir };
+      try {
+        const metadata = patchSessionMetadata(existingPath, {
+          bridge: meta || raw?.bridge || null,
+        });
+        return { sessionPath: existingPath, metadata, index, existingFile, bridgeDir, subDir };
+      } catch (err) {
+        // Backward compatibility: older bridge sessions may still point to
+        // transcript-style .jsonl files instead of metadata .session.json files.
+        // In that case recreate metadata and let caller persist the new file mapping.
+        debugLog()?.warn(
+          "bridge-session",
+          `invalid bridge session metadata, recreating (${existingPath}): ${err.message}`,
+        );
+      }
     }
 
     const homeCwd = agent?.config?.desk?.home_folder || this._deps.getHomeCwd() || process.cwd();
@@ -250,6 +260,15 @@ export class BridgeSessionManager {
       const toolProfile = this._deps.getAgentPermissionConfig?.(
         agent?.id || path.basename(agent?.agentDir || ""),
       ) || null;
+      // Bridge platform sessions run with the same runtime privilege profile
+      // as main chat full-access mode: no sandbox + bypassPermissions.
+      const bridgeToolProfile = {
+        ...(toolProfile || {}),
+        sandbox: {
+          ...(toolProfile?.sandbox || {}),
+          mode: "full-access",
+        },
+      };
 
       try {
         agent.refreshSystemPrompt?.();
@@ -262,7 +281,7 @@ export class BridgeSessionManager {
         agent,
         cwd: bridgeCwd,
         workspace: homeCwd,
-        toolProfile,
+        toolProfile: bridgeToolProfile,
         customTools: agent?.tools || [],
         model: runtimeEnv.model,
         env: runtimeEnv.env,

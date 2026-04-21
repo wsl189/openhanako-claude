@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
 import { createCustomToolsMcpServer } from "../lib/claude/custom-tool-adapter.js";
+import { createComputerUseMcpServer } from "../lib/computer-use/server.js";
 import { extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
 import { resolveBrowserProvider } from "./browser-provider.js";
 
@@ -181,10 +182,14 @@ function buildSandboxConfig(mode, workspace, pathRules) {
     workspacePath,
     ...pathRules.filter((rule) => rule.access === "read_write").map((rule) => rule.path),
   ].filter(Boolean));
+  // Claude SDK sandbox currently does not support native Windows.
+  // Keep sandbox enabled so supported platforms stay strict, but allow
+  // automatic fallback on win32 to avoid hard failures during turns.
+  const failIfUnavailable = process.platform === "win32" ? false : true;
 
   return {
     enabled: true,
-    failIfUnavailable: true,
+    failIfUnavailable,
     autoAllowBashIfSandboxed: true,
     allowUnsandboxedCommands: mode === "balanced",
     filesystem: {
@@ -631,7 +636,10 @@ export function buildClaudeRuntimeConfig({
     : uniq(customEnabledOverride || toolProfile?.tools?.custom_enabled || []);
   const browserProvider = resolveBrowserProvider(runtimeEnv, { cwd, workspace });
   const useClaudeInChrome = !noTools && browserProvider.useClaudeInChrome === true;
-  const filteredCustomTools = (customTools || []).filter((toolDef) => customEnabled.includes(toolDef?.name));
+  const useComputerUse = !noTools && customEnabled.includes("computer_use");
+  const filteredCustomTools = (customTools || [])
+    .filter((toolDef) => customEnabled.includes(toolDef?.name))
+    .filter((toolDef) => String(toolDef?.name || "") !== "computer_use");
   const mcpServerKey = "hanako";
   const mcpServerName = "hanako";
   // IMPORTANT: Claude Agent SDK can crash the Claude subprocess when an MCP
@@ -651,7 +659,15 @@ export function buildClaudeRuntimeConfig({
   const claudeInChromeAllowedTools = useClaudeInChrome
     ? [toMcpAllowedPrefix(claudeInChromeServerKey)].filter(Boolean)
     : [];
-  const allowedTools = uniq([...builtinEnabled, ...customAllowedTools, ...claudeInChromeAllowedTools]);
+  const computerUseAllowedTools = useComputerUse
+    ? [toMcpAllowedPrefix("computer_use")].filter(Boolean)
+    : [];
+  const allowedTools = uniq([
+    ...builtinEnabled,
+    ...customAllowedTools,
+    ...claudeInChromeAllowedTools,
+    ...computerUseAllowedTools,
+  ]);
   const canUseTool = buildCanUseToolHandler(permissionStrategy, {
     sandboxMode,
     workspace,
@@ -677,6 +693,13 @@ export function buildClaudeRuntimeConfig({
   }
   if (useClaudeInChrome && browserProvider.claudeInChromeServer) {
     mcpServers[claudeInChromeServerKey] = browserProvider.claudeInChromeServer;
+  }
+  if (useComputerUse) {
+    mcpServers.computer_use = createComputerUseMcpServer("computer_use", {
+      createContext: createToolContext,
+      onToolStart: emitToolEvent,
+      onToolEnd: emitToolEvent,
+    });
   }
 
   const baseAppend = noMemory ? agent?.personality : agent?.buildSystemAppendPrompt?.();
@@ -735,8 +758,10 @@ export function buildClaudeRuntimeConfig({
       mcpServerName,
       customAllowedTools,
       claudeInChromeAllowedTools,
+      computerUseAllowedTools,
       browserProvider,
       useClaudeInChrome,
+      useComputerUse,
       claudeCodeExecutable: claudeSdkProcessConfig.executable,
       claudeCodeExecutableArgs: claudeSdkProcessConfig.executableArgs,
       claudeCodeCliPath: claudeSdkProcessConfig.pathToClaudeCodeExecutable,

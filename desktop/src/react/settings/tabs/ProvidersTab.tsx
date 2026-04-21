@@ -741,9 +741,15 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
         body: JSON.stringify({ name: providerId, base_url: effectiveBaseUrl, api: effectiveApi }),
       });
       const data = await res.json();
-      if (data.error) { showFetchHint(t('settings.providers.fetchFailed'), false); return; }
+      if (data.error) {
+        showFetchHint(`${t('settings.providers.fetchFailed')}: ${data.error}`, false);
+        return;
+      }
       const models = (data.models || []).map((m: any) => m.id || m.name);
-      if (models.length === 0) { showFetchHint(t('settings.providers.fetchFailed'), false); return; }
+      if (models.length === 0) {
+        showFetchHint(`${t('settings.providers.fetchFailed')}: empty model list`, false);
+        return;
+      }
       await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -1043,8 +1049,11 @@ function AddCustomButton({ adding, onToggle, onDone, onCancel }: {
   useEffect(() => {
     if (!adding) return;
     const handler = (e: MouseEvent) => {
-      if (btnRef.current?.contains(e.target as Node)) return;
-      if (popRef.current?.contains(e.target as Node)) return;
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target)) return;
+      if (popRef.current?.contains(target)) return;
+      // SelectWidget 的下拉通过 portal 渲染到 body；与其交互不应关闭添加弹层
+      if (target instanceof Element && target.closest('.sdw-popup')) return;
       onCancel();
     };
     document.addEventListener('mousedown', handler);

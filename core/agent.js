@@ -21,6 +21,7 @@ import { createChannelTool } from "../lib/tools/channel-tool.js";
 import { createAskAgentTool } from "../lib/tools/ask-agent-tool.js";
 import { createDmTool } from "../lib/tools/dm-tool.js";
 import { createBrowserTool } from "../lib/tools/browser-tool.js";
+import { createComputerUseTool } from "../lib/tools/computer-use-tool.js";
 import { createPinnedMemoryTools } from "../lib/tools/pinned-memory.js";
 import { createExperienceTools } from "../lib/tools/experience.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
@@ -84,6 +85,7 @@ export class Agent {
     this._artifactTool = null;
     this._channelTool = null;
     this._browserTool = null;
+    this._computerUseTool = null;
     this._browserProvider = null;
     this._notifyTool = null;
     this._describeImagesTool = null;
@@ -250,6 +252,7 @@ export class Agent {
     this._browserTool = this._browserProvider.useEmbeddedBrowser
       ? createBrowserTool()
       : null;
+    this._computerUseTool = createComputerUseTool();
     this._notifyTool = createNotifyTool({
       onNotify: (title, body, opts) => this._notifyHandler?.(title, body, opts),
     });
@@ -432,6 +435,7 @@ export class Agent {
       this._askAgentTool,
       this._dmTool,
       this._browserTool,
+      this._computerUseTool,
       this._describeImagesTool,
       this._generateImagesTool,
       this._notifyTool,
@@ -454,6 +458,7 @@ export class Agent {
       this._askAgentTool,
       this._dmTool,
       this._browserTool,
+      this._computerUseTool,
       this._describeImagesTool,
       this._generateImagesTool,
       this._notifyTool,
@@ -638,9 +643,11 @@ export class Agent {
     const enabledCustom = Array.isArray(toolProfile?.tools?.custom_enabled)
       ? toolProfile.tools.custom_enabled.filter((name) => runtimeCustomNames.has(name))
       : [...runtimeCustomNames];
+    const hasComputerUse = enabledCustom.includes("computer_use");
     const externalMcpTools = browserProvider?.useClaudeInChrome
       ? ["mcp__claude_in_chrome__*"]
       : [];
+    if (hasComputerUse) externalMcpTools.push("mcp__computer_use__*");
     const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
     const formatToolList = (list = []) => {
       const cleaned = [...new Set((list || []).map((item) => String(item || "").trim()).filter(Boolean))];
@@ -784,6 +791,12 @@ export class Agent {
       parts.push(isZh
         ? "当用户要求使用自己已登录的 Chrome（例如复用登录态、处理 OAuth、操作真实标签页）时，优先使用 mcp__claude_in_chrome__* 工具。每轮浏览器自动化建议先调用 mcp__claude_in_chrome__tabs_context_mcp。"
         : "When the user asks to use their logged-in Chrome (session reuse, OAuth, real tabs), prioritize mcp__claude_in_chrome__* tools. Start each browser automation flow with mcp__claude_in_chrome__tabs_context_mcp.");
+    }
+
+    if (hasComputerUse) {
+      parts.push(isZh
+        ? "当用户要求你操作桌面应用（点击、输入、截图、切换窗口）时，使用 mcp__computer_use__*。首次操作前先调用 mcp__computer_use__request_access 申请应用权限，然后通过 screenshot/zoom 观察，再执行鼠标键盘动作。"
+        : "When the user asks for desktop app control (click/type/screenshot/window switching), use mcp__computer_use__* tools. Start with mcp__computer_use__request_access, then observe with screenshot/zoom before taking mouse/keyboard actions.");
     }
 
     if (hasTool("describe_images")) {

@@ -511,6 +511,7 @@ export class ConfigCoordinator {
 
   migrateProvidersToGlobal(log = () => {}) {
     const YAML_LOAD = (p) => { try { return YAML.load(fs.readFileSync(p, "utf-8")) || {}; } catch { return {}; } };
+    const isPlainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
     const agentsDir = this._d.agentsDir;
     const hanakoHome = this._d.hanakoHome;
     const registryMigrationMarker = path.join(hanakoHome, ".providers-registry-migrated");
@@ -540,9 +541,21 @@ export class ConfigCoordinator {
     let globalChanged = false;
     let registryBackfilled = false;
 
+    // 清理全局 providers 中的异常条目（如 null / 非对象），避免迁移期崩溃
+    for (const [name, data] of Object.entries(globalProviders)) {
+      if (isPlainObject(data)) continue;
+      delete globalProviders[name];
+      globalChanged = true;
+    }
+
     const registry = loadModelsRegistry();
     for (const [name, data] of Object.entries(registry.providers || {})) {
-      const provider = globalProviders[name] || (globalProviders[name] = {});
+      let provider = globalProviders[name];
+      if (!isPlainObject(provider)) {
+        provider = {};
+        globalProviders[name] = provider;
+        globalChanged = true;
+      }
       const existingAuthKey = resolveApiKeyFromAuth(name);
 
       if (data?.baseUrl && !provider.base_url) {
@@ -580,10 +593,15 @@ export class ConfigCoordinator {
 
       if (raw.providers) {
         for (const [name, data] of Object.entries(raw.providers)) {
+          if (!isPlainObject(data)) continue;
           if (!globalProviders[name]) {
             globalProviders[name] = structuredClone(data);
             globalChanged = true;
           } else {
+            if (!isPlainObject(globalProviders[name])) {
+              globalProviders[name] = {};
+              globalChanged = true;
+            }
             if (data.api_key && !globalProviders[name].api_key) {
               globalProviders[name].api_key = data.api_key;
               globalChanged = true;

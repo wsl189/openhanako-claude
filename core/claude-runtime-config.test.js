@@ -113,6 +113,18 @@ describe("buildClaudeRuntimeConfig env", () => {
     });
   });
 
+  it("allows sandbox fallback on unsupported win32 runtime", () => {
+    const config = createConfig({
+      toolProfile: {
+        sandbox: {
+          mode: "standard",
+        },
+      },
+    });
+    expect(config.options.sandbox.enabled).toBe(true);
+    expect(config.options.sandbox.failIfUnavailable).toBe(process.platform !== "win32");
+  });
+
   it("defaults settingSources to user and injects options.tools by default", () => {
     const config = createConfig({
       toolProfile: {
@@ -212,6 +224,31 @@ describe("buildClaudeRuntimeConfig env", () => {
     ]);
   });
 
+  it("attaches computer_use MCP server when custom_enabled includes computer_use", () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+          custom_enabled: ["computer_use", "todo"],
+        },
+      },
+      customTools: [
+        { name: "computer_use", parameters: { type: "object", properties: {} } },
+        { name: "todo", parameters: { type: "object", properties: {} } },
+      ],
+    });
+
+    expect(config.options.mcpServers.computer_use).toBeTruthy();
+    expect(config.options.allowedTools).toEqual([
+      "Read",
+      "mcp__hanako__*",
+      "mcp__computer_use__*",
+    ]);
+    expect(config.diagnostics?.customToolsLoaded).toEqual(["todo"]);
+    expect(config.diagnostics?.computerUseAllowedTools).toEqual(["mcp__computer_use__*"]);
+    expect(config.diagnostics?.useComputerUse).toBe(true);
+  });
+
   it("auto-attaches claude-in-chrome MCP server when extension is installed", () => {
     const config = createConfig({
       env: {
@@ -234,14 +271,14 @@ describe("buildClaudeRuntimeConfig env", () => {
         HANAKO_BROWSER_PROVIDER: "claude-in-chrome",
         HANAKO_CLAUDE_IN_CHROME_COMMAND: "bun",
         HANAKO_CLAUDE_IN_CHROME_ARGS:
-          "[\"/tmp/claude-core/src/entrypoints/cli.tsx\",\"--claude-in-chrome-mcp\"]",
+          "[\"/tmp/custom-browser-mcp.js\",\"--claude-in-chrome-mcp\"]",
       },
     });
 
     expect(config.options.mcpServers.claude_in_chrome).toEqual({
       type: "stdio",
       command: "bun",
-      args: ["/tmp/claude-core/src/entrypoints/cli.tsx", "--claude-in-chrome-mcp"],
+      args: ["/tmp/custom-browser-mcp.js", "--claude-in-chrome-mcp"],
     });
     expect(config.options.allowedTools).toContain("mcp__claude_in_chrome__*");
   });
@@ -253,13 +290,73 @@ describe("buildClaudeRuntimeConfig env", () => {
         HANAKO_BROWSER_PROVIDER: "claude-in-chrome",
         HANAKO_CLAUDE_IN_CHROME_COMMAND: "bun",
         HANAKO_CLAUDE_IN_CHROME_ARGS:
-          "[\"/tmp/claude-core/src/entrypoints/cli.tsx\",\"--claude-in-chrome-mcp\"]",
+          "[\"/tmp/custom-browser-mcp.js\",\"--claude-in-chrome-mcp\"]",
       },
     });
 
     expect(config.options.mcpServers.claude_in_chrome).toBeUndefined();
     expect(config.options.allowedTools).toEqual([]);
     expect(config.diagnostics?.useClaudeInChrome).toBe(false);
+  });
+
+  it("does not attach computer_use server in noTools mode", () => {
+    const config = createConfig({
+      noTools: true,
+      toolProfile: {
+        tools: {
+          custom_enabled: ["computer_use"],
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.computer_use).toBeUndefined();
+    expect(config.options.allowedTools).toEqual([]);
+    expect(config.diagnostics?.useComputerUse).toBe(false);
+  });
+
+  it("allows mcp__computer_use__* tools through canUseTool when computer_use is enabled", async () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          custom_enabled: ["computer_use"],
+        },
+      },
+    });
+
+    const decision = await config.options.canUseTool("mcp__computer_use__left_click", {
+      coordinate: [100, 200],
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-computer-use-allowed",
+    });
+
+    expect(decision).toMatchObject({
+      behavior: "allow",
+      updatedInput: { coordinate: [100, 200] },
+    });
+  });
+
+  it("denies mcp__computer_use__* tools through canUseTool when computer_use is disabled", async () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+          custom_enabled: [],
+        },
+      },
+    });
+
+    const decision = await config.options.canUseTool("mcp__computer_use__left_click", {
+      coordinate: [100, 200],
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-computer-use-denied",
+    });
+
+    expect(decision).toMatchObject({
+      behavior: "deny",
+    });
+    expect(String(decision.message || "")).toContain("not allowed");
   });
 
   it("installs canUseTool handler by default to avoid permission prompt deadlocks", async () => {

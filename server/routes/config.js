@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { t } from "../i18n.js";
 import { debugLog } from "../../lib/debug-log.js";
-import { getRawConfig, getAllProviders, saveGlobalProviders, clearConfigCache } from "../../lib/memory/config-loader.js";
+import { getRawConfig, getAllProviders, saveGlobalProviders, saveConfig, clearConfigCache } from "../../lib/memory/config-loader.js";
 import { FactStore } from "../../lib/memory/fact-store.js";
 
 function normalizeSandboxPatch(rawSandbox) {
@@ -34,6 +34,10 @@ function normalizeSandboxPatch(rawSandbox) {
     });
   }
   return next;
+}
+
+function normalizeApiKey(value) {
+  return String(value || "").replace(/[^\x20-\x7E]/g, "").trim();
 }
 
 export default async function configRoute(app, { engine }) {
@@ -157,10 +161,35 @@ export default async function configRoute(app, { engine }) {
       // providers 块 → 全局 providers.yaml
       let providersChanged = false;
       if (partial.providers) {
+        // 清洗 API key（去掉输入法/复制带入的隐藏字符），避免测试通过但拉模型鉴权失败
+        for (const providerPatch of Object.values(partial.providers)) {
+          if (providerPatch && typeof providerPatch === "object" && typeof providerPatch.api_key === "string") {
+            providerPatch.api_key = normalizeApiKey(providerPatch.api_key);
+          }
+        }
+
         // 删除 provider 时（值为 null），同步清理 models.json + favorites
         const deletedProviders = Object.keys(partial.providers)
           .filter(name => partial.providers[name] === null);
         if (deletedProviders.length > 0) {
+          // 向后兼容：旧版本可能把 providers 存在 per-agent config.yaml，
+          // 仅删除全局 providers.yaml 会被 getAllProviders() 从旧配置“读回来”。
+          // 这里做“彻底删除”：清理当前 agent 以及所有 agent 的 legacy providers 残留。
+          const legacyDeletes = {};
+          for (const name of deletedProviders) legacyDeletes[name] = null;
+          saveConfig(engine.configPath, { providers: legacyDeletes });
+          try {
+            const entries = await fs.readdir(engine.agentsDir, { withFileTypes: true });
+            for (const entry of entries) {
+              if (!entry.isDirectory()) continue;
+              const cfgPath = path.join(engine.agentsDir, entry.name, "config.yaml");
+              if (!existsSync(cfgPath) || cfgPath === engine.configPath) continue;
+              try {
+                saveConfig(cfgPath, { providers: legacyDeletes });
+              } catch {}
+            }
+          } catch {}
+
           try {
             const modelsJsonPath = engine.modelsJsonPath;
             const modelsJson = JSON.parse(readFileSync(modelsJsonPath, "utf-8"));

@@ -1599,6 +1599,10 @@
       "stateDesc": "Wait state (optional for wait): domcontentloaded / idle",
       "pressEnterDesc": "Press Enter after typing (optional for type)"
     },
+    "computerUse": {
+      "label": "Computer Use",
+      "description": "Control local desktop applications via native GUI automation (screenshots, clicks, typing, scrolling, key combos). When enabled, it exposes mcp__computer_use__* tools for real app interactions."
+    },
     "describeImages": {
       "label": "Describe Images",
       "description": "Read images and return textual descriptions.\nBy default it uses user-uploaded images in the current session; you can also pass absolute image paths via image_paths / image_path.\nUse when the user's request depends on image content.",

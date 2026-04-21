@@ -1599,6 +1599,10 @@
       "stateDesc": "等待状态（wait 时可选）：domcontentloaded / idle",
       "pressEnterDesc": "输入后按回车（type 时可选）"
     },
+    "computerUse": {
+      "label": "电脑控制",
+      "description": "通过本地桌面自动化能力操作电脑应用（截图、点击、输入、滚动、快捷键）。启用后会暴露 mcp__computer_use__* 工具，适合需要真实 GUI 操作的任务。"
+    },
     "describeImages": {
       "label": "图片理解",
       "description": "读取图片并输出文字描述。\n默认读取当前会话中用户上传的图片；也可通过 image_paths / image_path 直接传入图片绝对路径。\n可指定 image_ids（从 1 开始）和 prompt（提取重点）。",

@@ -109,6 +109,7 @@ const BUILTIN_TOOL_DESC_KEYS: Record<string, string> = {
 const CUSTOM_TOOL_HINT_KEYS: Record<string, string> = {
   web_search: 'toolDef.webSearch.label',
   browser: 'toolDef.browser.label',
+  computer_use: 'toolDef.computerUse.label',
   search_memory: 'error.memorySearchLabel',
   pin_memory: 'toolDef.pinnedMemory.pinLabel',
   unpin_memory: 'toolDef.pinnedMemory.unpinLabel',
@@ -131,6 +132,7 @@ const CUSTOM_TOOL_HINT_KEYS: Record<string, string> = {
 const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
   web_search: 'toolDef.webSearch.description',
   browser: 'toolDef.browser.description',
+  computer_use: 'toolDef.computerUse.description',
   search_memory: 'error.memorySearchDesc',
   pin_memory: 'toolDef.pinnedMemory.pinDescription',
   unpin_memory: 'toolDef.pinnedMemory.unpinDescription',

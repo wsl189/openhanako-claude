@@ -16,6 +16,84 @@ function isModelscopeTarget(name, baseUrl) {
   return lowerBase.includes("api-inference.modelscope.cn");
 }
 
+function normalizeApiKey(value) {
+  return String(value || "").replace(/[^\x20-\x7E]/g, "").trim();
+}
+
+function buildModelEndpointCandidates(baseUrl, api) {
+  const normalized = String(baseUrl || "").replace(/\/+$/, "");
+  const candidates = [];
+  const push = (url) => {
+    if (!url || candidates.includes(url)) return;
+    candidates.push(url);
+  };
+
+  // Anthropic 网关常见形态：.../anthropic -> .../anthropic/v1/models
+  if (api === "anthropic-messages" && /\/anthropic$/i.test(normalized)) {
+    push(`${normalized}/v1/models`);
+    push(`${normalized}/models`);
+    return candidates;
+  }
+
+  push(`${normalized}/models`);
+  // 对非 /v1 结尾的 base_url，额外尝试 /v1/models（很多服务是这个路径）
+  if (!/\/v1$/i.test(normalized)) {
+    push(`${normalized}/v1/models`);
+  }
+  return candidates;
+}
+
+function normalizeRemoteModels(data) {
+  const remoteList = Array.isArray(data?.data)
+    ? data.data
+    : (Array.isArray(data?.models) ? data.models : []);
+
+  return remoteList
+    .map((m) => ({
+      id: m?.id || m?.name || "",
+      name: m?.display_name || m?.name || m?.id || "",
+      context: m?.context_length || m?.context_window || m?.max_context_length || null,
+      maxOutput: m?.max_output_tokens || m?.max_completion_tokens || null,
+    }))
+    .filter((m) => m.id);
+}
+
+function summarizeBodyPreview(text) {
+  const compact = String(text || "").replace(/\s+/g, " ").trim();
+  return compact.length > 120 ? `${compact.slice(0, 120)}...` : compact;
+}
+
+async function fetchModelsFromEndpoint(url, headers) {
+  const res = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(15000),
+  });
+  const raw = await res.text();
+  const preview = summarizeBodyPreview(raw);
+
+  if (!res.ok) {
+    const suffix = preview ? ` | body: ${preview}` : "";
+    return { ok: false, error: `HTTP ${res.status}: ${res.statusText} @ ${url}${suffix}`, models: [] };
+  }
+
+  let data = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    const lower = preview.toLowerCase();
+    const hint = lower.includes("<!doctype") || lower.includes("<html")
+      ? " (HTML response, Base URL may point to website page instead of API endpoint)"
+      : "";
+    return { ok: false, error: `Non-JSON response @ ${url}${hint}`, models: [] };
+  }
+
+  const models = normalizeRemoteModels(data);
+  if (models.length === 0) {
+    return { ok: false, error: `Empty model list @ ${url}`, models: [] };
+  }
+  return { ok: true, models };
+}
+
 const MODELSCOPE_AUTH_PROBE_MODEL = "Qwen/Qwen-Image-2512";
 
 export default async function providersRoute(app, { engine }) {
@@ -199,7 +277,7 @@ export default async function providersRoute(app, { engine }) {
 
     const providers = name ? getAllProviders(engine.configPath) : {};
     const savedProvider = name ? providers[name] || {} : {};
-    const savedKey = savedProvider.api_key || "";
+    const savedKey = normalizeApiKey(savedProvider.api_key || "");
     const effectiveBaseUrl = base_url || savedProvider.base_url || "";
     const effectiveApi = explicitApi || savedProvider.api || "";
     const hasExplicitRemoteConfig = !!(effectiveBaseUrl && effectiveApi && (api_key || savedKey));
@@ -226,13 +304,13 @@ export default async function providersRoute(app, { engine }) {
       }
     }
 
-    if (!base_url) {
+    if (!effectiveBaseUrl) {
       reply.code(400);
       return { error: "base_url is required for remote model fetch" };
     }
 
     // 解析 api_key：显式传入 > providers 块 > auth.json OAuth token
-    let key = api_key || "";
+    let key = normalizeApiKey(api_key || "");
     let api = explicitApi || "";
     if (!key && name) {
       key = savedKey;
@@ -241,11 +319,11 @@ export default async function providersRoute(app, { engine }) {
     // OAuth provider fallback：从 AuthStorage 获取 token
     if (!key && name) {
       try {
-        key = await engine.authStorage.getApiKey(name) || "";
+        key = normalizeApiKey(await engine.authStorage.getApiKey(name) || "");
       } catch {}
     }
 
-    // Anthropic 格式没有 /models 端点，从模型目录 + ProviderRegistry builtinModels 返回
+    // Anthropic: 优先用注册表模型，其次尝试远端 /models，最后回退 ProviderRegistry builtinModels
     if (api === "anthropic-messages") {
       const registryModels = engine.modelRegistry
         ? engine.modelRegistry.getAll().filter((m) => m.provider === name)
@@ -253,6 +331,21 @@ export default async function providersRoute(app, { engine }) {
       if (registryModels.length > 0) {
         return { source: "registry", models: normalizeRegistryModels(registryModels) };
       }
+
+      let remoteError = "";
+      const headers = buildProviderAuthHeaders(api, key, { allowMissingApiKey: true });
+      for (const remoteUrl of buildModelEndpointCandidates(effectiveBaseUrl, api)) {
+        try {
+          const remoteResult = await fetchModelsFromEndpoint(remoteUrl, headers);
+          if (remoteResult.ok) {
+            return { source: "remote", models: remoteResult.models };
+          }
+          remoteError = remoteResult.error;
+        } catch (err) {
+          remoteError = err.message;
+        }
+      }
+
       // fallback：从 ProviderRegistry 的 builtinModels 声明返回
       const provEntry = engine.providerRegistry?.get(name);
       if (provEntry?.builtinModels?.length > 0) {
@@ -261,11 +354,11 @@ export default async function providersRoute(app, { engine }) {
           models: provEntry.builtinModels.map(id => ({ id, name: id, context: null, maxOutput: null })),
         };
       }
-      return { error: "No built-in models found for this provider", models: [] };
+
+      return { error: remoteError || "No built-in models found for this provider", models: [] };
     }
 
     try {
-      const url = base_url.replace(/\/+$/, "") + "/models";
       let headers = { "Content-Type": "application/json" };
       if (key) {
         if (!api) {
@@ -273,26 +366,13 @@ export default async function providersRoute(app, { engine }) {
         }
         headers = buildProviderAuthHeaders(api, key);
       }
-      const res = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(15000),
-      });
-
-      if (!res.ok) {
-        return { error: `HTTP ${res.status}: ${res.statusText}`, models: [] };
+      let lastError = "";
+      for (const url of buildModelEndpointCandidates(effectiveBaseUrl, api)) {
+        const result = await fetchModelsFromEndpoint(url, headers);
+        if (result.ok) return { models: result.models };
+        lastError = result.error;
       }
-
-      const data = await res.json();
-      // OpenAI 兼容格式：{ data: [{ id, ... }] }
-      // 尝试从返回里抓取上下文长度和最大输出（各 provider 扩展字段不同）
-      const models = (data.data || []).map(m => ({
-        id: m.id,
-        name: m.id,
-        context: m.context_length || m.context_window || m.max_context_length || null,
-        maxOutput: m.max_completion_tokens || m.max_output_tokens || null,
-      }));
-
-      return { models };
+      return { error: lastError || "Failed to fetch models", models: [] };
     } catch (err) {
       return { error: err.message, models: [] };
     }
@@ -307,16 +387,16 @@ export default async function providersRoute(app, { engine }) {
     const { base_url } = req.body || {};
     let { api } = req.body || {};
     // 清洗 API key：去除非 ASCII 字符（防止粘贴时输入法带入中文）
-    let api_key = (req.body?.api_key || "").replace(/[^\x20-\x7E]/g, "").trim();
+    let api_key = normalizeApiKey(req.body?.api_key || "");
 
     const providers = name ? getAllProviders(engine.configPath) : {};
     const savedProvider = name ? providers[name] || {} : {};
     const effectiveBaseUrl = base_url || savedProvider.base_url || "";
     if (!api) api = savedProvider.api || "";
-    if (!api_key) api_key = savedProvider.api_key || "";
+    if (!api_key) api_key = normalizeApiKey(savedProvider.api_key || "");
     if (!api_key && name) {
       try {
-        api_key = await engine.authStorage.getApiKey(name) || "";
+        api_key = normalizeApiKey(await engine.authStorage.getApiKey(name) || "");
       } catch {}
     }
 
@@ -381,7 +461,20 @@ export default async function providersRoute(app, { engine }) {
         headers,
         signal: AbortSignal.timeout(10000),
       });
-      return { ok: res.ok, status: res.status };
+      if (!res.ok) return { ok: false, status: res.status };
+
+      const raw = await res.text();
+      try {
+        const data = raw ? JSON.parse(raw) : {};
+        const hasList = Array.isArray(data?.data) || Array.isArray(data?.models);
+        return { ok: hasList, status: res.status };
+      } catch {
+        return {
+          ok: false,
+          status: res.status,
+          error: "Non-JSON response from /models (check Base URL points to API endpoint)",
+        };
+      }
     } catch (err) {
       return { ok: false, error: err.message };
     }
