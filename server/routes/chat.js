@@ -614,6 +614,11 @@ export default async function chatRoute(app, { engine, hub }) {
       if (!ss) return;
       ss.lastAssistantContent = event.content || null;
       ss.structuredStream = true;
+      // 某些 provider 只发 assistant_snapshot，不发 text_delta。
+      // 这里一旦快照中已有可见文本，就视为本轮已有输出，避免 turn_end 回填整段 text_delta
+      // 与前面快照文本叠加，导致前端偶发“最终回复重复一遍”。
+      const snapshotText = stripSdkDiagnosticLines(extractText(event.content)).trim();
+      if (snapshotText) ss.hasOutput = true;
       const compacted = compactAssistantSnapshotContent(event.content || []);
       const nextSig = JSON.stringify(compacted);
       if (nextSig !== ss.lastAssistantSnapshotSig) {
