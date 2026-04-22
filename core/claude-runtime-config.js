@@ -3,6 +3,10 @@ import path from "path";
 import { createRequire } from "module";
 import { createCustomToolsMcpServer } from "../lib/claude/custom-tool-adapter.js";
 import { createComputerUseMcpServer } from "../lib/computer-use/server.js";
+import {
+  MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
+  MINIMAX_MCP_WEB_SEARCH_SWITCH,
+} from "../lib/tools/minimax-mcp-tools.js";
 import { extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
 import { resolveBrowserProvider } from "./browser-provider.js";
 
@@ -41,6 +45,12 @@ export const HANAKO_TO_CLAUDE_BUILTIN = {
   edit: "Edit",
   bash: "Bash",
   skill: "Skill",
+};
+
+const MINIMAX_MCP_SERVER_KEY = "MiniMax";
+const MINIMAX_MCP_TOOL_BY_SWITCH = {
+  [MINIMAX_MCP_WEB_SEARCH_SWITCH]: "web_search",
+  [MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH]: "understand_image",
 };
 
 function uniq(list = []) {
@@ -213,6 +223,100 @@ function toMcpAllowedPrefix(name) {
   // Keep tool permission prefixes deterministic and ASCII-safe.
   const normalized = raw.replace(/[^A-Za-z0-9_-]/g, "_");
   return normalized ? `mcp__${normalized}__*` : "";
+}
+
+function toMcpServerName(name) {
+  return String(name || "").trim().replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+function toMcpToolName(serverName, toolName) {
+  const server = toMcpServerName(serverName);
+  const tool = toMcpServerName(toolName);
+  if (!server || !tool) return "";
+  return `mcp__${server}__${tool}`;
+}
+
+function buildMcpExactAllowedTools(serverName, toolNames = []) {
+  const serverRaw = String(serverName || "").trim();
+  const variants = uniq([
+    serverRaw,
+    serverRaw.toLowerCase(),
+  ].filter(Boolean));
+  const out = [];
+  for (const variant of variants) {
+    for (const toolName of toolNames) {
+      const full = toMcpToolName(variant, toolName);
+      if (full) out.push(full);
+    }
+  }
+  return uniq(out);
+}
+
+function inferMiniMaxApiHost(baseUrl = "") {
+  const input = String(baseUrl || "").trim();
+  if (!input) return "";
+  try {
+    const parsed = new URL(input);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+}
+
+function resolveMiniMaxMcpEnv(runtimeEnv = {}, agent = null) {
+  const out = {};
+  const explicitApiKey = String(runtimeEnv?.MINIMAX_API_KEY || "").trim();
+  const explicitApiHost = String(runtimeEnv?.MINIMAX_API_HOST || "").trim();
+  const explicitBasePath = String(runtimeEnv?.MINIMAX_MCP_BASE_PATH || "").trim();
+  const explicitResourceMode = String(runtimeEnv?.MINIMAX_API_RESOURCE_MODE || "").trim();
+
+  let apiKey = explicitApiKey;
+  let apiHost = explicitApiHost;
+  if (!apiKey || !apiHost) {
+    const resolveCreds = agent?._engine?.resolveProviderCredentials;
+    if (typeof resolveCreds === "function") {
+      for (const provider of ["minimax", "minimax-oauth"]) {
+        const creds = resolveCreds.call(agent._engine, provider, agent?.config);
+        if (!apiKey) {
+          const candidate = String(creds?.api_key || "").trim();
+          if (candidate) apiKey = candidate;
+        }
+        if (!apiHost) {
+          const candidate = inferMiniMaxApiHost(creds?.base_url || "");
+          if (candidate) apiHost = candidate;
+        }
+        if (apiKey && apiHost) break;
+      }
+    }
+  }
+
+  if (apiKey) out.MINIMAX_API_KEY = apiKey;
+  if (apiHost) out.MINIMAX_API_HOST = apiHost;
+  if (explicitBasePath) out.MINIMAX_MCP_BASE_PATH = explicitBasePath;
+  if (explicitResourceMode) out.MINIMAX_API_RESOURCE_MODE = explicitResourceMode;
+  return out;
+}
+
+function resolveMiniMaxMcpServer(runtimeEnv = {}, agent = null) {
+  const command = String(
+    runtimeEnv?.HANAKO_MINIMAX_MCP_COMMAND
+      || runtimeEnv?.HANA_MINIMAX_MCP_COMMAND
+      || "uvx",
+  ).trim();
+  if (!command) return null;
+  const argsRaw = String(
+    runtimeEnv?.HANAKO_MINIMAX_MCP_ARGS
+      || runtimeEnv?.HANA_MINIMAX_MCP_ARGS
+      || "",
+  ).trim();
+  const args = argsRaw ? parseCommandArgs(argsRaw) : ["minimax-coding-plan-mcp"];
+  const env = resolveMiniMaxMcpEnv(runtimeEnv, agent);
+  return {
+    type: "stdio",
+    command,
+    args,
+    ...(Object.keys(env).length > 0 ? { env } : {}),
+  };
 }
 
 const VALID_SETTING_SOURCES = new Set(["user", "project", "local"]);
@@ -637,9 +741,21 @@ export function buildClaudeRuntimeConfig({
   const browserProvider = resolveBrowserProvider(runtimeEnv, { cwd, workspace });
   const useClaudeInChrome = !noTools && browserProvider.useClaudeInChrome === true;
   const useComputerUse = !noTools && customEnabled.includes("computer_use");
+  const enabledMiniMaxMcpTools = !noTools
+    ? uniq(
+      customEnabled
+        .map((name) => MINIMAX_MCP_TOOL_BY_SWITCH[name])
+        .filter(Boolean),
+    )
+    : [];
+  const useMiniMaxMcp = enabledMiniMaxMcpTools.length > 0;
   const filteredCustomTools = (customTools || [])
     .filter((toolDef) => customEnabled.includes(toolDef?.name))
-    .filter((toolDef) => String(toolDef?.name || "") !== "computer_use");
+    .filter((toolDef) => ![
+      "computer_use",
+      MINIMAX_MCP_WEB_SEARCH_SWITCH,
+      MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
+    ].includes(String(toolDef?.name || "")));
   const mcpServerKey = "hanako";
   const mcpServerName = "hanako";
   // IMPORTANT: Claude Agent SDK can crash the Claude subprocess when an MCP
@@ -662,11 +778,15 @@ export function buildClaudeRuntimeConfig({
   const computerUseAllowedTools = useComputerUse
     ? [toMcpAllowedPrefix("computer_use")].filter(Boolean)
     : [];
+  const minimaxMcpAllowedTools = useMiniMaxMcp
+    ? buildMcpExactAllowedTools(MINIMAX_MCP_SERVER_KEY, enabledMiniMaxMcpTools)
+    : [];
   const allowedTools = uniq([
     ...builtinEnabled,
     ...customAllowedTools,
     ...claudeInChromeAllowedTools,
     ...computerUseAllowedTools,
+    ...minimaxMcpAllowedTools,
   ]);
   const canUseTool = buildCanUseToolHandler(permissionStrategy, {
     sandboxMode,
@@ -700,6 +820,12 @@ export function buildClaudeRuntimeConfig({
       onToolStart: emitToolEvent,
       onToolEnd: emitToolEvent,
     });
+  }
+  if (useMiniMaxMcp) {
+    const minimaxMcpServer = resolveMiniMaxMcpServer(runtimeEnv, agent);
+    if (minimaxMcpServer) {
+      mcpServers[MINIMAX_MCP_SERVER_KEY] = minimaxMcpServer;
+    }
   }
 
   const baseAppend = noMemory ? agent?.personality : agent?.buildSystemAppendPrompt?.();
@@ -759,9 +885,12 @@ export function buildClaudeRuntimeConfig({
       customAllowedTools,
       claudeInChromeAllowedTools,
       computerUseAllowedTools,
+      minimaxMcpAllowedTools,
       browserProvider,
       useClaudeInChrome,
       useComputerUse,
+      useMiniMaxMcp,
+      enabledMiniMaxMcpTools,
       claudeCodeExecutable: claudeSdkProcessConfig.executable,
       claudeCodeExecutableArgs: claudeSdkProcessConfig.executableArgs,
       claudeCodeCliPath: claudeSdkProcessConfig.pathToClaudeCodeExecutable,

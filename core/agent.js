@@ -22,6 +22,11 @@ import { createAskAgentTool } from "../lib/tools/ask-agent-tool.js";
 import { createDmTool } from "../lib/tools/dm-tool.js";
 import { createBrowserTool } from "../lib/tools/browser-tool.js";
 import { createComputerUseTool } from "../lib/tools/computer-use-tool.js";
+import {
+  createMiniMaxMcpSwitchTools,
+  MINIMAX_MCP_WEB_SEARCH_SWITCH,
+  MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
+} from "../lib/tools/minimax-mcp-tools.js";
 import { createPinnedMemoryTools } from "../lib/tools/pinned-memory.js";
 import { createExperienceTools } from "../lib/tools/experience.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
@@ -86,6 +91,7 @@ export class Agent {
     this._channelTool = null;
     this._browserTool = null;
     this._computerUseTool = null;
+    this._minimaxMcpSwitchTools = [];
     this._browserProvider = null;
     this._notifyTool = null;
     this._describeImagesTool = null;
@@ -253,6 +259,7 @@ export class Agent {
       ? createBrowserTool()
       : null;
     this._computerUseTool = createComputerUseTool();
+    this._minimaxMcpSwitchTools = createMiniMaxMcpSwitchTools();
     this._notifyTool = createNotifyTool({
       onNotify: (title, body, opts) => this._notifyHandler?.(title, body, opts),
     });
@@ -436,6 +443,7 @@ export class Agent {
       this._dmTool,
       this._browserTool,
       this._computerUseTool,
+      ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
       this._notifyTool,
@@ -459,6 +467,7 @@ export class Agent {
       this._dmTool,
       this._browserTool,
       this._computerUseTool,
+      ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
       this._notifyTool,
@@ -644,10 +653,14 @@ export class Agent {
       ? toolProfile.tools.custom_enabled.filter((name) => runtimeCustomNames.has(name))
       : [...runtimeCustomNames];
     const hasComputerUse = enabledCustom.includes("computer_use");
+    const hasMiniMaxMcpWebSearch = enabledCustom.includes(MINIMAX_MCP_WEB_SEARCH_SWITCH);
+    const hasMiniMaxMcpUnderstandImage = enabledCustom.includes(MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH);
     const externalMcpTools = browserProvider?.useClaudeInChrome
       ? ["mcp__claude_in_chrome__*"]
       : [];
     if (hasComputerUse) externalMcpTools.push("mcp__computer_use__*");
+    if (hasMiniMaxMcpWebSearch) externalMcpTools.push("mcp__MiniMax__web_search");
+    if (hasMiniMaxMcpUnderstandImage) externalMcpTools.push("mcp__MiniMax__understand_image");
     const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
     const formatToolList = (list = []) => {
       const cleaned = [...new Set((list || []).map((item) => String(item || "").trim()).filter(Boolean))];
@@ -797,6 +810,16 @@ export class Agent {
       parts.push(isZh
         ? "当用户要求你操作桌面应用（点击、输入、截图、切换窗口）时，使用 mcp__computer_use__*。首次操作前先调用 mcp__computer_use__request_access 申请应用权限，然后通过 screenshot/zoom 观察，再执行鼠标键盘动作。"
         : "When the user asks for desktop app control (click/type/screenshot/window switching), use mcp__computer_use__* tools. Start with mcp__computer_use__request_access, then observe with screenshot/zoom before taking mouse/keyboard actions.");
+    }
+    if (hasTool(MINIMAX_MCP_WEB_SEARCH_SWITCH)) {
+      parts.push(isZh
+        ? "当用户需要联网检索时，优先使用 mcp__MiniMax__web_search 获取最新网页信息。"
+        : "When web lookup is needed, prefer mcp__MiniMax__web_search for up-to-date web information.");
+    }
+    if (hasTool(MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH)) {
+      parts.push(isZh
+        ? "当用户要求理解网络图片/外链图片内容时，优先使用 mcp__MiniMax__understand_image。"
+        : "When the user asks to understand remote image content, prefer mcp__MiniMax__understand_image.");
     }
 
     if (hasTool("describe_images")) {

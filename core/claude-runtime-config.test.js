@@ -249,6 +249,65 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.diagnostics?.useComputerUse).toBe(true);
   });
 
+  it("attaches MiniMax MCP server and allows only enabled MiniMax MCP tools", async () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+          custom_enabled: ["minimax_mcp_web_search", "todo"],
+        },
+      },
+      customTools: [
+        { name: "minimax_mcp_web_search", parameters: { type: "object", properties: {} } },
+        { name: "minimax_mcp_understand_image", parameters: { type: "object", properties: {} } },
+        { name: "todo", parameters: { type: "object", properties: {} } },
+      ],
+    });
+
+    expect(config.options.mcpServers.MiniMax).toEqual({
+      type: "stdio",
+      command: "uvx",
+      args: ["minimax-coding-plan-mcp"],
+    });
+    expect(config.options.allowedTools).toContain("mcp__MiniMax__web_search");
+    expect(config.options.allowedTools).not.toContain("mcp__MiniMax__understand_image");
+    expect(config.diagnostics?.customToolsLoaded).toEqual(["todo"]);
+    expect(config.diagnostics?.enabledMiniMaxMcpTools).toEqual(["web_search"]);
+    expect(config.diagnostics?.useMiniMaxMcp).toBe(true);
+
+    const allowed = await config.options.canUseTool("mcp__MiniMax__web_search", { query: "latest" }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-minimax-web-search",
+    });
+    expect(allowed).toMatchObject({
+      behavior: "allow",
+      updatedInput: { query: "latest" },
+    });
+
+    const denied = await config.options.canUseTool("mcp__MiniMax__understand_image", { url: "https://example.com/a.png" }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-minimax-understand-image",
+    });
+    expect(denied).toMatchObject({
+      behavior: "deny",
+    });
+  });
+
+  it("does not attach MiniMax MCP server in noTools mode", () => {
+    const config = createConfig({
+      noTools: true,
+      toolProfile: {
+        tools: {
+          custom_enabled: ["minimax_mcp_web_search", "minimax_mcp_understand_image"],
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.MiniMax).toBeUndefined();
+    expect(config.options.allowedTools).toEqual([]);
+    expect(config.diagnostics?.useMiniMaxMcp).toBe(false);
+  });
+
   it("auto-attaches claude-in-chrome MCP server when extension is installed", () => {
     const config = createConfig({
       env: {

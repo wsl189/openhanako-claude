@@ -29,6 +29,7 @@ export const SHARED_MODEL_KEYS = [
   ["utility",        "utility_model"],
   ["utility_large",  "utility_large_model"],
   ["image_understanding", "image_understanding_model"],
+  ["voice_transcribe", "voice_transcribe_model"],
   ["summarizer",     "summarizer_model"],
   ["compiler",       "compiler_model"],
 ];

@@ -1190,7 +1190,38 @@ function ProviderDeleteButton({ providerId, onRefresh }: { providerId: string; o
 // Other Models Section (migrated from ModelsTab)
 // ════════════════════════════════════════════════════
 
+function renderModelTestStatusIcon(status: 'idle' | 'testing' | 'ok' | 'fail') {
+  if (status === 'testing') {
+    return (
+      <svg className="spinning" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+      </svg>
+    );
+  }
+  if (status === 'ok') {
+    return (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+    );
+  }
+  if (status === 'fail') {
+    return (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+      </svg>
+    );
+  }
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
+  );
+}
+
 function ToolModelTestBtn({ modelId }: { modelId: string }) {
+  const { showToast } = useSettingsStore();
   const [status, setStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
 
   const test = async () => {
@@ -1202,36 +1233,77 @@ function ToolModelTestBtn({ modelId }: { modelId: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ modelId }),
       });
-      const data = await res.json();
-      setStatus(data.ok ? 'ok' : 'fail');
-    } catch {
+      const data = await res.json().catch(() => ({} as Record<string, any>));
+      const ok = Boolean(data?.ok);
+      setStatus(ok ? 'ok' : 'fail');
+      if (ok) {
+        showToast(t('settings.api.testModelSuccess'), 'success');
+      } else {
+        const detail = String(data?.error || data?.message || '').trim();
+        const msg = detail
+          ? `${t('settings.api.testModelFailed')}: ${detail}`
+          : t('settings.api.testModelFailed');
+        showToast(msg, 'error');
+      }
+    } catch (err: any) {
       setStatus('fail');
+      showToast(`${t('settings.api.testModelFailed')}: ${String(err?.message || err || '')}`, 'error');
     }
     setTimeout(() => setStatus('idle'), 3000);
   };
 
-  if (!modelId) return null;
+  return (
+    <button
+      className={`pv-tool-test-btn ${status}`}
+      onClick={test}
+      disabled={status === 'testing' || !modelId}
+      title={t('settings.api.testModel')}
+    >
+      {renderModelTestStatusIcon(status)}
+    </button>
+  );
+}
+
+function VoiceModelTestBtn({ modelId }: { modelId: string }) {
+  const { showToast } = useSettingsStore();
+  const [status, setStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+
+  const testVoice = async () => {
+    if (!modelId) return;
+    setStatus('testing');
+    try {
+      const res = await hanaFetch('/api/voice/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, any>));
+      const ok = Boolean(data?.ok);
+      setStatus(ok ? 'ok' : 'fail');
+      if (ok) {
+        showToast(t('settings.api.voiceTestSuccess'), 'success');
+      } else {
+        const detail = String(data?.error || '').trim();
+        const msg = detail
+          ? `${t('settings.api.voiceTestFailed')}: ${detail}`
+          : t('settings.api.voiceTestFailed');
+        showToast(msg, 'error');
+      }
+    } catch (err: any) {
+      setStatus('fail');
+      showToast(`${t('settings.api.voiceTestFailed')}: ${String(err?.message || err || '')}`, 'error');
+    }
+    setTimeout(() => setStatus('idle'), 3000);
+  };
 
   return (
-    <button className={`pv-tool-test-btn ${status}`} onClick={test} disabled={status === 'testing'}>
-      {status === 'testing' ? (
-        <svg className="spinning" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-        </svg>
-      ) : status === 'ok' ? (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      ) : status === 'fail' ? (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      ) : (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
-        </svg>
-      )}
+    <button
+      className={`pv-tool-test-btn ${status}`}
+      onClick={testVoice}
+      disabled={status === 'testing' || !modelId}
+      title={t('settings.api.voiceTestBtn')}
+    >
+      {renderModelTestStatusIcon(status)}
     </button>
   );
 }
@@ -1270,6 +1342,23 @@ function OtherModelsSection({ providers }: { providers: Record<string, any> }) {
             <ToolModelTestBtn modelId={globalModelsConfig?.models?.image_understanding || globalModelsConfig?.models?.utility || ''} />
           </div>
         </div>
+      </div>
+      <div className="settings-row">
+        <div className="settings-field settings-field-half">
+          <label className="settings-field-label">{t('settings.api.voiceTranscribeModel')}</label>
+          <div className="pv-tool-model-row">
+            <ModelWidget
+              providers={providers}
+              favorites={pendingFavorites}
+              value={globalModelsConfig?.models?.voice_transcribe || ''}
+              onSelect={(id) => autoSaveGlobalModels({ models: { voice_transcribe: id } })}
+              lookupModelMeta={lookupModelMeta}
+              formatContext={formatContext}
+            />
+            <VoiceModelTestBtn modelId={globalModelsConfig?.models?.voice_transcribe || ''} />
+          </div>
+        </div>
+        <div className="settings-field settings-field-half" />
       </div>
     </>
   );

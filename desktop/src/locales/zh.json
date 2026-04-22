@@ -140,6 +140,13 @@
     "deskContext": "看着书桌说",
     "pastedImage": "粘贴图片",
     "docContext": "看着文档说",
+    "voiceHoldHint": "按住空格说话",
+    "voiceWarming": "继续按住开始录音...",
+    "voiceRecording": "正在录音，松开结束",
+    "voiceProcessing": "语音识别中...",
+    "voiceNoSpeech": "没有识别到语音",
+    "voiceMicDenied": "没有麦克风权限，请在系统设置中允许 Hanako 使用麦克风",
+    "voiceRecorderError": "录音初始化失败，请重试",
     "thinkingLevel": {
       "off": "关闭",
       "auto": "自动",
@@ -792,6 +799,13 @@
       "utilityLargeModel": "大工具模型",
       "utilityLargeModelHint": "活动摘要、任务拆解等需要理解力的场景，留空则复用小工具模型",
       "imageUnderstandingModel": "图片理解模型",
+      "voiceTranscribeModel": "语音转文本模型",
+      "testModel": "测试模型可用性",
+      "testModelSuccess": "模型接口可用",
+      "testModelFailed": "模型测试失败",
+      "voiceTestBtn": "测试语音转写",
+      "voiceTestSuccess": "语音转写接口可用",
+      "voiceTestFailed": "语音转写测试失败",
       "favorites": "收藏",
       "searchModel": "搜索模型...",
       "noFavorites": "点击 ☆ 收藏常用模型",
@@ -1602,6 +1616,14 @@
     "computerUse": {
       "label": "电脑控制",
       "description": "通过本地桌面自动化能力操作电脑应用（截图、点击、输入、滚动、快捷键）。启用后会暴露 mcp__computer_use__* 工具，适合需要真实 GUI 操作的任务。"
+    },
+    "minimaxMcpWebSearch": {
+      "label": "MiniMax 网络搜索",
+      "description": "启用后暴露 MiniMax MCP 的 mcp__MiniMax__web_search 工具，用于联网搜索实时信息。"
+    },
+    "minimaxMcpUnderstandImage": {
+      "label": "MiniMax 图片理解",
+      "description": "启用后暴露 MiniMax MCP 的 mcp__MiniMax__understand_image 工具，用于理解网络图片内容。"
     },
     "describeImages": {
       "label": "图片理解",

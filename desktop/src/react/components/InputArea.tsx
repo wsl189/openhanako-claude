@@ -15,6 +15,7 @@ import { loadDeskFiles } from '../stores/desk-actions';
 import { resolveInputSessionKey, type PendingInputPrompt } from '../stores/misc-slice';
 import { getWebSocket } from '../services/websocket';
 import { streamBufferManager } from '../hooks/use-stream-buffer';
+import { usePushToTalk } from '../hooks/use-push-to-talk';
 import { SVG_ICONS } from '../utils/icons';
 import type { ThinkingLevel } from '../stores/model-slice';
 import type { AttachedFile } from '../stores/input-slice';
@@ -108,7 +109,7 @@ export function InputArea() {
 }
 
 function InputAreaInner() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   // Zustand state
   const isStreaming = useStore(s => s.isStreaming);
@@ -165,9 +166,137 @@ function InputAreaInner() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isComposing = useRef(false);
+  const voiceAnchorRef = useRef<{ prefix: string; suffix: string; interim: string } | null>(null);
   const textDraftBySessionRef = useRef<Record<string, string>>({});
   const attachmentDraftBySessionRef = useRef<Record<string, AttachedFile[]>>({});
   const docContextDraftBySessionRef = useRef<Record<string, boolean>>({});
+
+  const buildVoiceAnchoredText = useCallback((anchor: { prefix: string; suffix: string }, rawText: string) => {
+    const text = String(rawText || '').trim();
+    const needsLeadingSpace = !!text && anchor.prefix.length > 0 && !/\s$/.test(anchor.prefix);
+    const needsTrailingSpace = !!text && anchor.suffix.length > 0 && !/^\s/.test(anchor.suffix);
+    const leading = needsLeadingSpace ? ' ' : '';
+    const trailing = needsTrailingSpace ? ' ' : '';
+    const nextValue = `${anchor.prefix}${leading}${text}${trailing}${anchor.suffix}`;
+    const cursor = `${anchor.prefix}${leading}${text}`.length;
+    return { text, leading, nextValue, cursor };
+  }, []);
+
+  const prepareVoiceAnchor = useCallback(() => {
+    const node = textareaRef.current;
+    const value = node?.value ?? inputText;
+    const start = node?.selectionStart ?? value.length;
+    const end = node?.selectionEnd ?? start;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    // 首次按下空格会漏写一个空格，这里在激活录音时把它剥离掉。
+    const strippedBefore = before.replace(/[ \u3000]$/, '');
+    const nextValue = strippedBefore + after;
+    const cursor = strippedBefore.length;
+
+    voiceAnchorRef.current = { prefix: strippedBefore, suffix: after, interim: '' };
+    setInputText(nextValue);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(cursor, cursor);
+    });
+  }, [inputText]);
+
+  const applyVoiceInterimTranscript = useCallback((rawText: string) => {
+    const anchor = voiceAnchorRef.current;
+    if (!anchor) return;
+    const next = buildVoiceAnchoredText(anchor, rawText);
+    setInputText(next.nextValue);
+    voiceAnchorRef.current = { ...anchor, interim: next.text };
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.cursor, next.cursor);
+    });
+  }, [buildVoiceAnchoredText]);
+
+  const applyVoiceTranscript = useCallback((rawText: string) => {
+    const text = String(rawText || '').trim();
+    if (!text) return;
+
+    const anchor = voiceAnchorRef.current;
+    if (!anchor) {
+      setInputText((prev) => {
+        const leading = prev && !/\s$/.test(prev) ? ' ' : '';
+        return `${prev}${leading}${text}`;
+      });
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        const pos = el.value.length;
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      });
+      return;
+    }
+
+    const next = buildVoiceAnchoredText(anchor, text);
+    setInputText(next.nextValue);
+    voiceAnchorRef.current = {
+      prefix: `${anchor.prefix}${next.leading}${next.text}`,
+      suffix: anchor.suffix,
+      interim: '',
+    };
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.cursor, next.cursor);
+    });
+  }, [buildVoiceAnchoredText]);
+
+  const voiceLanguage = useMemo(
+    () => String(locale || (window as any).i18n?.locale || navigator.language || ''),
+    [locale],
+  );
+  const {
+    supported: voiceSupported,
+    state: voiceState,
+    error: voiceErrorRaw,
+    clearError: clearVoiceError,
+    handleKeyDown: handleVoiceKeyDown,
+    handleKeyUp: handleVoiceKeyUp,
+  } = usePushToTalk({
+    enabled: true,
+    language: voiceLanguage,
+    onActivate: prepareVoiceAnchor,
+    onInterimTranscript: applyVoiceInterimTranscript,
+    onTranscript: applyVoiceTranscript,
+  });
+
+  const voiceError = useMemo(() => {
+    if (!voiceErrorRaw) return '';
+    if (voiceErrorRaw === 'NO_SPEECH') return t('input.voiceNoSpeech');
+    if (voiceErrorRaw === 'MIC_PERMISSION_DENIED') return t('input.voiceMicDenied');
+    if (voiceErrorRaw === 'VOICE_RECORDER_ERROR') return t('input.voiceRecorderError');
+    return extractFetchErrorMessage({ message: voiceErrorRaw }, voiceErrorRaw);
+  }, [locale, t, voiceErrorRaw]);
+
+  useEffect(() => {
+    if (!voiceErrorRaw) return;
+    const timer = setTimeout(() => clearVoiceError(), 4000);
+    return () => clearTimeout(timer);
+  }, [voiceErrorRaw, clearVoiceError]);
+
+  useEffect(() => {
+    if (voiceState === 'idle') voiceAnchorRef.current = null;
+  }, [voiceState]);
+
+  const voiceStatusText = useMemo(() => {
+    if (!voiceSupported) return '';
+    if (voiceState === 'warming') return t('input.voiceWarming');
+    if (voiceState === 'recording') return t('input.voiceRecording');
+    if (voiceState === 'processing') return t('input.voiceProcessing');
+    return t('input.voiceHoldHint');
+  }, [locale, t, voiceState, voiceSupported]);
 
   const inputSessionKey = useMemo(
     () => resolveInputSessionKey(currentSessionPath, pendingNewSession),
@@ -601,6 +730,8 @@ function InputAreaInner() {
 
   // ── Key handler ──
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (handleVoiceKeyDown(e)) return;
+
     // 斜杠菜单导航
     if (slashMenuOpen && filteredCommands.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -633,7 +764,11 @@ function InputAreaInner() {
         handleSend();
       }
     }
-  }, [handleSend, handleSteer, isStreaming, inputText, slashMenuOpen, filteredCommands, slashSelected]);
+  }, [handleSend, handleSteer, isStreaming, inputText, slashMenuOpen, filteredCommands, slashSelected, handleVoiceKeyDown]);
+
+  const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
+    handleVoiceKeyUp(e);
+  }, [handleVoiceKeyUp]);
 
   return (
     <>
@@ -667,6 +802,11 @@ function InputAreaInner() {
           <span>{slashResult.text}</span>
         </div>
       )}
+      {voiceError && (
+        <div className="slash-busy-bar slash-result-error">
+          <span>{voiceError}</span>
+        </div>
+      )}
 
       {activeInputPrompt && (
         <InputPromptPanel
@@ -687,6 +827,7 @@ function InputAreaInner() {
           value={inputText}
           onChange={e => handleInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onKeyUp={handleKeyUp}
           onPaste={handlePaste}
           onCompositionStart={() => { isComposing.current = true; }}
           onCompositionEnd={() => { isComposing.current = false; }}
@@ -699,6 +840,11 @@ function InputAreaInner() {
               disabled={!hasDoc}
               onToggle={toggleDocContext}
             />
+            {voiceSupported && (
+              <span className={`voice-status-pill state-${voiceState}${voiceState !== 'idle' ? ' active' : ''}`}>
+                {voiceStatusText}
+              </span>
+            )}
           </div>
           <div className="input-controls">
             {currentModelInfo?.reasoning !== false && (

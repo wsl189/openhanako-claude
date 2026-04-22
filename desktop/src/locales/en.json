@@ -140,6 +140,13 @@
     "deskContext": "With desk context",
     "pastedImage": "Pasted image",
     "docContext": "With document",
+    "voiceHoldHint": "Hold Space to talk",
+    "voiceWarming": "Keep holding to start recording...",
+    "voiceRecording": "Recording, release to finish",
+    "voiceProcessing": "Transcribing voice...",
+    "voiceNoSpeech": "No speech detected",
+    "voiceMicDenied": "Microphone permission denied. Please allow Hanako to use your microphone.",
+    "voiceRecorderError": "Failed to start recorder. Please try again.",
     "thinkingLevel": {
       "off": "off",
       "auto": "auto",
@@ -792,6 +799,13 @@
       "utilityLargeModel": "Utility (large)",
       "utilityLargeModelHint": "Activity summaries, task breakdown, etc. Falls back to small utility if empty",
       "imageUnderstandingModel": "Image Understanding Model",
+      "voiceTranscribeModel": "Voice-to-Text Model",
+      "testModel": "Test model availability",
+      "testModelSuccess": "Model endpoint is reachable",
+      "testModelFailed": "Model test failed",
+      "voiceTestBtn": "Test voice transcription",
+      "voiceTestSuccess": "Voice transcription endpoint is reachable",
+      "voiceTestFailed": "Voice transcription test failed",
       "favorites": "Favorites",
       "searchModel": "Search models...",
       "noFavorites": "Click ☆ to favorite models",
@@ -1602,6 +1616,14 @@
     "computerUse": {
       "label": "Computer Use",
       "description": "Control local desktop applications via native GUI automation (screenshots, clicks, typing, scrolling, key combos). When enabled, it exposes mcp__computer_use__* tools for real app interactions."
+    },
+    "minimaxMcpWebSearch": {
+      "label": "MiniMax Web Search",
+      "description": "When enabled, exposes MiniMax MCP tool mcp__MiniMax__web_search for real-time web lookup."
+    },
+    "minimaxMcpUnderstandImage": {
+      "label": "MiniMax Image Understanding",
+      "description": "When enabled, exposes MiniMax MCP tool mcp__MiniMax__understand_image for remote image understanding."
     },
     "describeImages": {
       "label": "Describe Images",

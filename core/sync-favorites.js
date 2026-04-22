@@ -125,7 +125,7 @@ export function syncFavoritesToModelsJson(configPath, opts = {}) {
   if (models.chat) mustKeep.add(models.chat);
   // 全局共享角色模型
   const shared = opts.sharedModels ?? {};
-  for (const role of ["utility", "utility_large", "image_understanding", "summarizer", "compiler"]) {
+  for (const role of ["utility", "utility_large", "image_understanding", "voice_transcribe", "summarizer", "compiler"]) {
     if (shared[role]) mustKeep.add(shared[role]);
   }
 
