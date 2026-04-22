@@ -3300,11 +3300,13 @@ html[data-platform="linux"] .tb-toggle-right {
     color: var(--text-muted);
 }
 
-.bridge-wechat-actions {
-    display: flex;
-    align-items: center;
+.bridge-wechat-empty-card {
     gap: var(--space-sm);
-    margin: var(--space-sm) 0;
+}
+
+.bridge-wechat-empty-text {
+    color: var(--text-muted);
+    font-size: 0.8rem;
 }
 
 @media (max-width: 900px) {
