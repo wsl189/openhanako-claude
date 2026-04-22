@@ -4182,10 +4182,19 @@ html[data-platform="darwin"] .sv-topbar-title {
     white-space: nowrap;
 }
 
+.bridge-contact-preview {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .bridge-contact-time {
     font-size: 0.65rem;
     color: var(--text-muted);
-    margin-top: 1px;
+    margin-top: 2px;
 }
 
 /* 右侧对话区 */
@@ -4407,11 +4416,11 @@ html[data-platform="darwin"] .sv-topbar-title {
 }
 
 .bridge-bubble-markdown table {
-    display: block;
-    overflow-x: auto;
-    width: max-content;
-    min-width: 100%;
+    display: table;
+    width: 100%;
+    max-width: 100%;
     margin: 0.65em 0;
+    table-layout: fixed;
     border-collapse: separate;
     border-spacing: 0;
     border: 1px solid var(--border);
@@ -4424,6 +4433,8 @@ html[data-platform="darwin"] .sv-topbar-title {
     border: none;
     border-bottom: 1px solid var(--border);
     padding: 0.36em 0.58em;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .bridge-bubble-markdown tr:last-child td {

@@ -400,13 +400,7 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'dm_new_message': {
-      const dmId = `dm:${msg.from}`;
-      const store2 = useStore.getState();
-      if (store2.currentChannel === dmId) {
-        store2.openChannel(dmId, true);
-      } else {
-        store2.loadChannels();
-      }
+      // DM module is hidden in channel view; ignore DM refresh events.
       break;
     }
 

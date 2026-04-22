@@ -12,6 +12,22 @@ describe('renderMarkdown CJK emphasis compatibility', () => {
     expect(html).toContain('<em>斜体（Italic）</em>测试');
   });
 
+  it('recovers escaped strong markdown emitted by some models', () => {
+    const html = renderMarkdown('状态：\\*\\*不可用\\*\\*。');
+    expect(html).toContain('<strong>不可用</strong>');
+  });
+
+  it('recovers strong markdown with accidental inner-edge spaces', () => {
+    const html = renderMarkdown('结论：**第一仓位存疑。 **\n以及：** 第一仓位存疑。**');
+    expect(html).toContain('<strong>第一仓位存疑。</strong>');
+  });
+
+  it('recovers escaped strong markdown inside table cells', () => {
+    const html = renderMarkdown('| 状态 | 说明 |\n| --- | --- |\n| \\*\\*不可用\\*\\* | API 未配置 |');
+    expect(html).toContain('<table>');
+    expect(html).toContain('<strong>不可用</strong>');
+  });
+
   it('does not alter markdown inside code spans or fenced code blocks', () => {
     const inlineCode = renderMarkdown('`**literal（code）**把`');
     expect(inlineCode).toContain('<code>**literal（code）**把</code>');

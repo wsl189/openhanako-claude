@@ -1,6 +1,8 @@
 import type { Channel, ChannelMessage } from '../types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 
+const HIDE_DM_MODULE = true;
+
 const I18N_ERROR_KEY_RE = /^error\.[a-zA-Z0-9_.-]+$/i;
 
 function safeDisplayName(raw: unknown, fallback: string): string {
@@ -85,13 +87,8 @@ export const createChannelSlice = (
     const s = get!();
     if (!s.serverPort) return;
     try {
-      const [chRes, dmRes] = await Promise.all([
-        hanaFetch('/api/channels'),
-        hanaFetch('/api/dm'),
-      ]);
-
+      const chRes = await hanaFetch('/api/channels');
       const chData = chRes.ok ? await chRes.json() : { channels: [] };
-      const dmData = dmRes.ok ? await dmRes.json() : { dms: [] };
 
       const channels: Channel[] = (chData.channels || []).map((ch: any) => {
         const id = String(ch?.id || '').trim();
@@ -103,34 +100,28 @@ export const createChannelSlice = (
         };
       });
 
-      const dms: Channel[] = (dmData.dms || []).map((dm: any) => {
-        const peerId = String(dm?.peerId || '').trim();
-        const peerName = safeDisplayName(dm?.peerName, peerId);
-        return {
-          id: `dm:${peerId}`,
-          name: peerName || peerId,
-          members: [peerId],
-          lastMessage: dm.lastMessage || '',
-          lastSender: dm.lastSender || '',
-          lastTimestamp: dm.lastTimestamp || '',
-          newMessageCount: 0,
-          messageCount: dm.messageCount || 0,
-          isDM: true,
-          peerId,
-          peerName,
-        };
-      });
-
-      const allChannels = [...channels, ...dms];
+      const allChannels = channels;
       const totalUnread = allChannels.reduce((sum, ch) => sum + (ch.newMessageCount || 0), 0);
       const groupIds = allChannels.filter((ch) => !ch.isDM).map((ch) => ch.id);
       const nextWelcomeSelectedId = groupIds.includes(s.channelWelcomeSelectedId || '')
         ? s.channelWelcomeSelectedId
         : (groupIds[0] || null);
+      const currentChannelExists = !!allChannels.find((ch) => ch.id === s.currentChannel);
+      const resetCurrentChannel = !currentChannelExists;
       set({
         channels: allChannels,
         channelTotalUnread: totalUnread,
         channelWelcomeSelectedId: nextWelcomeSelectedId,
+        ...(resetCurrentChannel ? {
+          currentChannel: null,
+          channelMessages: [],
+          channelMembers: [],
+          channelHeaderName: '',
+          channelHeaderMembersText: '',
+          channelInfoName: '',
+          channelAnnouncement: '',
+          channelIsDM: false,
+        } : {}),
       });
     } catch (err) {
       console.error('[channels] load failed:', err);
@@ -166,6 +157,9 @@ export const createChannelSlice = (
     const s = get!();
     const ch = s.channels.find((c: Channel) => c.id === channelId);
     const isThisDM = isDM ?? ch?.isDM ?? false;
+    if (HIDE_DM_MODULE && (isThisDM || String(channelId || '').startsWith('dm:'))) {
+      return;
+    }
     const t = (window as any).t;
 
     set({

@@ -16,6 +16,9 @@ import {
   buildPlatformKey,
 } from "../../lib/bridge/session-key.js";
 import { getWechatQrcode, pollWechatQrcodeStatus } from "../../lib/bridge/wechat-login.js";
+import { readSessionMetadata } from "../../core/claude-session-store.js";
+import { buildSessionMessagesFromSession } from "../../core/claude-transcript.js";
+import { hasSessionMessageLog, readSessionMessagesFromLog } from "../../core/session-message-log.js";
 import { t } from "../i18n.js";
 
 const MULTI_BOT_PLATFORMS = new Set(["telegram", "feishu", "qq"]);
@@ -137,32 +140,25 @@ function getBoundAgentsForPlatform(engine, platform) {
 }
 
 function parseBridgeMessagesFile(filePath) {
-  try {
-    const raw = fs.readFileSync(filePath, "utf-8");
-    if (!raw.trim()) return { messages: [] };
-    const lines = raw
-      .trim()
-      .split("\n")
-      .map((l) => {
-        try { return JSON.parse(l); } catch { return null; }
-      })
-      .filter(Boolean);
-
+  const normalizeBridgeMessages = (rawMessages = []) => {
     const messages = [];
-    for (const line of lines) {
-      if (line.type !== "message") continue;
-      const msg = line.message;
+    for (const msg of rawMessages) {
       if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
 
       let textContent = "";
       let imageCount = 0;
       if (Array.isArray(msg.content)) {
         for (const b of msg.content) {
-          if (b.type === "text" && b.text) textContent += b.text;
-          if (b.type === "image") imageCount++;
+          if (!b || typeof b !== "object") continue;
+          if ((b.type === "text" || !b.type) && typeof b.text === "string") textContent += b.text;
+          if (typeof b.content === "string" && !b.type) textContent += b.content;
+          if (typeof b.type === "string" && b.type.toLowerCase().includes("image")) imageCount++;
         }
       } else if (typeof msg.content === "string") {
         textContent = msg.content;
+      } else if (msg.content && typeof msg.content === "object") {
+        if (typeof msg.content.text === "string") textContent = msg.content.text;
+        if (!textContent && typeof msg.content.content === "string") textContent = msg.content.content;
       }
 
       if (!textContent && imageCount === 0) continue;
@@ -189,14 +185,98 @@ function parseBridgeMessagesFile(filePath) {
       messages.push({
         role: msg.role,
         content,
-        timestamp: line.timestamp || line.ts || null,
+        timestamp: msg.timestamp || msg.ts || msg.time || null,
+      });
+    }
+    return messages;
+  };
+
+  try {
+    // 新格式：.session.json 元数据 + transcript（优先读取同名消息日志；无则回退 Claude transcript）
+    if (/\.session\.json$/i.test(filePath)) {
+      if (hasSessionMessageLog(filePath)) {
+        const rawMessages = readSessionMessagesFromLog(filePath);
+        return { messages: normalizeBridgeMessages(rawMessages) };
+      }
+      const metadata = readSessionMetadata(filePath);
+      const rawMessages = buildSessionMessagesFromSession({
+        sessionId: metadata.sessionId,
+        cwd: metadata.cwd,
+      });
+      return { messages: normalizeBridgeMessages(rawMessages) };
+    }
+
+    const raw = fs.readFileSync(filePath, "utf-8");
+    if (!raw.trim()) return { messages: [] };
+    const lines = raw
+      .trim()
+      .split("\n")
+      .map((l) => {
+        try { return JSON.parse(l); } catch { return null; }
+      })
+      .filter(Boolean);
+
+    const rawMessages = [];
+    for (const line of lines) {
+      if (line.type !== "message") continue;
+      const msg = line.message;
+      if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+      rawMessages.push({
+        role: msg.role,
+        content: msg.content,
+        timestamp: line.timestamp || line.ts || msg.timestamp || null,
       });
     }
 
-    return { messages };
+    return { messages: normalizeBridgeMessages(rawMessages) };
   } catch (err) {
     return { messages: [], error: err.message };
   }
+}
+
+function toTimestampMs(value) {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value > 1e11) return value; // ms
+    if (value > 1e8) return value * 1000; // sec
+    return null;
+  }
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (!s) return null;
+    if (/^\d+(?:\.\d+)?$/.test(s)) return toTimestampMs(Number(s));
+    const parsed = Date.parse(s);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+function getLatestMessageTimestamp(messages = []) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const ts = toTimestampMs(messages[i]?.timestamp);
+    if (ts) return ts;
+  }
+  return null;
+}
+
+function readLastMessageSummary(filePath) {
+  const { messages } = parseBridgeMessagesFile(filePath);
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { lastMessage: null, lastMessageTs: null };
+  }
+
+  const lastMessageTs = getLatestMessageTimestamp(messages);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const raw = String(messages[i]?.content || "").trim();
+    if (!raw) continue;
+    const compact = raw.replace(/\s+/g, " ").trim();
+    if (!compact) continue;
+    return {
+      lastMessage: compact.length > 120 ? `${compact.slice(0, 117)}...` : compact,
+      lastMessageTs,
+    };
+  }
+  return { lastMessage: null, lastMessageTs };
 }
 
 function findBridgeSessionRecord(engine, sessionKey, explicitAgentId = "") {
@@ -594,9 +674,13 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
         // 获取最后修改时间
         let lastActive = null;
         const fp = path.join(bridgeDir, file);
+        let lastMessage = null;
         try {
           const stat = fs.statSync(fp);
           lastActive = stat.mtimeMs;
+          const summary = readLastMessageSummary(fp);
+          lastMessage = summary.lastMessage;
+          if (summary.lastMessageTs) lastActive = summary.lastMessageTs;
         } catch {}
 
         sessions.push({
@@ -608,6 +692,7 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
           chatId,
           file,
           lastActive,
+          lastMessage,
           displayName: entry.name || null,
           avatarUrl: entry.avatarUrl || null,
           agentId: agent.id,
@@ -670,6 +755,8 @@ export default async function bridgeRoute(app, { engine, bridgeManager }) {
       } catch {}
 
       const { messages } = parseBridgeMessagesFile(fp);
+      const lastMessageTs = getLatestMessageTimestamp(messages);
+      if (lastMessageTs) lastActive = lastMessageTs;
       sessions.push({
         sessionKey,
         platform: parsed.platform,

@@ -244,6 +244,29 @@ export class AgentManager {
         `$1[${serialized}]`,
       );
     }
+
+    // 兜底强制：新建 agent 默认 full-access + bypass 权限策略。
+    try {
+      const parsed = YAML.load(config) || {};
+      const sandbox = (parsed.sandbox && typeof parsed.sandbox === "object")
+        ? parsed.sandbox
+        : {};
+      parsed.sandbox = {
+        ...sandbox,
+        mode: "full-access",
+      };
+      const claude = (parsed.claude && typeof parsed.claude === "object")
+        ? parsed.claude
+        : {};
+      parsed.claude = {
+        ...claude,
+        permission_strategy: "auto_allow",
+      };
+      config = YAML.dump(parsed, { lineWidth: -1, noRefs: true });
+    } catch (err) {
+      log.warn(`createAgent: failed to normalize sandbox/claude defaults (${err?.message || err})`);
+    }
+
     fs.writeFileSync(path.join(agentDir, "config.yaml"), config, "utf-8");
 
     // identity.md（按 yuan 选择模板，缺失时回退 identity.example.md）

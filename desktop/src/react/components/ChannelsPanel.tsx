@@ -411,33 +411,13 @@ export function ChannelList() {
     return <div className="session-empty">{t('channel.empty')}</div>;
   }
 
-  const dms = channels.filter((ch) => ch.isDM === true);
   const groups = channels.filter((ch) => !ch.isDM);
+  if (groups.length === 0) {
+    return <div className="session-empty">{t('channel.empty')}</div>;
+  }
 
   return (
     <>
-      {dms.length > 0 && (
-        <>
-          <div className="channel-section-label">
-            <span>{t('channel.dmLabel')}</span>
-            <span className="channel-section-hint">{t('channel.dmHint')}</span>
-          </div>
-          {dms.map((ch) => (
-            <ChannelItem
-              key={ch.id}
-              channel={ch}
-              isDM
-              isActive={ch.id === currentChannel}
-              agents={agents}
-              userName={userName}
-              userAvatarUrl={userAvatarUrl}
-              currentAgentId={currentAgentId}
-              onOpen={openChannel}
-              onManageMembers={openManageMembersModal}
-            />
-          ))}
-        </>
-      )}
       {groups.length > 0 && (
         <>
           <div className="channel-section-label">{t('channel.groupLabel')}</div>

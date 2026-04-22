@@ -15,6 +15,11 @@ let _mdPreview: MarkdownIt | null = null;
 
 const CJK_CHAR_CLASS = '\u3400-\u9FFF\uF900-\uFAFF';
 const HAIR_SPACE = '\u200A';
+const SPACE_LIKE_RE = /^[\s\u00A0\u3000]+|[\s\u00A0\u3000]+$/g;
+const ESCAPED_STRONG_ASTERISK_RE = /\\\*\\\*([^\n]*?)\\\*\\\*/g;
+const ESCAPED_STRONG_UNDERSCORE_RE = /\\_\\_([^\n]*?)\\_\\_/g;
+const LOOSE_STRONG_ASTERISK_RE = /\*\*([^\n]*?)\*\*/g;
+const LOOSE_STRONG_UNDERSCORE_RE = /__([^\n]*?)__/g;
 const STRONG_ASTERISK_RE = new RegExp(`\\*\\*([^*\\n]+?)\\*\\*(?=[${CJK_CHAR_CLASS}])`, 'g');
 const STRONG_UNDERSCORE_RE = new RegExp(`__([^_\\n]+?)__(?=[${CJK_CHAR_CLASS}])`, 'g');
 const EMPHASIS_ASTERISK_RE = new RegExp(`(^|[^*])\\*([^*\\n]+?)\\*(?=[${CJK_CHAR_CLASS}])`, 'g');
@@ -52,6 +57,26 @@ function normalizeMarkdownForCjkEmphasis(src: string): string {
       const chunk = chunks[j];
       if (/^`+[^`]*`+$/.test(chunk)) continue;
       chunks[j] = chunk
+        // 容错：模型偶发输出 **text ** / ** text** / __text __，会导致 markdown 失效。
+        .replace(LOOSE_STRONG_ASTERISK_RE, (m, text: string) => {
+          const trimmed = String(text || '').replace(SPACE_LIKE_RE, '');
+          if (!trimmed || trimmed === text || trimmed.includes('**')) return m;
+          return `**${trimmed}**`;
+        })
+        .replace(LOOSE_STRONG_UNDERSCORE_RE, (m, text: string) => {
+          const trimmed = String(text || '').replace(SPACE_LIKE_RE, '');
+          if (!trimmed || trimmed === text || trimmed.includes('__')) return m;
+          return `__${trimmed}__`;
+        })
+        // 某些模型会输出转义后的强调（\*\*text\*\*），这里在非代码区恢复。
+        .replace(ESCAPED_STRONG_ASTERISK_RE, (_m, text: string) => {
+          const normalized = String(text || '').replace(SPACE_LIKE_RE, '');
+          return normalized ? `**${normalized}**` : _m;
+        })
+        .replace(ESCAPED_STRONG_UNDERSCORE_RE, (_m, text: string) => {
+          const normalized = String(text || '').replace(SPACE_LIKE_RE, '');
+          return normalized ? `__${normalized}__` : _m;
+        })
         .replace(STRONG_ASTERISK_RE, `**$1**${HAIR_SPACE}`)
         .replace(STRONG_UNDERSCORE_RE, `__$1__${HAIR_SPACE}`)
         .replace(EMPHASIS_ASTERISK_RE, (_m, prefix: string, text: string) => `${prefix}*${text}*${HAIR_SPACE}`)
