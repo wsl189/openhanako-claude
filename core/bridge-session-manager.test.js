@@ -58,5 +58,25 @@ describe("BridgeSessionManager legacy metadata compatibility", () => {
     expect(resolved.existingFile).toBeNull();
     expect(resolved.metadata?.bridge).toEqual({ name: "User", userId: "user123" });
   });
-});
 
+  it("resolves bridge chat model when config uses legacy object ref", () => {
+    const { root, agent } = makeTempAgent();
+    agent.config.models = {
+      chat: { id: "MiniMax-M2.7", provider: "minimax" },
+    };
+    const manager = new BridgeSessionManager({
+      getAgent: () => agent,
+      getHomeCwd: () => root,
+    });
+    const mm = {
+      defaultModel: null,
+      findAvailableModel: (ref) => (ref === "minimax/MiniMax-M2.7"
+        ? { id: "MiniMax-M2.7", provider: "minimax", name: "MiniMax M2.7" }
+        : null),
+    };
+
+    const resolved = manager._resolveBridgeModel(mm, agent);
+    expect(resolved?.provider).toBe("minimax");
+    expect(resolved?.id).toBe("MiniMax-M2.7");
+  });
+});

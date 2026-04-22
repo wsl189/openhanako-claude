@@ -11,6 +11,7 @@
 import path from "path";
 import { clearConfigCache, loadGlobalProviders } from "../lib/memory/config-loader.js";
 import { t } from "../server/i18n.js";
+import { normalizeModelRef } from "./model-ref.js";
 import { ProviderRegistry } from "./provider-registry.js";
 import { ModelCatalog } from "./model-catalog.js";
 import { AuthStore } from "./auth-store.js";
@@ -78,6 +79,31 @@ export class ModelManager {
   get availableModels() { return this._availableModels; }
   get modelsJsonPath() { return path.join(this._hanakoHome, "models.json"); }
   get authJsonPath() { return path.join(this._hanakoHome, "auth.json"); }
+
+  /**
+   * 查找可用模型（支持 provider/model、裸 id、legacy object）
+   * @param {string|object} modelRef
+   * @returns {object|null}
+   */
+  findAvailableModel(modelRef) {
+    const ref = normalizeModelRef(modelRef);
+    if (!ref) return null;
+
+    const direct = this._availableModels.find((m) => {
+      if (m.id === ref || m.name === ref) return true;
+      return !!(m.provider && `${m.provider}/${m.id}` === ref);
+    });
+    if (direct) return direct;
+
+    if (this.modelCatalog) {
+      const entry = this.modelCatalog.resolve(ref);
+      if (entry) {
+        return this._availableModels.find((m) => m.id === entry.modelId && m.provider === entry.providerId)
+          || this.modelCatalog.toSdkEntry(entry);
+      }
+    }
+    return null;
+  }
 
   /** 注入 PreferencesManager 引用（engine init 时调用） */
   setPreferences(prefs) { this._prefs = prefs; }
@@ -207,22 +233,10 @@ export class ModelManager {
    * @returns {object} 新模型对象
    */
   setModel(modelId) {
-    const ref = String(modelId || "").trim();
+    const ref = normalizeModelRef(modelId);
     if (!ref) throw new Error(t("error.modelNotFound", { id: modelId }));
 
-    let model = this._availableModels.find((m) => {
-      if (m.id === ref) return true;
-      return !!(m.provider && `${m.provider}/${m.id}` === ref);
-    });
-
-    if (!model && this.modelCatalog) {
-      const entry = this.modelCatalog.resolve(ref);
-      if (entry) {
-        model =
-          this._availableModels.find((m) => m.id === entry.modelId && m.provider === entry.providerId)
-          || this.modelCatalog.toSdkEntry(entry);
-      }
-    }
+    const model = this.findAvailableModel(ref);
 
     if (!model) throw new Error(t("error.modelNotFound", { id: ref }));
     this._sessionModel = model;
@@ -240,31 +254,26 @@ export class ModelManager {
    */
   resolveExecutionModel(modelRef) {
     if (!modelRef) return this.currentModel;
-    if (typeof modelRef !== "string") return modelRef; // 对象直通（session-coordinator 路径）
-    const ref = modelRef.trim();
+    const ref = normalizeModelRef(modelRef);
     if (!ref) return this.currentModel;
 
-    // 新路径：通过 ModelCatalog 解析（支持 "provider/model" 格式）
-    if (this.modelCatalog) {
-      const entry = this.modelCatalog.resolve(ref);
-      if (entry) return this.modelCatalog.toSdkEntry(entry);
-    }
-
-    // fallback：从 _availableModels 查找（覆盖 Catalog 未索引到的情况）
-    const model = this._availableModels.find(m => m.id === ref || m.name === ref);
+    const model = this.findAvailableModel(ref);
     if (!model) throw new Error(t("error.modelNotFound", { id: ref }));
     return model;
   }
 
   /** 根据模型 ID 推断其所属 provider */
   inferModelProvider(modelId) {
-    if (!modelId) return null;
+    const ref = normalizeModelRef(modelId);
+    if (!ref) return null;
     // 新路径：ModelCatalog
     if (this.modelCatalog) {
-      const entry = this.modelCatalog.resolve(modelId);
+      const entry = this.modelCatalog.resolve(ref);
       if (entry) return entry.providerId;
     }
-    return this._availableModels.find(m => m.id === modelId)?.provider || null;
+    return this._availableModels.find((m) =>
+      m.id === ref || (m.provider && `${m.provider}/${m.id}` === ref)
+    )?.provider || null;
   }
 
   /**

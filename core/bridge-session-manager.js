@@ -12,6 +12,7 @@ import { t, getLocale } from "../server/i18n.js";
 import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
 import { buildClaudeRuntimeConfig } from "./claude-runtime-config.js";
 import { ClaudeSessionRuntime } from "./claude-session-runtime.js";
+import { normalizeModelRef } from "./model-ref.js";
 import {
   createSessionMetadata,
   patchSessionMetadata,
@@ -164,15 +165,15 @@ export class BridgeSessionManager {
   }
 
   _resolveBridgeModel(mm, agent) {
-    const preferredId = agent?.config?.models?.chat || "";
-    if (!preferredId) {
+    const preferredRef = normalizeModelRef(agent?.config?.models?.chat);
+    if (!preferredRef) {
       if (mm.defaultModel) return mm.defaultModel;
       throw new Error(t("error.bridgeAgentNoChatModel", { name: agent.agentName }));
     }
-    const preferred = mm.availableModels.find((m) => m.id === preferredId);
+    const preferred = mm.findAvailableModel(preferredRef);
     if (preferred) return preferred;
     if (mm.defaultModel) return mm.defaultModel;
-    throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: preferredId }));
+    throw new Error(t("error.bridgeAgentModelNotAvailable", { name: agent.agentName, model: preferredRef }));
   }
 
   _resolveBridgeMetadata({ agent, sessionKey, meta }) {

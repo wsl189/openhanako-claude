@@ -42,4 +42,16 @@ describe("ModelManager.setModel", () => {
     expect(model.provider).toBe("provider-b");
     expect(mm.currentModel?.provider).toBe("provider-b");
   });
+
+  it("accepts legacy object refs ({id, provider})", () => {
+    const mm = new ModelManager({ hanakoHome: "/tmp/hanako-test" });
+    mm._availableModels = [
+      { id: "MiniMax-M2.7", name: "MiniMax M2.7", provider: "minimax" },
+    ];
+
+    const model = mm.setModel({ id: "MiniMax-M2.7", provider: "minimax" });
+
+    expect(model.id).toBe("MiniMax-M2.7");
+    expect(model.provider).toBe("minimax");
+  });
 });

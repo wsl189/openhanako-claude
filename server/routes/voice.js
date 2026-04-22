@@ -1,4 +1,5 @@
 import { buildProviderAuthHeaders } from "../../lib/llm/provider-client.js";
+import { normalizeModelRef } from "../../core/model-ref.js";
 
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 const TRANSCRIBE_TIMEOUT_MS = 45_000;
@@ -73,7 +74,7 @@ function resolveTranscribeTarget(engine, preferredProvider) {
 }
 
 function resolveSharedTranscribeTarget(engine, sharedModels = {}, providerHint) {
-  const sharedModelRef = String(sharedModels?.voice_transcribe || "").trim();
+  const sharedModelRef = normalizeModelRef(sharedModels?.voice_transcribe);
   if (!sharedModelRef) return null;
 
   let resolved = null;
@@ -291,9 +292,11 @@ export default async function voiceRoute(app, { engine }) {
         ? String(sharedTarget.shared_voice_model || "").trim()
         : "";
       const modelHints = [
-        String(body.model || "").trim(),
+        normalizeModelRef(body.model),
         sharedModelHint,
-        String(process.env.HANA_VOICE_TRANSCRIBE_MODEL || "").trim(),
+        normalizeModelRef(process.env.HANA_VOICE_TRANSCRIBE_MODEL || ""),
+        target.provider === "siliconflow" ? "TeleAI/TeleSpeechASR" : "",
+        target.provider === "siliconflow" ? "FunAudioLLM/SenseVoiceSmall" : "",
         "gpt-4o-mini-transcribe",
         "whisper-1",
       ].filter(Boolean);
@@ -344,11 +347,13 @@ export default async function voiceRoute(app, { engine }) {
       const sharedModelHint = sharedTarget && sharedTarget.provider === target.provider
         ? String(sharedTarget.shared_voice_model || "").trim()
         : "";
-      const requestedModel = String(body.model || "").trim();
+      const requestedModel = normalizeModelRef(body.model);
       const modelHints = [
         requestedModel,
         sharedModelHint,
-        String(process.env.HANA_VOICE_TRANSCRIBE_MODEL || "").trim(),
+        normalizeModelRef(process.env.HANA_VOICE_TRANSCRIBE_MODEL || ""),
+        target.provider === "siliconflow" ? "TeleAI/TeleSpeechASR" : "",
+        target.provider === "siliconflow" ? "FunAudioLLM/SenseVoiceSmall" : "",
         "gpt-4o-mini-transcribe",
         "whisper-1",
       ];

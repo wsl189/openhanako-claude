@@ -13,6 +13,7 @@ import { createModuleLogger } from "../lib/debug-log.js";
 import { clearConfigCache } from "../lib/memory/config-loader.js";
 import { t } from "../server/i18n.js";
 import { ActivityStore } from "../lib/desk/activity-store.js";
+import { normalizeModelRef } from "./model-ref.js";
 import {
   generateAgentId as _generateAgentId,
 } from "./llm-utils.js";
@@ -225,7 +226,9 @@ export class AgentManager {
       config = config.replace(/user:\s*\n\s+name:\s*""/, `user:\n  name: "${userName}"`);
     }
     // 继承主 agent 的模型配置
-    const primaryChat = currentAgent?.config?.models?.chat || this._d.getModels().defaultModel?.id || "";
+    const primaryChat = normalizeModelRef(currentAgent?.config?.models?.chat)
+      || this._d.getModels().defaultModel?.id
+      || "";
     if (primaryChat) {
       config = config.replace(/chat: ""/, `chat: "${primaryChat}"`);
     }
@@ -345,17 +348,17 @@ export class AgentManager {
       clearConfigCache();
       this.activeAgentId = agentId;
 
-      const preferredId = this.agent.config.models?.chat;
+      const preferredRef = normalizeModelRef(this.agent.config.models?.chat);
       const models = this._d.getModels();
-      if (preferredId) {
-        const model = models.availableModels.find(m => m.id === preferredId);
+      if (preferredRef) {
+        const model = models.findAvailableModel(preferredRef);
         if (!model) {
-          throw new Error(t("error.agentModelNotAvailable", { id: agentId, model: preferredId }));
+          throw new Error(t("error.agentModelNotAvailable", { id: agentId, model: preferredRef }));
         }
         models.defaultModel = model;
       }
       // 未配 models.chat 的 agent 继承当前 defaultModel
-      const effectiveModel = preferredId || models.defaultModel?.id || "inherited";
+      const effectiveModel = preferredRef || models.defaultModel?.id || "inherited";
       log.log(`agent switched to ${this.agent.agentName} (${agentId}), model=${effectiveModel}`);
     } catch (err) {
       this.activeAgentId = prevAgentId;

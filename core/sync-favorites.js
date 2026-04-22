@@ -11,6 +11,7 @@ import path from "path";
 import YAML from "js-yaml";
 import { loadGlobalProviders, resolveApiKeyFromAuth, resolveOAuthCredentials } from "../lib/memory/config-loader.js";
 import { t } from "../server/i18n.js";
+import { normalizeModelRef, splitModelRef } from "./model-ref.js";
 
 /** @deprecated 仅作为 fallback，调用方应通过 opts.modelsJsonPath 传入 */
 function getDefaultModelsJsonPath() {
@@ -120,13 +121,21 @@ export function syncFavoritesToModelsJson(configPath, opts = {}) {
   const models = rawConfig.models || {};
 
   // 「必须保留」的模型集合 = favorites ∪ 角色模型（不含 embedding）
-  const mustKeep = new Set(favorites);
+  const mustKeepRefs = new Set();
+  for (const item of favorites) {
+    const ref = normalizeModelRef(item);
+    if (ref) mustKeepRefs.add(ref);
+  }
   // per-agent: chat
-  if (models.chat) mustKeep.add(models.chat);
+  {
+    const chatRef = normalizeModelRef(models.chat);
+    if (chatRef) mustKeepRefs.add(chatRef);
+  }
   // 全局共享角色模型
   const shared = opts.sharedModels ?? {};
   for (const role of ["utility", "utility_large", "image_understanding", "voice_transcribe", "summarizer", "compiler"]) {
-    if (shared[role]) mustKeep.add(shared[role]);
+    const ref = normalizeModelRef(shared[role]);
+    if (ref) mustKeepRefs.add(ref);
   }
 
   // ── 2. 读取 models.json ──
@@ -137,7 +146,7 @@ export function syncFavoritesToModelsJson(configPath, opts = {}) {
     modelsJson = { providers: {} };
   }
 
-  if (mustKeep.size === 0) {
+  if (mustKeepRefs.size === 0) {
     const newJson = { providers: {} };
     const oldStr = JSON.stringify(modelsJson, null, 4);
     const newStr = JSON.stringify(newJson, null, 4);
@@ -170,12 +179,20 @@ export function syncFavoritesToModelsJson(configPath, opts = {}) {
       if (!modelToProvider.has(mid)) modelToProvider.set(mid, provName);
     }
   }
+  const providerNameSet = new Set([
+    ...Object.keys(modelsJson.providers || {}),
+    ...Object.keys(globalProviders),
+    ...Object.keys(configProviders),
+  ]);
+
   // ── 4. 按 provider 分组必须保留的模型 ──
   const providerModels = new Map(); // providerName → Set<modelId>
-  for (const mid of mustKeep) {
-    const prov = modelToProvider.get(mid);
+  for (const rawRef of mustKeepRefs) {
+    const { provider: providerHint, modelId } = splitModelRef(rawRef, providerNameSet);
+    const mid = modelId || rawRef;
+    const prov = providerHint || modelToProvider.get(mid);
     if (!prov) {
-      console.warn(`\x1b[33m  [sync] 模型 "${mid}" 未绑定 provider，跳过\x1b[0m`);
+      console.warn(`\x1b[33m  [sync] 模型 "${rawRef}" 未绑定 provider，跳过\x1b[0m`);
       continue;
     }
     if (!providerModels.has(prov)) providerModels.set(prov, new Set());

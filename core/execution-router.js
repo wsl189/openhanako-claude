@@ -19,6 +19,7 @@
  */
 
 import { t } from "../server/i18n.js";
+import { normalizeModelRef } from "./model-ref.js";
 
 function isLocalBaseUrl(url) {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(String(url || ""));
@@ -113,8 +114,10 @@ export class ExecutionRouter {
    */
   resolveUtilityConfig(agentConfig, sharedModels, utilApiOverride) {
     const cfg = agentConfig || {};
-    const utilityModelRef = sharedModels?.utility || cfg.models?.utility;
-    const largeModelRef = sharedModels?.utility_large || cfg.models?.utility_large || utilityModelRef;
+    const utilityModelRef = normalizeModelRef(sharedModels?.utility || cfg.models?.utility);
+    const largeModelRef = normalizeModelRef(
+      sharedModels?.utility_large || cfg.models?.utility_large || utilityModelRef,
+    );
 
     if (!utilityModelRef) throw new Error(t("error.noUtilityModel"));
     if (!largeModelRef) throw new Error(t("error.noUtilityLargeModel"));
@@ -187,22 +190,24 @@ export class ExecutionRouter {
     // 内置角色名的查找顺序：sharedModels → agentConfig.models
     switch (roleOrRef) {
       case "chat":
-        return cfg.models?.chat || null;
+        return normalizeModelRef(cfg.models?.chat) || null;
       case "utility":
-        return sharedModels?.utility || cfg.models?.utility || null;
+        return normalizeModelRef(sharedModels?.utility || cfg.models?.utility) || null;
       case "utility_large":
-        return sharedModels?.utility_large || cfg.models?.utility_large || sharedModels?.utility || cfg.models?.utility || null;
+        return normalizeModelRef(
+          sharedModels?.utility_large || cfg.models?.utility_large || sharedModels?.utility || cfg.models?.utility,
+        ) || null;
       case "image_understanding":
-        return sharedModels?.image_understanding || cfg.models?.image_understanding || null;
+        return normalizeModelRef(sharedModels?.image_understanding || cfg.models?.image_understanding) || null;
       case "summarizer":
-        return sharedModels?.summarizer || cfg.models?.summarizer || null;
+        return normalizeModelRef(sharedModels?.summarizer || cfg.models?.summarizer) || null;
       case "compiler":
-        return sharedModels?.compiler || cfg.models?.compiler || null;
+        return normalizeModelRef(sharedModels?.compiler || cfg.models?.compiler) || null;
       case "embed":
-        return cfg.embedding_api?.model || null;
+        return normalizeModelRef(cfg.embedding_api?.model) || null;
       default:
         // 不是内置角色名，当作模型引用直接用
-        return roleOrRef;
+        return normalizeModelRef(roleOrRef);
     }
   }
 }

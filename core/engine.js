@@ -34,6 +34,7 @@ import { t } from "../server/i18n.js";
 import { SimpleResourceLoader } from "./skill-loader.js";
 import { CLAUDE_BUILTIN_TOOL_NAMES, HANAKO_TO_CLAUDE_BUILTIN } from "./claude-runtime-config.js";
 import { createSandboxedTools } from "../lib/sandbox/index.js";
+import { normalizeModelRef } from "./model-ref.js";
 
 const REQUIRED_BUILTIN_TOOLS = ["Read", "Glob", "Grep"];
 const OPTIONAL_BUILTIN_TOOLS = CLAUDE_BUILTIN_TOOL_NAMES.filter((name) => !REQUIRED_BUILTIN_TOOLS.includes(name));
@@ -496,14 +497,14 @@ export class HanaEngine {
       console.warn("[engine] ⚠ 未找到可用模型，请在设置中配置 API key");
       this._models.defaultModel = null;
     } else {
-      const preferredId = this.agent.config.models?.chat;
-      if (!preferredId) {
+      const preferredRef = normalizeModelRef(this.agent.config.models?.chat);
+      if (!preferredRef) {
         console.warn("[engine] ⚠ 未配置 models.chat，defaultModel 为 null");
         this._models.defaultModel = null;
       } else {
-        const model = availableModels.find(m => m.id === preferredId);
+        const model = this._models.findAvailableModel(preferredRef);
         if (!model) {
-          console.error(`[engine] ⚠ 配置的模型 "${preferredId}" 不在可用列表中，defaultModel 为 null`);
+          console.error(`[engine] ⚠ 配置的模型 "${preferredRef}" 不在可用列表中，defaultModel 为 null`);
           this._models.defaultModel = null;
         } else {
           this._models.defaultModel = model;

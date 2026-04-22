@@ -18,6 +18,7 @@ import {
 } from "../lib/memory/config-loader.js";
 import { t } from "../server/i18n.js";
 import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
+import { normalizeModelRef } from "./model-ref.js";
 
 const log = createModuleLogger("config");
 
@@ -35,16 +36,7 @@ export const SHARED_MODEL_KEYS = [
 ];
 
 function normalizeFavoriteRef(raw) {
-  if (typeof raw === "string") return raw.trim();
-  if (!raw || typeof raw !== "object") return "";
-
-  const rawId = raw.id ?? raw.modelId ?? raw.model ?? raw.name ?? "";
-  const rawProvider = raw.provider ?? raw.providerId ?? raw.vendor ?? "";
-  const id = String(rawId || "").trim();
-  const provider = String(rawProvider || "").trim();
-  if (!id) return "";
-
-  return provider && !id.includes("/") ? `${provider}/${id}` : id;
+  return normalizeModelRef(raw);
 }
 
 function normalizeFavoriteRefs(values) {
@@ -131,17 +123,34 @@ export class ConfigCoordinator {
   getSharedModels() {
     const prefs = this._prefs();
     const result = {};
+    const changedPrefs = {};
+    let changed = false;
     for (const [field, prefKey] of SHARED_MODEL_KEYS) {
-      result[field] = prefs[prefKey] || null;
+      const normalized = normalizeModelRef(prefs[prefKey]);
+      result[field] = normalized || null;
+      if (prefs[prefKey] !== undefined && prefs[prefKey] !== normalized) {
+        changedPrefs[prefKey] = normalized || null;
+        changed = true;
+      }
     }
     if (result.utility) {
       result.utility_large = result.utility;
+    }
+    if (changed) {
+      for (const [prefKey, value] of Object.entries(changedPrefs)) {
+        if (value) prefs[prefKey] = value;
+        else delete prefs[prefKey];
+      }
+      this._savePrefs(prefs);
     }
     return result;
   }
 
   setSharedModels(partial) {
-    const normalized = { ...partial };
+    const normalized = {};
+    for (const [k, v] of Object.entries(partial || {})) {
+      normalized[k] = normalizeModelRef(v);
+    }
     if (normalized.utility !== undefined && normalized.utility_large === undefined) {
       normalized.utility_large = normalized.utility;
     }
@@ -258,8 +267,9 @@ export class ConfigCoordinator {
     // provider / favorites 刷新后，回填 agent 配置里的 chat 模型到运行时
     // 避免首次配置时出现“模型已写入 config，但当前会话仍持有旧/空模型对象”。
     const chatModelId = agent?.config?.models?.chat;
-    if (chatModelId) {
-      const chatModel = models.availableModels.find(m => m.id === chatModelId);
+    const chatModelRef = normalizeModelRef(chatModelId);
+    if (chatModelRef) {
+      const chatModel = models.findAvailableModel(chatModelRef);
       if (chatModel) {
         models.defaultModel = chatModel;
         models.currentModel = chatModel;
@@ -424,7 +434,8 @@ export class ConfigCoordinator {
 
     // 切换聊天模型：不需要 sync，模型早已注册
     if (partial.models?.chat) {
-      const newModel = models.availableModels.find(m => m.id === partial.models.chat);
+      const chatRef = normalizeModelRef(partial.models.chat);
+      const newModel = chatRef ? models.findAvailableModel(chatRef) : null;
       if (newModel) {
         models.defaultModel = newModel;
         models.currentModel = newModel;

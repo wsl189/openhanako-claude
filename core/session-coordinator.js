@@ -22,6 +22,7 @@ import { ClaudeSessionRuntime } from "./claude-session-runtime.js";
 import { buildClaudeRuntimeConfig, CLAUDE_BUILTIN_TOOL_NAMES } from "./claude-runtime-config.js";
 import { readSessionMessagesFromLog } from "./session-message-log.js";
 import { normalizeWorkspacePath } from "./path-utils.js";
+import { normalizeModelRef } from "./model-ref.js";
 
 const log = createModuleLogger("session");
 const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]/i;
@@ -52,6 +53,14 @@ function modelToRef(model) {
   if (!id) return "";
   const provider = String(model.provider || "").trim();
   return provider ? `${provider}/${id}` : id;
+}
+
+function firstNonEmptyModelRef(...candidates) {
+  for (const candidate of candidates) {
+    const ref = normalizeModelRef(candidate);
+    if (ref) return ref;
+  }
+  return "";
 }
 
 function extractAssistantTextFromSdkMessage(message) {
@@ -92,6 +101,13 @@ function resolveCustomToolName(rawName, customToolNames = new Set()) {
   const suffix = String(mcpMatch?.[1] || "").trim();
   if (!suffix) return raw;
 
+  const serverMatch = raw.match(/^mcp__([A-Za-z0-9_-]+)__(.+)$/i);
+  const serverName = String(serverMatch?.[1] || "").trim().toLowerCase();
+  if (serverName) {
+    const hasServerSwitch = names.some((name) => name.toLowerCase() === serverName);
+    if (hasServerSwitch) return suffix;
+  }
+
   const suffixDirect = names.find((name) => name === suffix);
   if (suffixDirect) return suffixDirect;
 
@@ -100,6 +116,21 @@ function resolveCustomToolName(rawName, customToolNames = new Set()) {
   if (suffixCaseInsensitive) return suffixCaseInsensitive;
 
   return raw;
+}
+
+function isCustomToolCall(rawName, resolvedToolName, customToolNames = new Set()) {
+  const resolved = String(resolvedToolName || "").trim();
+  if (resolved && customToolNames.has(resolved)) return true;
+
+  const raw = String(rawName || "").trim();
+  if (!raw) return false;
+  const serverMatch = raw.match(/^mcp__([A-Za-z0-9_-]+)__(.+)$/i);
+  const serverName = String(serverMatch?.[1] || "").trim().toLowerCase();
+  if (!serverName) return false;
+  const names = customToolNames instanceof Set
+    ? [...customToolNames].map((name) => String(name || "").trim().toLowerCase()).filter(Boolean)
+    : [];
+  return names.includes(serverName);
 }
 
 function normalizeContentBlocks(content) {
@@ -355,6 +386,7 @@ export class SessionCoordinator {
         } else if (block?.type === "tool_use" && block.id) {
           state.turnSawStructuredToolUse = true;
           const resolvedToolName = resolveCustomToolName(block.name || "", state.customToolNames);
+          const isCustom = isCustomToolCall(block.name || "", resolvedToolName, state.customToolNames);
           if (Number.isInteger(raw.index)) {
             state.blockToolUseByIndex.set(raw.index, block.id);
           }
@@ -362,7 +394,7 @@ export class SessionCoordinator {
             name: resolvedToolName,
             args: block.input,
             rawInput: typeof block.input === "object" ? JSON.stringify(block.input) : "",
-            custom: state.customToolNames.has(resolvedToolName),
+            custom: isCustom,
           });
           translated.push({
             type: "tool_start",
@@ -438,6 +470,7 @@ export class SessionCoordinator {
       }
       for (const toolUse of structuredToolUses) {
         const resolvedToolName = resolveCustomToolName(toolUse.name || "", state.customToolNames);
+        const isCustom = isCustomToolCall(toolUse.name || "", resolvedToolName, state.customToolNames);
         if (state.toolCalls.has(toolUse.id)) {
           const prev = state.toolCalls.get(toolUse.id);
           const nextArgs = toolUse.args && typeof toolUse.args === "object" ? toolUse.args : prev?.args;
@@ -445,6 +478,7 @@ export class SessionCoordinator {
             ...prev,
             name: resolvedToolName || prev?.name || "",
             args: nextArgs,
+            custom: isCustom || prev?.custom === true,
           });
           translated.push({
             type: "tool_start",
@@ -457,7 +491,7 @@ export class SessionCoordinator {
         state.toolCalls.set(toolUse.id, {
           name: resolvedToolName,
           args: toolUse.args,
-          custom: state.customToolNames.has(resolvedToolName),
+          custom: isCustom,
         });
         translated.push({
           type: "tool_start",
@@ -648,13 +682,12 @@ export class SessionCoordinator {
   }) {
     const normalizedCwd = normalizeWorkspacePath(cwd, process.cwd());
     const models = this._d.getModels();
-    const modelRef = String(
-      metadata?.model
-      || agent?.config?.models?.chat
-      || modelToRef(models.defaultModel)
-      || modelToRef(models.currentModel)
-      || "",
-    ).trim();
+    const modelRef = firstNonEmptyModelRef(
+      metadata?.model,
+      agent?.config?.models?.chat,
+      modelToRef(models.defaultModel),
+      modelToRef(models.currentModel),
+    );
     if (!modelRef) {
       throw new Error(t("error.noAvailableModel"));
     }
@@ -794,12 +827,11 @@ export class SessionCoordinator {
     this._refreshSessionPrompt(agent);
 
     const models = this._d.getModels();
-    const initialModelRef = String(
-      modelToRef(models.currentModel)
-      || modelToRef(models.defaultModel)
-      || agent?.config?.models?.chat
-      || "",
-    ).trim();
+    const initialModelRef = firstNonEmptyModelRef(
+      modelToRef(models.currentModel),
+      modelToRef(models.defaultModel),
+      agent?.config?.models?.chat,
+    );
 
     const { sessionPath, metadata } = createSessionMetadata(sessionDir, {
       sessionId: randomUUID(),

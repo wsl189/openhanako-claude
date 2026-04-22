@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSettingsStore, type ProviderSummary } from '../store';
 import { hanaFetch } from '../api';
 import {
-  t, formatContext, lookupModelMeta, resolveProviderForModel,
+  t, formatContext, lookupModelMeta, normalizeModelRef, resolveProviderForModel,
   autoSaveConfig, autoSaveGlobalModels, autoSaveModels,
   PROVIDER_PRESETS, API_FORMAT_OPTIONS, CONTEXT_PRESETS, OUTPUT_PRESETS,
 } from '../helpers';
@@ -15,13 +15,126 @@ import { loadSettingsConfig } from '../actions';
 
 const platform = (window as any).platform;
 
+function toStringSet(input: unknown): Set<string> {
+  const normalize = (v: unknown) => {
+    const ref = normalizeModelRef(v as any);
+    if (ref) return ref;
+    return String(v || '').trim();
+  };
+  if (input instanceof Set) {
+    return new Set([...input].map((v) => normalize(v)).filter(Boolean));
+  }
+  if (Array.isArray(input)) {
+    return new Set(input.map((v) => normalize(v)).filter(Boolean));
+  }
+  if (input && typeof input === 'object') {
+    const out = new Set<string>();
+    for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+      if (!v) continue;
+      const key = String(k || '').trim();
+      if (key) out.add(key);
+    }
+    return out;
+  }
+  return new Set<string>();
+}
+
+function toStringArray(input: unknown): string[] {
+  const normalize = (v: unknown) => {
+    const ref = normalizeModelRef(v as any);
+    if (ref) return ref;
+    return String(v || '').trim();
+  };
+  if (Array.isArray(input)) {
+    return input.map((v) => normalize(v)).filter(Boolean);
+  }
+  if (typeof input === 'string') {
+    const text = input.trim();
+    return text ? [text] : [];
+  }
+  if (input && typeof input === 'object') {
+    const ref = normalize(input);
+    return ref ? [ref] : [];
+  }
+  return [];
+}
+
+function normalizeProviderSummary(raw: unknown, id: string): ProviderSummary {
+  const src = (raw && typeof raw === 'object') ? raw as Record<string, any> : {};
+  return {
+    type: src.type === 'oauth' ? 'oauth' : 'api-key',
+    display_name: String(src.display_name || id || ''),
+    base_url: String(src.base_url || ''),
+    api: String(src.api || ''),
+    api_key_masked: String(src.api_key_masked || ''),
+    models: toStringArray(src.models),
+    custom_models: toStringArray(src.custom_models),
+    has_credentials: Boolean(src.has_credentials),
+    logged_in: src.logged_in === undefined ? undefined : Boolean(src.logged_in),
+    supports_oauth: Boolean(src.supports_oauth),
+    is_coding_plan: src.is_coding_plan === undefined ? undefined : Boolean(src.is_coding_plan),
+    can_delete: src.can_delete === undefined ? false : Boolean(src.can_delete),
+  };
+}
+
+class ProvidersErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      message: String((error as any)?.message || error || 'Unknown error'),
+    };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('[settings/providers] render crashed:', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="settings-tab-content active" data-tab="providers">
+          <div className="pv-empty">
+            <div>Providers 页面渲染失败</div>
+            <div style={{ marginTop: 6, opacity: 0.75 }}>{this.state.message}</div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
+}
+
 // ════════════════════════════════════════════════════
 // Main Tab
 // ════════════════════════════════════════════════════
 
 export function ProvidersTab() {
+  return (
+    <ProvidersErrorBoundary>
+      <ProvidersTabInner />
+    </ProvidersErrorBoundary>
+  );
+}
+
+function ProvidersTabInner() {
   const { providersSummary, selectedProviderId, settingsConfig, pendingFavorites, globalModelsConfig } = useSettingsStore();
   const providers = settingsConfig?.providers || {};
+  const safeProvidersSummary = (providersSummary && typeof providersSummary === 'object')
+    ? providersSummary as Record<string, unknown>
+    : {};
+  const normalizedProvidersSummary: Record<string, ProviderSummary> = {};
+  for (const id of Object.keys(safeProvidersSummary)) {
+    normalizedProvidersSummary[id] = normalizeProviderSummary(safeProvidersSummary[id], id);
+  }
+  const favoriteSet = toStringSet(pendingFavorites);
   const [addingProvider, setAddingProvider] = useState(false);
 
   // 加载 summary
@@ -35,14 +148,14 @@ export function ProvidersTab() {
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  const providerIds = Object.keys(providersSummary);
+  const providerIds = Object.keys(normalizedProvidersSummary).filter((id) => !!normalizedProvidersSummary[id]);
   // selectedProviderId 可以是 summary 里的，也可以是未注册的 preset
   const selected = selectedProviderId;
 
   // 分组：OAuth → Coding Plan → API Key
-  const oauthProviders = providerIds.filter(id => providersSummary[id].supports_oauth);
-  const codingPlanProviders = providerIds.filter(id => !providersSummary[id].supports_oauth && providersSummary[id].is_coding_plan);
-  const registeredApiKey = providerIds.filter(id => !providersSummary[id].supports_oauth && !providersSummary[id].is_coding_plan);
+  const oauthProviders = providerIds.filter(id => !!normalizedProvidersSummary[id]?.supports_oauth);
+  const codingPlanProviders = providerIds.filter(id => !normalizedProvidersSummary[id]?.supports_oauth && !!normalizedProvidersSummary[id]?.is_coding_plan);
+  const registeredApiKey = providerIds.filter(id => !normalizedProvidersSummary[id]?.supports_oauth && !normalizedProvidersSummary[id]?.is_coding_plan);
   const registeredSet = new Set(providerIds);
   // 排除 minimax（OAuth 管）和已注册的
   const unregisteredPresets = PROVIDER_PRESETS.filter(p =>
@@ -58,10 +171,11 @@ export function ProvidersTab() {
   };
 
   const renderRegistered = (id: string) => {
-    const p = providersSummary[id];
+    const p = normalizedProvidersSummary[id];
+    if (!p) return null;
     const preset = PROVIDER_PRESETS.find(pr => pr.value === id);
-    const favCount = (p.models || []).filter(m => pendingFavorites.has(m)).length
-      + (p.custom_models || []).filter(m => pendingFavorites.has(m)).length;
+    const favCount = (p.models || []).filter(m => favoriteSet.has(m)).length
+      + (p.custom_models || []).filter(m => favoriteSet.has(m)).length;
     const totalCount = (p.models || []).length + (p.custom_models || []).length;
     return (
       <button
@@ -136,7 +250,7 @@ export function ProvidersTab() {
         <div className="pv-detail">
           {selected ? (() => {
             // 已注册 or 未注册 preset → 统一用 ProviderDetail
-            const existing = providersSummary[selected];
+            const existing = normalizedProvidersSummary[selected];
             const preset = PROVIDER_PRESETS.find(p => p.value === selected);
             const summary: ProviderSummary = existing || {
               type: 'api-key' as const,
@@ -536,11 +650,12 @@ function FavoritedModels({ providerId, summary }: {
   providerId: string; summary: ProviderSummary;
 }) {
   const { pendingFavorites, pendingDefaultModel } = useSettingsStore();
+  const favoriteSet = toStringSet(pendingFavorites);
   const allModels = [...new Set([...(summary.models || []), ...(summary.custom_models || [])])];
-  const favModels = allModels.filter(m => pendingFavorites.has(m));
+  const favModels = allModels.filter(m => favoriteSet.has(m));
 
   const removeFavorite = (mid: string) => {
-    const next = new Set(pendingFavorites);
+    const next = new Set(favoriteSet);
     next.delete(mid);
     let nextDefault = pendingDefaultModel;
     if (mid === pendingDefaultModel) {
@@ -610,6 +725,7 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
   providerId: string; summary: ProviderSummary; onRefresh: () => Promise<void>;
 }) {
   const { pendingFavorites, pendingDefaultModel, showToast } = useSettingsStore();
+  const favoriteSet = toStringSet(pendingFavorites);
   const [expanded, setExpanded] = useState(false);
   const [search, setSearch] = useState('');
   const [customInput, setCustomInput] = useState('');
@@ -621,7 +737,7 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
   const filtered = query ? allModels.filter(m => m.toLowerCase().includes(query)) : allModels;
 
   const toggleFavorite = (mid: string) => {
-    const next = new Set(pendingFavorites);
+    const next = new Set(favoriteSet);
     if (next.has(mid)) {
       next.delete(mid);
       let nextDefault = pendingDefaultModel;
@@ -637,7 +753,7 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
       useSettingsStore.setState({ pendingFavorites: next, pendingDefaultModel: nextDefault });
     } else {
       next.add(mid);
-      const wasEmpty = pendingFavorites.size === 0;
+      const wasEmpty = favoriteSet.size === 0;
       const updates: Partial<any> = { pendingFavorites: next };
       if (wasEmpty) {
         updates.pendingDefaultModel = mid;
@@ -696,14 +812,16 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
       }
 
       // 同步清理本地收藏/默认模型，避免删除后仍残留为选中项
-      const { pendingFavorites, pendingDefaultModel } = useSettingsStore.getState();
-      if (pendingFavorites.has(id) || pendingDefaultModel === id) {
-        const next = new Set(pendingFavorites);
+      const state = useSettingsStore.getState();
+      const favoritesNow = toStringSet(state.pendingFavorites);
+      const defaultNow = state.pendingDefaultModel;
+      if (favoritesNow.has(id) || defaultNow === id) {
+        const next = new Set(favoritesNow);
         next.delete(id);
-        const nextDefault = pendingDefaultModel === id ? ([...next][0] || '') : pendingDefaultModel;
+        const nextDefault = defaultNow === id ? ([...next][0] || '') : defaultNow;
         useSettingsStore.setState({ pendingFavorites: next, pendingDefaultModel: nextDefault });
         autoSaveModels();
-        if (pendingDefaultModel === id) {
+        if (defaultNow === id) {
           const partial: Record<string, any> = { models: { chat: nextDefault } };
           if (nextDefault) {
             const prov = resolveProviderForModel(nextDefault);
@@ -887,7 +1005,7 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
           />
           <div className="pv-model-dropdown-list">
             {filtered.map(mid => {
-              const isFav = pendingFavorites.has(mid);
+              const isFav = favoriteSet.has(mid);
               const meta = lookupModelMeta(mid) || {};
               const isCustom = customModelSet.has(mid);
               return (
@@ -1310,6 +1428,10 @@ function VoiceModelTestBtn({ modelId }: { modelId: string }) {
 
 function OtherModelsSection({ providers }: { providers: Record<string, any> }) {
   const { globalModelsConfig, pendingFavorites } = useSettingsStore();
+  const favoriteSet = toStringSet(pendingFavorites);
+  const utilityModel = normalizeModelRef(globalModelsConfig?.models?.utility);
+  const imageUnderstandingModel = normalizeModelRef(globalModelsConfig?.models?.image_understanding) || utilityModel;
+  const voiceTranscribeModel = normalizeModelRef(globalModelsConfig?.models?.voice_transcribe);
 
   return (
     <>
@@ -1319,13 +1441,13 @@ function OtherModelsSection({ providers }: { providers: Record<string, any> }) {
           <div className="pv-tool-model-row">
             <ModelWidget
               providers={providers}
-              favorites={pendingFavorites}
-              value={globalModelsConfig?.models?.utility || ''}
+              favorites={favoriteSet}
+              value={utilityModel}
               onSelect={(id) => autoSaveGlobalModels({ models: { utility: id, utility_large: id } })}
               lookupModelMeta={lookupModelMeta}
               formatContext={formatContext}
             />
-            <ToolModelTestBtn modelId={globalModelsConfig?.models?.utility || ''} />
+            <ToolModelTestBtn modelId={utilityModel} />
           </div>
         </div>
         <div className="settings-field settings-field-half">
@@ -1333,13 +1455,13 @@ function OtherModelsSection({ providers }: { providers: Record<string, any> }) {
           <div className="pv-tool-model-row">
             <ModelWidget
               providers={providers}
-              favorites={pendingFavorites}
-              value={globalModelsConfig?.models?.image_understanding || globalModelsConfig?.models?.utility || ''}
+              favorites={favoriteSet}
+              value={imageUnderstandingModel}
               onSelect={(id) => autoSaveGlobalModels({ models: { image_understanding: id } })}
               lookupModelMeta={lookupModelMeta}
               formatContext={formatContext}
             />
-            <ToolModelTestBtn modelId={globalModelsConfig?.models?.image_understanding || globalModelsConfig?.models?.utility || ''} />
+            <ToolModelTestBtn modelId={imageUnderstandingModel} />
           </div>
         </div>
       </div>
@@ -1349,13 +1471,13 @@ function OtherModelsSection({ providers }: { providers: Record<string, any> }) {
           <div className="pv-tool-model-row">
             <ModelWidget
               providers={providers}
-              favorites={pendingFavorites}
-              value={globalModelsConfig?.models?.voice_transcribe || ''}
+              favorites={favoriteSet}
+              value={voiceTranscribeModel}
               onSelect={(id) => autoSaveGlobalModels({ models: { voice_transcribe: id } })}
               lookupModelMeta={lookupModelMeta}
               formatContext={formatContext}
             />
-            <VoiceModelTestBtn modelId={globalModelsConfig?.models?.voice_transcribe || ''} />
+            <VoiceModelTestBtn modelId={voiceTranscribeModel} />
           </div>
         </div>
         <div className="settings-field settings-field-half" />

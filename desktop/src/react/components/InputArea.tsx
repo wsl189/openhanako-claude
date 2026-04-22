@@ -17,7 +17,6 @@ import { getWebSocket } from '../services/websocket';
 import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { usePushToTalk } from '../hooks/use-push-to-talk';
 import { SVG_ICONS } from '../utils/icons';
-import type { ThinkingLevel } from '../stores/model-slice';
 import type { AttachedFile } from '../stores/input-slice';
 import { loadModels } from '../utils/ui-helpers';
 
@@ -125,18 +124,8 @@ function InputAreaInner() {
   const previewOpen = useStore(s => s.previewOpen);
   const models = useStore(s => s.models);
   const agentYuan = useStore(s => s.agentYuan);
-  const thinkingLevel = useStore(s => s.thinkingLevel);
-  const setThinkingLevel = useStore(s => s.setThinkingLevel);
   const pendingInputPromptsBySession = useStore(s => s.pendingInputPromptsBySession);
   const removePendingInputPrompt = useStore(s => s.removePendingInputPrompt);
-
-  const isDraftSession = pendingNewSession && !currentSessionPath;
-  const currentModelInfo = useMemo(() => {
-    if (isDraftSession && pendingSessionModel) {
-      return models.find((m) => m.id === pendingSessionModel) || models.find((m) => m.isCurrent) || models[0];
-    }
-    return models.find((m) => m.isCurrent) || models[0];
-  }, [isDraftSession, pendingSessionModel, models]);
 
   const resolveSelectedModelId = useCallback((): string => {
     const state = useStore.getState();
@@ -564,14 +553,6 @@ function InputAreaInner() {
     });
   }, [addAttachedFile]);
 
-  // ── Load thinking level on mount ──
-  useEffect(() => {
-    hanaFetch('/api/config')
-      .then(r => r.json())
-      .then(d => { if (d.thinking_level) setThinkingLevel(d.thinking_level as ThinkingLevel); })
-      .catch(() => {});
-  }, []);
-
   // ── Send message ──
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
@@ -847,13 +828,6 @@ function InputAreaInner() {
             )}
           </div>
           <div className="input-controls">
-            {currentModelInfo?.reasoning !== false && (
-              <ThinkingLevelButton
-                level={thinkingLevel}
-                onChange={setThinkingLevel}
-                modelXhigh={currentModelInfo?.xhigh ?? false}
-              />
-            )}
             <ContextRing />
             <ModelSelector
               models={models}
@@ -1369,83 +1343,6 @@ function ContextRing() {
         </div>
       )}
     </span>
-  );
-}
-
-// ── Thinking Level Button ──
-
-const ALL_THINKING_LEVELS: ThinkingLevel[] = ['off', 'auto', 'xhigh'];
-
-function ThinkingLevelButton({ level, onChange, modelXhigh }: {
-  level: ThinkingLevel;
-  onChange: (level: ThinkingLevel) => void;
-  modelXhigh: boolean;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  const availableLevels = useMemo(() => {
-    return ALL_THINKING_LEVELS.filter(lv => lv !== 'xhigh' || modelXhigh);
-  }, [modelXhigh]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const selectLevel = useCallback(async (next: ThinkingLevel) => {
-    onChange(next);
-    setOpen(false);
-    try {
-      await hanaFetch('/api/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ thinking_level: next }),
-      });
-    } catch (err) {
-      console.error('[thinking-level] save failed:', err);
-    }
-  }, [onChange]);
-
-  const tLevel = (key: string, fallback: string) => {
-    const v = t(key);
-    return v !== key ? v : fallback;
-  };
-
-  const isOff = level === 'off';
-
-  return (
-    <div className={'thinking-selector' + (open ? ' open' : '')} ref={ref}>
-      <button
-        className={`thinking-pill${isOff ? '' : ' active'}`}
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9 18h6" /><path d="M10 22h4" />
-          <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0018 8 6 6 0 006 8c0 1 .23 2.23 1.5 3.5.76.76 1.23 1.52 1.41 2.5" />
-          {isOff && <line x1="4" y1="4" x2="20" y2="20" strokeWidth="1.5" />}
-        </svg>
-      </button>
-      {open && (
-        <div className="thinking-dropdown">
-          {availableLevels.map(lv => (
-            <button
-              key={lv}
-              className={'thinking-option' + (lv === level ? ' active' : '')}
-              onClick={() => selectLevel(lv)}
-            >
-              <span className="thinking-option-name">{tLevel(`input.thinkingLevel.${lv}`, lv)}</span>
-              <span className="thinking-option-desc">{tLevel(`input.thinkingDesc.${lv}`, '')}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
