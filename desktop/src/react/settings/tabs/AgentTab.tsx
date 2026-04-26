@@ -494,6 +494,10 @@ export function AgentTab() {
       const payload = (evt as CustomEvent<any>)?.detail || {};
       const changedAgentId = String(payload.agentId || '').trim();
       if (changedAgentId && settingsAgentId && changedAgentId !== settingsAgentId) return;
+      if (payload.kind === 'delete-archived' && payload.path) {
+        setArchivedSessions((prev) => prev.filter((session) => session.path !== payload.path));
+        return;
+      }
       void loadSettingsConfig();
       void loadArchivedSessionsForAgent(settingsAgentId);
     };
@@ -558,8 +562,8 @@ export function AgentTab() {
         agentId: settingsAgentId || '',
         path: sessionPath,
       });
+      setArchivedSessions((prev) => prev.filter((session) => session.path !== sessionPath));
       showToast(t('settings.archivedSessions.deleteSuccess'), 'success');
-      await loadArchivedSessionsForAgent(settingsAgentId);
     } catch (err: any) {
       showToast(`${t('settings.archivedSessions.deleteFailed')}: ${err.message}`, 'error');
     } finally {
