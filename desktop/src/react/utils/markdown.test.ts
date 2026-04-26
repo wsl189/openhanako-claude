@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown } from './markdown';
+import { renderMarkdown, renderMarkdownForPreview, repairMarkdownHtml } from './markdown';
 
 describe('renderMarkdown CJK emphasis compatibility', () => {
   it('renders strong markdown when closing marker is followed by CJK text', () => {
     const html = renderMarkdown('思路： 用**重要性采样（Importance Sampling）**把On-policy变成Off-policy。');
     expect(html).toContain('<strong>重要性采样（Importance Sampling）</strong>把');
+  });
+
+  it('renders strong markdown in the agent reply pattern shown in chat', () => {
+    const html = renderMarkdown('核心创新是**双 MoE 结构**——在 Actor');
+    expect(html).toContain('核心创新是<strong>双 MoE 结构</strong>——在 Actor');
+  });
+
+  it('recovers strong markers split by invisible characters', () => {
+    const html = renderMarkdown('核心创新是*\u200B*双 MoE 结构*\u200B*——在 Actor');
+    expect(html).toContain('核心创新是<strong>双 MoE 结构</strong>——在 Actor');
   });
 
   it('renders emphasis markdown when closing marker is followed by CJK text', () => {
@@ -48,6 +58,12 @@ describe('renderMarkdown CJK emphasis compatibility', () => {
     expect(fenceCode).not.toContain('<strong>literal（code）</strong>');
   });
 
+  it('repairs cached html that still contains literal strong markers', () => {
+    const html = repairMarkdownHtml('<p>核心创新是**双 MoE 结构**——在 Actor</p><pre><code>**literal**</code></pre>');
+    expect(html).toContain('<p>核心创新是<strong>双 MoE 结构</strong>——在 Actor</p>');
+    expect(html).toContain('<pre><code>**literal**</code></pre>');
+  });
+
   it('renders latex fenced block as math instead of code block', () => {
     const html = renderMarkdown('```latex\nx_t = y + 1\n```');
     expect(html).toContain('katex');
@@ -64,5 +80,30 @@ describe('renderMarkdown CJK emphasis compatibility', () => {
     const html = renderMarkdown('示例：\n\n    const x = y + 1;\n    console.log(x);');
     expect(html).toContain('<pre><code>const x = y + 1;');
     expect(html).toContain('console.log(x);');
+  });
+
+  it('renders LaTeX bracket delimiters as math', () => {
+    const display = renderMarkdown('\\[\nL(\\theta)=x+1\n\\]');
+    expect(display).toContain('katex');
+    expect(display).not.toContain('\\[');
+
+    const inline = renderMarkdown('inline \\(x_t + 1\\) text');
+    expect(inline).toContain('katex');
+    expect(inline).not.toContain('\\(');
+  });
+
+  it('renders GitHub-style task lists', () => {
+    const html = renderMarkdown('- [x] done\n- [ ] todo');
+    expect(html).toContain('task-list-item');
+    expect(html).toContain('type="checkbox" disabled checked');
+    expect(html).toContain('type="checkbox" disabled');
+  });
+
+  it('uses the full markdown renderer for local file preview', () => {
+    const html = renderMarkdownForPreview('# Title\n\n| A | B |\n| - | - |\n| $x$ | <b>ok</b> |');
+    expect(html).toContain('<h1>Title</h1>');
+    expect(html).toContain('<table>');
+    expect(html).toContain('katex');
+    expect(html).toContain('<b>ok</b>');
   });
 });

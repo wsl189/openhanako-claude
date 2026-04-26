@@ -25,11 +25,17 @@ import { closePreview as closePreviewAction } from '../stores/artifact-actions';
 import { ArtifactEditor } from './ArtifactEditor';
 import type { Artifact } from '../types';
 
-const EDITABLE_TYPES = new Set(['markdown', 'code', 'csv']);
+const INLINE_EDITABLE_TYPES = new Set(['code', 'csv']);
+const DETACHABLE_EDIT_TYPES = new Set(['markdown', 'code', 'csv']);
 
 function isEditable(artifact: Artifact | null): boolean {
   if (!artifact) return false;
-  return !!artifact.filePath && EDITABLE_TYPES.has(artifact.type);
+  return !!artifact.filePath && INLINE_EDITABLE_TYPES.has(artifact.type);
+}
+
+function canDetachEditor(artifact: Artifact | null): boolean {
+  if (!artifact) return false;
+  return !!artifact.filePath && DETACHABLE_EDIT_TYPES.has(artifact.type);
 }
 
 function getEditorMode(artifact: Artifact): 'markdown' | 'code' | 'text' {
@@ -160,6 +166,7 @@ export function PreviewPanel() {
   const bodyRef = useRef<HTMLDivElement>(null);
   const artifact = artifacts.find(a => a.id === currentArtifactId) ?? null;
   const editable = isEditable(artifact);
+  const detachable = canDetachEditor(artifact);
 
   const closePreview = useCallback(() => {
     closePreviewAction();
@@ -359,7 +366,7 @@ export function PreviewPanel() {
               </svg>
               <span>{copyLabel ?? (window.t ?? ((p: string) => p))('attach.copy')}</span>
             </button>
-            {editable && (
+            {detachable && (
               <button className="preview-panel-action-btn" title="Open in window" onClick={handleDetach}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="15 3 21 3 21 9"></polyline>

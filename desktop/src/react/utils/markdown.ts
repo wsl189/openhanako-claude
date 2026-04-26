@@ -15,6 +15,7 @@ let _mdPreview: MarkdownIt | null = null;
 
 const CJK_CHAR_CLASS = '\u3400-\u9FFF\uF900-\uFAFF';
 const HAIR_SPACE = '\u200A';
+const INVISIBLE_MARKER_CHARS = '\u200B\u200C\u200D\u2060\uFEFF';
 const SPACE_LIKE_RE = /^[\s\u00A0\u3000]+|[\s\u00A0\u3000]+$/g;
 const ASTERISK_ENTITY_RE = /(?:&#42;|&#x2a;|&ast;)/gi;
 const UNDERSCORE_ENTITY_RE = /(?:&#95;|&#x5f;|&lowbar;)/gi;
@@ -30,11 +31,15 @@ const EMPHASIS_UNDERSCORE_RE = new RegExp(`(^|[^_])_([^_\\n]+?)_(?=[${CJK_CHAR_C
 const CODE_SPAN_RE = /(`+[^`]*`+)/g;
 const FENCE_RE = /^[ \t]*(```|~~~)/;
 const CJK_EMPHASIS_SPACER_RE = new RegExp(`(<\\/(?:strong|em)>)${HAIR_SPACE}(?=[${CJK_CHAR_CLASS}])`, 'g');
+const MARKDOWN_MARKER_INVISIBLE_RE = new RegExp(`([*_])[${INVISIBLE_MARKER_CHARS}]+(?=\\1)`, 'g');
 const MATH_FENCE_OPEN_RE = /^[ \t]*(```|~~~)\s*(math|latex|tex|katex)\s*$/i;
+const DISPLAY_MATH_OPEN_RE = /^[ \t]*\\\[[ \t]*$/;
+const DISPLAY_MATH_CLOSE_RE = /^[ \t]*\\\][ \t]*$/;
 const INDENTED_BLOCK_RE = /^(?: {4}|\t)/;
 const STRIP_INDENT_RE = /^(?: {4}|\t)/;
 const MATH_SIGNAL_RE = /(?:\\[A-Za-z]+|[=^_]|[α-ωΑ-Ωπθλεσμ]|(?:\b(?:min|max|argmin|argmax|clip|sum|prod|exp|log)\b))/i;
 const CODE_SIGNAL_RE = /(?:\b(?:const|let|var|function|class|import|export|return|if|for|while|switch|try|catch|console|def)\b|[{};]|=>)/;
+const TASK_MARKER_RE = /^\[([ xX])\]\s+/;
 
 /**
  * markdown-it 在部分 CJK 场景下会漏掉强调解析，例如：
@@ -42,7 +47,7 @@ const CODE_SIGNAL_RE = /(?:\b(?:const|let|var|function|class|import|export|retur
  * 这里先注入极细空格触发解析，再在 HTML 阶段移除。
  */
 function normalizeMarkdownForCjkEmphasis(src: string): string {
-  const lines = String(src || '').split(/(\r?\n)/);
+  const lines = String(src || '').replace(MARKDOWN_MARKER_INVISIBLE_RE, '$1').split(/(\r?\n)/);
   let inFence = false;
 
   for (let i = 0; i < lines.length; i++) {
@@ -94,6 +99,52 @@ function normalizeMarkdownForCjkEmphasis(src: string): string {
   }
 
   return lines.join('');
+}
+
+function repairStrongMarkersInTextSegment(text: string): string {
+  if (!text || (!text.includes('**') && !text.includes('__'))) return text;
+  return text
+    .replace(/(^|[^*])\*\*([^\n]*?)\*\*/g, (m, prefix: string, inner: string) => {
+      const trimmed = String(inner || '').replace(SPACE_LIKE_RE, '');
+      if (!trimmed || trimmed.includes('**')) return m;
+      return `${prefix}<strong>${trimmed}</strong>`;
+    })
+    .replace(/(^|[^_])__([^\n]*?)__/g, (m, prefix: string, inner: string) => {
+      const trimmed = String(inner || '').replace(SPACE_LIKE_RE, '');
+      if (!trimmed || trimmed.includes('__')) return m;
+      return `${prefix}<strong>${trimmed}</strong>`;
+    });
+}
+
+export function repairMarkdownHtml(html: string): string {
+  const raw = String(html || '');
+  if (!raw || (!raw.includes('**') && !raw.includes('__'))) return raw;
+
+  const parts = raw.split(/(<[^>]+>)/g);
+  const skipStack: string[] = [];
+  return parts.map((part) => {
+    if (!part) return part;
+    if (part.startsWith('<') && part.endsWith('>')) {
+      const close = part.match(/^<\/\s*([a-zA-Z0-9-]+)/);
+      if (close) {
+        const tag = close[1].toLowerCase();
+        const idx = skipStack.lastIndexOf(tag);
+        if (idx >= 0) skipStack.splice(idx, 1);
+        return part;
+      }
+
+      const open = part.match(/^<\s*([a-zA-Z0-9-]+)/);
+      if (open && !/\/\s*>$/.test(part)) {
+        const tag = open[1].toLowerCase();
+        if (['code', 'pre', 'script', 'style', 'textarea'].includes(tag)) {
+          skipStack.push(tag);
+        }
+      }
+      return part;
+    }
+    if (skipStack.length > 0) return part;
+    return repairStrongMarkersInTextSegment(part);
+  }).join('');
 }
 
 function isFenceCloseLine(line: string, marker: string): boolean {
@@ -179,6 +230,89 @@ function normalizeMarkdownMathBlocks(src: string): string {
   return out.join('\n');
 }
 
+function normalizeMathDelimitersInInlineText(text: string): string {
+  if (!text || (!text.includes('\\(') && !text.includes('\\['))) return text;
+  const chunks = text.split(CODE_SPAN_RE);
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    if (/^`+[^`]*`+$/.test(chunk)) continue;
+    chunks[i] = chunk
+      .replace(/\\\[([^\n]+?)\\\]/g, (_m, body: string) => `$$${body}$$`)
+      .replace(/\\\((.+?)\\\)/g, (_m, body: string) => `$${body}$`);
+  }
+  return chunks.join('');
+}
+
+/**
+ * KaTeX 插件只识别 $...$ / $$...$$。这里兼容常见 LaTeX 分隔符：
+ * \[...\] / \(...\)，并避开代码块与行内代码。
+ */
+function normalizeMarkdownMathDelimiters(src: string): string {
+  const lines = String(src || '').split(/\r?\n/);
+  const out: string[] = [];
+  let inFence = false;
+
+  for (const line of lines) {
+    if (FENCE_RE.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    if (DISPLAY_MATH_OPEN_RE.test(line) || DISPLAY_MATH_CLOSE_RE.test(line)) {
+      out.push('$$');
+      continue;
+    }
+    out.push(normalizeMathDelimitersInInlineText(line));
+  }
+
+  return out.join('\n');
+}
+
+function taskListsPlugin(md: MarkdownIt): void {
+  md.core.ruler.after('inline', 'hanako_task_lists', (state) => {
+    const tokens = state.tokens;
+    for (let i = 2; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.type !== 'inline') continue;
+      if (tokens[i - 1]?.type !== 'paragraph_open') continue;
+      if (tokens[i - 2]?.type !== 'list_item_open') continue;
+
+      const children = token.children;
+      const first = children?.[0];
+      if (!first || first.type !== 'text') continue;
+
+      const match = first.content.match(TASK_MARKER_RE);
+      if (!match) continue;
+
+      const checked = match[1].toLowerCase() === 'x';
+      first.content = first.content.slice(match[0].length);
+
+      const checkbox = new state.Token('html_inline', '', 0);
+      checkbox.content = `<input class="task-list-item-checkbox" type="checkbox" disabled${checked ? ' checked' : ''}> `;
+      children.unshift(checkbox);
+
+      tokens[i - 2].attrJoin('class', 'task-list-item');
+      for (let j = i - 3; j >= 0; j--) {
+        if (tokens[j].type === 'bullet_list_open' || tokens[j].type === 'ordered_list_open') {
+          tokens[j].attrJoin('class', 'contains-task-list');
+          break;
+        }
+        if (tokens[j].type === 'bullet_list_close' || tokens[j].type === 'ordered_list_close') break;
+      }
+    }
+  });
+}
+
+function useMarkdownExtensions(md: MarkdownIt): MarkdownIt {
+  md.use(mk);
+  md.use(taskListsPlugin);
+  return md;
+}
+
 /** 获取默认 md 实例（html: false, katex 插件） */
 export function getMd(): MarkdownIt {
   if (_md) return _md;
@@ -188,8 +322,7 @@ export function getMd(): MarkdownIt {
     linkify: true,
     typographer: true,
   });
-  _md.use(mk);
-  return _md;
+  return useMarkdownExtensions(_md);
 }
 
 /** 预览用 markdown 实例：允许内联 HTML（用于本地文件预览） */
@@ -201,8 +334,7 @@ function getMdPreview(): MarkdownIt {
     linkify: true,
     typographer: true,
   });
-  _mdPreview.use(mk);
-  return _mdPreview;
+  return useMarkdownExtensions(_mdPreview);
 }
 
 function sanitizePreviewHtml(html: string): string {
@@ -243,15 +375,15 @@ export function getMdWithOpts(opts: Parameters<typeof markdownit>[0]): MarkdownI
 }
 
 export function renderMarkdown(src: string): string {
-  const normalizedMath = normalizeMarkdownMathBlocks(src);
+  const normalizedMath = normalizeMarkdownMathDelimiters(normalizeMarkdownMathBlocks(src));
   const normalized = normalizeMarkdownForCjkEmphasis(normalizedMath);
   const html = getMd().render(normalized);
-  return html.replace(CJK_EMPHASIS_SPACER_RE, '$1');
+  return repairMarkdownHtml(html.replace(CJK_EMPHASIS_SPACER_RE, '$1'));
 }
 
 export function renderMarkdownForPreview(src: string): string {
-  const normalizedMath = normalizeMarkdownMathBlocks(src);
+  const normalizedMath = normalizeMarkdownMathDelimiters(normalizeMarkdownMathBlocks(src));
   const normalized = normalizeMarkdownForCjkEmphasis(normalizedMath);
   const html = getMdPreview().render(normalized);
-  return sanitizePreviewHtml(html).replace(CJK_EMPHASIS_SPACER_RE, '$1');
+  return repairMarkdownHtml(sanitizePreviewHtml(html).replace(CJK_EMPHASIS_SPACER_RE, '$1'));
 }

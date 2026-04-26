@@ -7,6 +7,7 @@
 
 import { memo, useRef, useEffect } from 'react';
 import { injectCopyButtons } from '../../utils/format';
+import { repairMarkdownHtml } from '../../utils/markdown';
 
 interface Props {
   html: string;
@@ -15,16 +16,17 @@ interface Props {
 
 export const MarkdownContent = memo(function MarkdownContent({ html, className }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const safeHtml = repairMarkdownHtml(html);
 
   useEffect(() => {
     if (ref.current) injectCopyButtons(ref.current);
-  }, [html]);
+  }, [safeHtml]);
 
   return (
     <div
       ref={ref}
       className={className || 'md-content'}
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={{ __html: safeHtml }}
     />
   );
 });

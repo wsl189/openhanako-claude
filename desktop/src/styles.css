@@ -2255,6 +2255,16 @@ html[data-platform="linux"] .tb-toggle-right {
     margin-bottom: 0;
 }
 
+.md-content .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.25em 0.1em;
+}
+
+.md-content .katex-block {
+    margin: 1em 0;
+}
+
 /* 行内代码 */
 .md-content code {
     font-family: var(--font-mono);
@@ -2337,7 +2347,7 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .md-content li.task-list-item {
     list-style: none;
-    margin-left: -1.2em;
+    margin-left: -0.2em;
 }
 
 .md-content li.task-list-item input[type="checkbox"] {
@@ -2345,6 +2355,10 @@ html[data-platform="linux"] .tb-toggle-right {
     vertical-align: middle;
     position: relative;
     top: -1px;
+}
+
+.md-content .contains-task-list {
+    list-style-position: outside;
 }
 
 /* 链接 */
@@ -14350,6 +14364,9 @@ a.about-link:hover {
     padding: var(--space-md) var(--space-lg);
     line-height: 1.7;
     font-family: var(--font-serif);
+    max-width: 760px;
+    min-height: 100%;
+    margin: 0 auto;
 }
 
 .preview-panel-body .preview-markdown h1 {
