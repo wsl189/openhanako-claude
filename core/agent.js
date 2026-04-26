@@ -11,7 +11,6 @@ import { FactStore } from "../lib/memory/fact-store.js";
 import { SessionSummaryManager } from "../lib/memory/session-summary.js";
 import { createMemoryTicker } from "../lib/memory/memory-ticker.js";
 import { createMemorySearchTool } from "../lib/memory/memory-search.js";
-import { createTodoTool } from "../lib/tools/todo.js";
 import { createDeskManager } from "../lib/desk/desk-manager.js";
 import { CronStore } from "../lib/desk/cron-store.js";
 import { createCronTool } from "../lib/tools/cron-tool.js";
@@ -19,7 +18,6 @@ import { createPresentFilesTool } from "../lib/tools/output-file-tool.js";
 import { createArtifactTool } from "../lib/tools/artifact-tool.js";
 import { createChannelTool } from "../lib/tools/channel-tool.js";
 import { createAskAgentTool } from "../lib/tools/ask-agent-tool.js";
-import { createDmTool } from "../lib/tools/dm-tool.js";
 import { createBrowserTool } from "../lib/tools/browser-tool.js";
 import { createComputerUseTool } from "../lib/tools/computer-use-tool.js";
 import {
@@ -30,10 +28,9 @@ import {
 import { createPinnedMemoryTools } from "../lib/tools/pinned-memory.js";
 import { createExperienceTools } from "../lib/tools/experience.js";
 import { createNotifyTool } from "../lib/tools/notify-tool.js";
-import { createDelegateTool } from "../lib/tools/delegate-tool.js";
 import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
 import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
-import { READ_ONLY_BUILTIN_TOOLS } from "./config-coordinator.js";
+import { createPdf2MdTool } from "../lib/tools/pdf2md-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { resolveBrowserProvider } from "./browser-provider.js";
 import { t } from "../server/i18n.js";
@@ -74,7 +71,6 @@ export class Agent {
     this._summaryManager = null;
     this._memoryTicker = null;
     this._memorySearchTool = null;
-    this._todoTool = null;
     this._pinnedMemoryTools = [];
     this._experienceTools = [];
     this._memoryMasterEnabled = true;   // agent 级别总开关（config.yaml memory.enabled）
@@ -96,6 +92,7 @@ export class Agent {
     this._notifyTool = null;
     this._describeImagesTool = null;
     this._generateImagesTool = null;
+    this._pdf2MdTool = null;
   }
 
   // ════════════════════════════
@@ -234,7 +231,6 @@ export class Agent {
     // 7. 创建工具（记忆 + 通用）
     log(`  [agent] 7. 创建工具...`);
     this._memorySearchTool = createMemorySearchTool(this._factStore);
-    this._todoTool = createTodoTool();
     this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir);
     this._experienceTools = createExperienceTools(this.agentDir);
 
@@ -320,8 +316,11 @@ export class Agent {
         throw new Error(t("error.providerMissingCreds", { provider: "minimax/modelscope" }));
       },
     });
+    this._pdf2MdTool = createPdf2MdTool({
+      getConfig: () => this._config?.tools?.pdf2md || {},
+    });
 
-    // 9. 频道工具 + 私信工具（需要 channelsDir 和 agentsDir）
+    // 9. 频道工具（需要 channelsDir 和 agentsDir）
     if (this.channelsDir && this.agentsDir) {
       const agentId = path.basename(this.agentDir);
       const listAgents = () => {
@@ -353,24 +352,7 @@ export class Agent {
         listAgents,
         engine: this._engine,
       });
-
-      this._dmTool = createDmTool({
-        agentId,
-        agentsDir: path.dirname(this.agentDir),
-        listAgents,
-        onDmSent: (fromId, toId) => this._dmSentHandler?.(fromId, toId),
-      });
     }
-
-    // 10. delegate 工具（sub-agent 委派）
-    this._delegateTool = createDelegateTool({
-      executeIsolated: (prompt, opts) => {
-        if (!this._engine) throw new Error("delegate 调用失败：engine 未初始化");
-        return this._engine.executeIsolated(prompt, opts);
-      },
-      resolveUtilityModel: () => this._memoryModel || this._utilityModel || null,
-      readOnlyBuiltinTools: READ_ONLY_BUILTIN_TOOLS,
-    });
 
     // 12. 组装 system prompt
     log(`  [agent] 9. buildSystemPrompt...`);
@@ -433,20 +415,18 @@ export class Agent {
       this._memorySearchTool,
       ...this._pinnedMemoryTools,
       ...this._experienceTools,
-      this._todoTool,
       this._cronTool,
       this._presentFilesTool,
       this._artifactTool,
       this._channelTool,
       this._askAgentTool,
-      this._dmTool,
       this._browserTool,
       this._computerUseTool,
       ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
+      this._pdf2MdTool,
       this._notifyTool,
-      this._delegateTool,
     ].filter(Boolean);
   }
   get tools() {
@@ -457,20 +437,18 @@ export class Agent {
     ] : [];
     return [
       ...memTools,
-      this._todoTool,
       this._cronTool,
       this._presentFilesTool,
       this._artifactTool,
       this._channelTool,
       this._askAgentTool,
-      this._dmTool,
       this._browserTool,
       this._computerUseTool,
       ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
+      this._pdf2MdTool,
       this._notifyTool,
-      this._delegateTool,
     ].filter(Boolean);
   }
 
@@ -786,6 +764,7 @@ export class Agent {
             `当前会话可用的外部 MCP 工具前缀（仅以下）：${formatToolList(externalMcpTools)}`,
             "当用户问“你有哪些工具”时，必须只基于以上三行回答。",
             "不要把未出现在列表里的工具说成可用；如果用户点名了未启用工具，明确回复“当前不可用”。",
+            "不要直接用 Read 工具读取 PDF 或图片文件的内容；PDF 应使用 pdf2md，图片应使用 describe_images 或可用的图片理解 MCP 工具。",
           ].join("\n")
         : [
             "",
@@ -796,10 +775,11 @@ export class Agent {
             `External MCP tool prefixes available in this session (only these): ${formatToolList(externalMcpTools)}`,
             "When the user asks what tools you have, answer strictly from the three lines above.",
             "Do not claim availability for tools not listed; if asked about one, clearly say it is unavailable now.",
+            "Do not use the Read tool to read PDF or image file contents directly; use pdf2md for PDFs, and describe_images or an available image-understanding MCP tool for images.",
           ].join("\n")
       );
 
-      const hasSearchTool = hasTool("web_search");
+      const hasSearchTool = hasMiniMaxMcpWebSearch;
       const hasEmbeddedBrowser = hasTool("browser");
       const hasClaudeInChrome = browserProvider?.useClaudeInChrome === true;
       if (!hasSearchTool && hasEmbeddedBrowser) {
@@ -848,6 +828,12 @@ export class Agent {
         parts.push(isZh
           ? "当用户要求生成图片（文生图或图生图）时，优先调用 generate_images 工具，不要凭空声称“已生成”。图生图可使用当前会话里用户上传的图片作为参考。调用 generate_images 后不要再重复调用 present_files 展示同一图片，除非用户明确要求展示文件卡片/链接。"
           : "When the user asks to generate images (text-to-image or image-to-image), use the generate_images tool. Do not claim an image was generated without calling it. For image-to-image, use user-uploaded images in the current session as references. After calling generate_images, do not call present_files again for the same images unless the user explicitly asks for file cards/links.");
+      }
+
+      if (hasTool("pdf2md")) {
+        parts.push(isZh
+          ? "当用户要求读取、理解、摘录、总结或转换 PDF，尤其是扫描版/图片型 PDF 时，直接调用 pdf2md（Claude 中可能显示为 mcp__hanako__pdf2md）将 PDF 转成 Markdown，再基于转换结果回答。pdf2md 的服务地址由 Hanako 内部配置，可能是远程或公网地址；不要用 Bash/curl 访问 127.0.0.1:9280 来判断服务是否可用，也不要因为本地 9280 不通就改用 pypdf。不要只凭文件名猜测 PDF 内容。"
+          : "When the user asks to read, understand, excerpt, summarize, or convert a PDF, especially scanned/image-based PDFs, directly call pdf2md (it may appear as mcp__hanako__pdf2md in Claude) to convert it to Markdown first, then answer from the converted content. The pdf2md service URL is configured internally by Hanako and may be remote or public; do not use Bash/curl against 127.0.0.1:9280 to decide whether it is available, and do not fall back to pypdf just because local port 9280 is unavailable. Do not infer PDF contents from the filename alone.");
       }
     }
 

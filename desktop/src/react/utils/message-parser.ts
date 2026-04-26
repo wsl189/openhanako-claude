@@ -202,8 +202,6 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
   if (!args) return '';
   const tool = String(name || '').toLowerCase();
   switch (tool) {
-    case 'install_skill':
-      return extractGenericDetail(args);
     case 'read':
     case 'write':
     case 'edit':
@@ -241,19 +239,12 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
         (args.path ? ` in ${truncatePath(args.path as string)}` : '');
     case 'ls':
       return truncatePath((args.path || '') as string);
-    case 'web_fetch':
-      return extractHostname((args.url || '') as string);
-    case 'web_search':
-      return truncateHead(((args.query || args.q || '') as string), 40);
     case 'browser':
       return extractHostname((args.url || '') as string) || truncateHead((args.action || '') as string, 40);
     case 'search_memory':
       return truncateHead((args.query || '') as string, 40);
     case 'generate_images':
       return truncateHead((args.prompt || '') as string, 40);
-    case 'claude_core':
-      return truncateHead(((args.task || args.prompt || '') as string), 48)
-        || truncatePath((args.cwd || '') as string);
     default:
       return extractGenericDetail(args);
   }

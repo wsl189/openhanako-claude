@@ -351,24 +351,7 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
               done: true,
               success: matched ? matched.success !== false : true,
             };
-            if (tc.name === 'update_settings' && tc.args) {
-              const a = tc.args as Record<string, string>;
-              // 仅 apply 调用（或旧格式无 action）重建卡片，search 调用跳过
-              if (a.action === 'apply' || (!a.action && a.key && a.value)) {
-                blocks.push({
-                  type: 'settings_confirm',
-                  confirmId: '',
-                  settingKey: a.key || '',
-                  cardType: (a.key === 'sandbox' || a.key === 'memory.enabled' ? 'toggle' : 'list') as any,
-                  currentValue: '',
-                  proposedValue: a.value || '',
-                  label: a.key || '',
-                  status: 'confirmed',
-                } as any);
-              } else {
-                normalTools.push(toolEntry);
-              }
-            } else if (tc.name === 'cron' && tc.args && (tc.args as any).action === 'add') {
+            if (tc.name === 'cron' && tc.args && (tc.args as any).action === 'add') {
               // 重建 cron 确认卡片（已完成状态）
               const a = tc.args as Record<string, any>;
               blocks.push({

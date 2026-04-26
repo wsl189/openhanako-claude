@@ -106,7 +106,6 @@ const BUILTIN_TOOL_DESC_KEYS: Record<string, string> = {
   bash: 'settings.agent.builtinBashDesc',
 };
 const CUSTOM_TOOL_HINT_KEYS: Record<string, string> = {
-  web_search: 'toolDef.webSearch.label',
   browser: 'toolDef.browser.label',
   computer_use: 'toolDef.computerUse.label',
   minimax_mcp_web_search: 'toolDef.minimaxMcpWebSearch.label',
@@ -116,22 +115,17 @@ const CUSTOM_TOOL_HINT_KEYS: Record<string, string> = {
   unpin_memory: 'toolDef.pinnedMemory.unpinLabel',
   recall_experience: 'toolDef.experience.recallLabel',
   record_experience: 'toolDef.experience.recordLabel',
-  todo: 'toolDef.todo.label',
   cron: 'toolDef.cron.label',
   notify: 'toolDef.notify.label',
   present_files: 'toolDef.outputFile.label',
   create_artifact: 'toolDef.artifact.label',
   channel: 'toolDef.channel.label',
   ask_agent: 'toolDef.askAgent.label',
-  dm: 'toolDef.dm.label',
-  message_agent: 'toolDef.messageAgent.label',
   describe_images: 'toolDef.describeImages.label',
   generate_images: 'toolDef.generateImages.label',
-  delegate: 'toolDef.delegate.label',
-  install_skill: 'toolDef.installSkill.label',
+  pdf2md: 'toolDef.pdf2md.label',
 };
 const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
-  web_search: 'toolDef.webSearch.description',
   browser: 'toolDef.browser.description',
   computer_use: 'toolDef.computerUse.description',
   minimax_mcp_web_search: 'toolDef.minimaxMcpWebSearch.description',
@@ -141,19 +135,15 @@ const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
   unpin_memory: 'toolDef.pinnedMemory.unpinDescription',
   recall_experience: 'toolDef.experience.recallDescription',
   record_experience: 'toolDef.experience.recordDescription',
-  todo: 'toolDef.todo.description',
   cron: 'toolDef.cron.description',
   notify: 'toolDef.notify.description',
   present_files: 'toolDef.outputFile.description',
   create_artifact: 'toolDef.artifact.description',
   channel: 'toolDef.channel.description',
   ask_agent: 'toolDef.askAgent.description',
-  dm: 'toolDef.dm.description',
-  message_agent: 'toolDef.messageAgent.description',
   describe_images: 'toolDef.describeImages.description',
   generate_images: 'toolDef.generateImages.description',
-  delegate: 'toolDef.delegate.description',
-  install_skill: 'toolDef.installSkill.description',
+  pdf2md: 'toolDef.pdf2md.description',
 };
 
 function getBuiltinDisplayName(name: string): string {

@@ -519,19 +519,14 @@ append 的来源：
 - `create_artifact`
 - `channel`
 - `ask_agent`
-- `dm`
 - `browser`
-- `update_settings`
-- `delegate`
-- `claude_core`
 - `describe_images`
 - `generate_images`
 
 其中要特别注意：
 
 - `todo`
-  - 优先切换为 Claude builtin `TodoWrite`
-  - 如为了兼容前端短期保留旧名，则只做兼容壳，不再依赖 Pi session branch
+  - 已切换为 Claude builtin `TodoWrite`，不再保留 Hanako custom tool
 
 ## 7.5 沙箱与权限
 

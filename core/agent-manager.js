@@ -476,23 +476,6 @@ export class AgentManager {
       agentsDir: this._d.agentsDir,
     });
     ag._engine = this._d.getEngine?.() || null;
-    ag._onInstallCallback = async (skillName) => {
-      const skills = this._d.getSkills();
-      // install_skill 工具会写入 learned-skills，这里同步复制到当前 agent 的 skills 目录，
-      // 让 SDK Skill discovery 与 /skill 读取都走 agent 私有 skills。
-      const learnedDir = path.join(this.agent.agentDir, "learned-skills", skillName);
-      const agentSkillsDir = path.join(this.agent.agentDir, "skills", skillName);
-      if (fs.existsSync(learnedDir) && !fs.existsSync(path.join(agentSkillsDir, "SKILL.md"))) {
-        fs.mkdirSync(path.dirname(agentSkillsDir), { recursive: true });
-        fs.cpSync(learnedDir, agentSkillsDir, { recursive: true });
-      }
-      await skills.reload(this._d.getResourceLoader?.(), this._agents);
-      const enabled = new Set(this.agent.config?.skills?.enabled || []);
-      enabled.add(skillName);
-      // updateConfig 通过 engine 层面调用
-      this.agent.updateConfig({ skills: { enabled: [...enabled] } });
-      skills.syncAgentSkills(this.agent);
-    };
     ag._notifyHandler = (title, body, opts = {}) =>
       this._d.getHub()?.notify?.({
         title,

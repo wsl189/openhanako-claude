@@ -3,7 +3,7 @@ import { HanaEngine } from "./engine.js";
 
 function createEngineLikeForPermissions({
   toolsConfig = undefined,
-  customCatalog = ["web_fetch", "todo_write", "ask_agent"],
+  customCatalog = ["cron", "notify", "ask_agent"],
   builtinOptional = ["Write", "Edit", "Bash", "Skill"],
 } = {}) {
   const agent = {
@@ -82,7 +82,7 @@ describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
     });
 
     const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
-    expect(permission.tools.custom_enabled).toEqual(["web_fetch", "todo_write", "ask_agent"]);
+    expect(permission.tools.custom_enabled).toEqual(["cron", "notify", "ask_agent"]);
   });
 
   it("disables all custom tools when custom_enabled is an empty array", () => {
@@ -100,12 +100,12 @@ describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
   it("treats non-empty custom_enabled as whitelist", () => {
     const engineLike = createEngineLikeForPermissions({
       toolsConfig: {
-        custom_enabled: ["todo_write", "unknown_tool"],
+          custom_enabled: ["notify", "unknown_tool"],
       },
     });
 
     const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
-    expect(permission.tools.custom_enabled).toEqual(["todo_write"]);
+    expect(permission.tools.custom_enabled).toEqual(["notify"]);
   });
 
   it("filters stale tool names out of whitelist without fallback", () => {

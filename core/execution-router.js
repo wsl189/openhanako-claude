@@ -105,7 +105,7 @@ export class ExecutionRouter {
 
   /**
    * 向后兼容的 resolveUtilityConfig 接口
-   * 现有 6 处消费方（hub/channel-router, install-skill, llm-utils 等）都调这个
+   * 现有消费方（hub/channel-router, llm-utils 等）都调这个
    * 返回结构与原 ModelManager.resolveUtilityConfig() 完全一致
    *
    * @param {object} agentConfig

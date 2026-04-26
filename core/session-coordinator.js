@@ -30,8 +30,8 @@ const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]/i;
 export const PATROL_TOOLS_DEFAULT = [
   "search_memory", "pin_memory", "unpin_memory",
   "recall_experience", "record_experience",
-  "todo", "cron", "notify",
-  "present_files", "message_agent", "channel",
+  "cron", "notify",
+  "present_files", "channel",
 ];
 
 function getSteerPrefix() {

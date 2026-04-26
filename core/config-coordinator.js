@@ -22,7 +22,7 @@ import { normalizeModelRef } from "./model-ref.js";
 
 const log = createModuleLogger("config");
 
-/** 只读内建工具白名单（delegate 等场景） */
+/** 只读内建工具白名单 */
 export const READ_ONLY_BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
 
 /** 全局共享模型字段 → preferences key 映射 */

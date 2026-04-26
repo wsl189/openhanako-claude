@@ -66,6 +66,10 @@ claude:
 # 不写 builtin_enabled 时，默认放开全部 Claude 内建工具；若写入数组则按白名单控制。
 tools:
   custom_enabled: []                 # 留空表示允许该 agent 的全部 custom tools；非空表示白名单
+  pdf2md:
+    base_url: ""                     # MinerU PDF2MD 服务地址，如 https://xxx.cpolar.cn 或 http://127.0.0.1:9280
+    api_key: ""                      # 可选；若服务端设置 PDF2MD_API_KEY，这里填同一个值
+    timeout_ms: 3600000              # PDF 转换最长等待时间，默认 1 小时
 
 # 频道系统（agent 间协作通信）
 channels:

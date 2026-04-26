@@ -30,14 +30,6 @@ describe('extractToolDetail', () => {
     expect(detail).toBe('example.com');
   });
 
-  it('extracts task summary for claude_core tool', () => {
-    const detail = extractToolDetail('claude_core', {
-      task: 'Refactor the API layer and add retry logic',
-      cwd: '/Users/tc/PythonProject/openhanako',
-    });
-    expect(detail).toContain('Refactor the API layer');
-  });
-
   it('shows write line-count detail for Write tool', () => {
     const detail = extractToolDetail('Write', {
       file_path: '/Users/tc/Desktop/blog.html',

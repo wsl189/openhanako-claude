@@ -223,12 +223,11 @@ describe("buildClaudeRuntimeConfig env", () => {
       toolProfile: {
         tools: {
           builtin_enabled: ["Read", "Glob"],
-          custom_enabled: ["web_fetch", "todo", "notify"],
+          custom_enabled: ["cron", "notify"],
         },
       },
       customTools: [
-        { name: "web_fetch", parameters: { type: "object", properties: {} } },
-        { name: "todo", parameters: { type: "object", properties: {} } },
+        { name: "cron", parameters: { type: "object", properties: {} } },
         { name: "notify", parameters: { type: "object", properties: {} } },
       ],
     });
@@ -238,7 +237,7 @@ describe("buildClaudeRuntimeConfig env", () => {
       "Glob",
       "mcp__hanako__*",
     ]);
-    expect(config.diagnostics?.customToolsLoaded).toEqual(["web_fetch", "todo", "notify"]);
+    expect(config.diagnostics?.customToolsLoaded).toEqual(["cron", "notify"]);
     expect(config.diagnostics?.allowedTools).toEqual([
       "Read",
       "Glob",
@@ -251,12 +250,12 @@ describe("buildClaudeRuntimeConfig env", () => {
       toolProfile: {
         tools: {
           builtin_enabled: ["Read"],
-          custom_enabled: ["computer_use", "todo"],
+          custom_enabled: ["computer_use", "notify"],
         },
       },
       customTools: [
         { name: "computer_use", parameters: { type: "object", properties: {} } },
-        { name: "todo", parameters: { type: "object", properties: {} } },
+        { name: "notify", parameters: { type: "object", properties: {} } },
       ],
     });
 
@@ -266,7 +265,7 @@ describe("buildClaudeRuntimeConfig env", () => {
       "mcp__hanako__*",
       "mcp__computer_use__*",
     ]);
-    expect(config.diagnostics?.customToolsLoaded).toEqual(["todo"]);
+    expect(config.diagnostics?.customToolsLoaded).toEqual(["notify"]);
     expect(config.diagnostics?.computerUseAllowedTools).toEqual(["mcp__computer_use__*"]);
     expect(config.diagnostics?.useComputerUse).toBe(true);
   });
@@ -276,13 +275,13 @@ describe("buildClaudeRuntimeConfig env", () => {
       toolProfile: {
         tools: {
           builtin_enabled: ["Read"],
-          custom_enabled: ["minimax_mcp_web_search", "todo"],
+          custom_enabled: ["minimax_mcp_web_search", "notify"],
         },
       },
       customTools: [
         { name: "minimax_mcp_web_search", parameters: { type: "object", properties: {} } },
         { name: "minimax_mcp_understand_image", parameters: { type: "object", properties: {} } },
-        { name: "todo", parameters: { type: "object", properties: {} } },
+        { name: "notify", parameters: { type: "object", properties: {} } },
       ],
     });
 
@@ -293,7 +292,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     });
     expect(config.options.allowedTools).toContain("mcp__MiniMax__web_search");
     expect(config.options.allowedTools).not.toContain("mcp__MiniMax__understand_image");
-    expect(config.diagnostics?.customToolsLoaded).toEqual(["todo"]);
+    expect(config.diagnostics?.customToolsLoaded).toEqual(["notify"]);
     expect(config.diagnostics?.enabledMiniMaxMcpTools).toEqual(["web_search"]);
     expect(config.diagnostics?.useMiniMaxMcp).toBe(true);
 
@@ -341,18 +340,18 @@ describe("buildClaudeRuntimeConfig env", () => {
           return [
             "tool-aware no-memory append",
             "Standard Claude tools available in this session (only these): Skill / Read",
-            "Hanako/MCP tools available in this session (only these): todo",
+            "Hanako/MCP tools available in this session (only these): notify",
           ].join("\n");
         },
       },
       toolProfile: {
         tools: {
           builtin_enabled: ["Skill", "Read"],
-          custom_enabled: ["todo"],
+          custom_enabled: ["notify"],
         },
       },
       customTools: [
-        { name: "todo", parameters: { type: "object", properties: {} } },
+        { name: "notify", parameters: { type: "object", properties: {} } },
       ],
     });
 
@@ -364,7 +363,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.systemPrompt.append).toContain("tool-aware no-memory append");
     expect(config.options.systemPrompt.append).toContain("Skill / Read");
     expect(config.options.allowedTools).toEqual(["Skill", "Read", "mcp__hanako__*"]);
-    expect(config.diagnostics?.customToolsLoaded).toEqual(["todo"]);
+    expect(config.diagnostics?.customToolsLoaded).toEqual(["notify"]);
   });
 
   it("uses personality-only prompt for noMemory sessions when tools are disabled", () => {
@@ -382,11 +381,11 @@ describe("buildClaudeRuntimeConfig env", () => {
       toolProfile: {
         tools: {
           builtin_enabled: ["Skill", "Read"],
-          custom_enabled: ["todo"],
+          custom_enabled: ["notify"],
         },
       },
       customTools: [
-        { name: "todo", parameters: { type: "object", properties: {} } },
+        { name: "notify", parameters: { type: "object", properties: {} } },
       ],
     });
 

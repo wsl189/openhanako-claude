@@ -14,7 +14,7 @@ import { spawn, execFileSync } from "child_process";
 import { createRequire } from "module";
 import { extractZip } from "../../lib/extract-zip.js";
 import { saveConfig } from "../../lib/memory/config-loader.js";
-import { sanitizeSkillName } from "../../lib/tools/install-skill.js";
+import { sanitizeSkillName } from "../../lib/skills/skill-name.js";
 import { t } from "../i18n.js";
 
 const CLAWHUB_JOB_KEEP_MS = 30 * 60_000;
