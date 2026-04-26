@@ -629,6 +629,7 @@
       "builtinLocked": "必开工具，不能关闭",
       "toolsExpand": "展开",
       "toolsCollapse": "收起",
+      "toolsSelectAll": "全部启用",
       "builtinReadLabel": "读取文件",
       "builtinGrepLabel": "文本搜索",
       "builtinFindLabel": "查找文件",

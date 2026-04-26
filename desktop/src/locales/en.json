@@ -629,6 +629,7 @@
       "builtinLocked": "Required tool, cannot disable",
       "toolsExpand": "Expand",
       "toolsCollapse": "Collapse",
+      "toolsSelectAll": "Enable all",
       "builtinReadLabel": "Read File",
       "builtinGrepLabel": "Text Search",
       "builtinFindLabel": "Find Files",

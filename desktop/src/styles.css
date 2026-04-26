@@ -9343,6 +9343,21 @@ body.resizing .jian-sidebar-inner {
     margin-top: 6px;
 }
 
+.agent-tool-bulk-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 0 8px;
+    margin-bottom: 3px;
+    border-bottom: 1px solid rgba(var(--accent-rgb), 0.12);
+}
+
+.agent-tool-bulk-label {
+    font-size: 0.74rem;
+    color: var(--text-muted);
+}
+
 .agent-tool-item {
     position: relative;
     padding: 5px 0;
