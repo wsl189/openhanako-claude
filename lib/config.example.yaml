@@ -57,11 +57,6 @@ search:
 skills:
   enabled: []                        # 启用的 skill 名称，如 ["pdf", "literary-craft"]
 
-# 沙盒（per-agent）
-sandbox:
-  mode: full-access                  # standard(严格) / balanced(平衡) / full-access(宽松)
-  path_rules: []                     # 额外路径白名单（绝对路径），每项: { path, access: read_only|read_write }
-
 # Claude 运行权限（per-agent）
 claude:
   permission_strategy: auto_allow    # auto_allow(默认放行) / none(按运行时策略)

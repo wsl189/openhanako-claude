@@ -26,6 +26,24 @@ function createEngineLikeForPermissions({
 }
 
 describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
+  it("forces full-access sandbox mode regardless of legacy preferences or agent config", () => {
+    const engineLike = createEngineLikeForPermissions();
+    engineLike.agent.config.sandbox = {
+      mode: "standard",
+      path_rules: [{ path: "/tmp/extra", access: "read_write" }],
+    };
+    engineLike._readPreferences = () => ({
+      sandbox: {
+        mode: "balanced",
+      },
+    });
+    engineLike._fallbackSandboxMode = HanaEngine.prototype._fallbackSandboxMode;
+
+    const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
+    expect(permission.sandbox.mode).toBe("full-access");
+    expect(permission.sandbox.path_rules).toEqual([]);
+  });
+
   it("treats legacy builtin default config as unrestricted builtin set", () => {
     const engineLike = createEngineLikeForPermissions({
       toolsConfig: {

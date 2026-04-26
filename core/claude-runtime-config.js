@@ -52,9 +52,113 @@ const MINIMAX_MCP_TOOL_BY_SWITCH = {
   [MINIMAX_MCP_WEB_SEARCH_SWITCH]: "web_search",
   [MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH]: "understand_image",
 };
+const CLAUDE_PROXY_ENV_KEYS = [
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+];
+const CLAUDE_NO_PROXY_ENV_KEYS = [
+  "no_proxy",
+  "NO_PROXY",
+];
+const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:7897";
+const CLAUDE_PROXY_UNSET_COMMAND = [
+  `unset ${CLAUDE_PROXY_ENV_KEYS.join(" ")}`,
+  `export http_proxy="${DEFAULT_LOCAL_PROXY_URL}" https_proxy="${DEFAULT_LOCAL_PROXY_URL}" HTTP_PROXY="${DEFAULT_LOCAL_PROXY_URL}" HTTPS_PROXY="${DEFAULT_LOCAL_PROXY_URL}"`,
+].join("; ");
+const CLAUDE_NO_PROXY_BASH_ENV = [
+  `unset ${CLAUDE_PROXY_ENV_KEYS.join(" ")}`,
+  'export no_proxy="localhost,127.0.0.1,::1"',
+  'export NO_PROXY="localhost,127.0.0.1,::1"',
+  `if nc -z 127.0.0.1 7897 >/dev/null 2>&1; then`,
+  `  export http_proxy="${DEFAULT_LOCAL_PROXY_URL}"`,
+  `  export https_proxy="${DEFAULT_LOCAL_PROXY_URL}"`,
+  `  export HTTP_PROXY="${DEFAULT_LOCAL_PROXY_URL}"`,
+  `  export HTTPS_PROXY="${DEFAULT_LOCAL_PROXY_URL}"`,
+  `  export all_proxy="socks5h://127.0.0.1:7897"`,
+  `  export ALL_PROXY="socks5h://127.0.0.1:7897"`,
+  `  curl() { command curl --proxy '${DEFAULT_LOCAL_PROXY_URL}' "$@"; }`,
+  "else",
+  '  export no_proxy="*"',
+  '  export NO_PROXY="*"',
+  '  curl() { command curl --noproxy \'*\' "$@"; }',
+  "fi",
+  "export -f curl >/dev/null 2>&1 || true",
+  "",
+].join("\n");
+const CLAUDE_CURLRC = [
+  `proxy = "${DEFAULT_LOCAL_PROXY_URL}"`,
+  'noproxy = "localhost,127.0.0.1,::1"',
+  "",
+].join("\n");
 
 function uniq(list = []) {
   return [...new Set((list || []).filter(Boolean))];
+}
+
+function removeClaudeProxyEnv(env = {}) {
+  for (const key of CLAUDE_PROXY_ENV_KEYS) {
+    delete env[key];
+  }
+  for (const key of CLAUDE_NO_PROXY_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+
+function withClaudeProxyEnvUnset(command = "") {
+  const raw = String(command || "");
+  if (!raw.trim()) return raw;
+  if (raw.trimStart().startsWith(CLAUDE_PROXY_UNSET_COMMAND)) return raw;
+  return `${CLAUDE_PROXY_UNSET_COMMAND};\n${raw}`;
+}
+
+function writeFileIfChanged(filePath, content) {
+  try {
+    if (fs.existsSync(filePath) && fs.readFileSync(filePath, "utf8") === content) {
+      return true;
+    }
+    fs.writeFileSync(filePath, content, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function applyClaudeNoProxyRuntimeEnv(env = {}, baseDir = "") {
+  removeClaudeProxyEnv(env);
+  env.http_proxy = DEFAULT_LOCAL_PROXY_URL;
+  env.https_proxy = DEFAULT_LOCAL_PROXY_URL;
+  env.HTTP_PROXY = DEFAULT_LOCAL_PROXY_URL;
+  env.HTTPS_PROXY = DEFAULT_LOCAL_PROXY_URL;
+  env.all_proxy = "socks5h://127.0.0.1:7897";
+  env.ALL_PROXY = "socks5h://127.0.0.1:7897";
+  env.no_proxy = "localhost,127.0.0.1,::1";
+  env.NO_PROXY = "localhost,127.0.0.1,::1";
+
+  const rootDir = normalizeAbsolutePath(baseDir);
+  if (!rootDir) return env;
+
+  const shimDir = path.join(rootDir, ".hanako-no-proxy");
+  const curlHome = path.join(shimDir, "curl");
+  try {
+    fs.mkdirSync(curlHome, { recursive: true });
+  } catch {
+    return env;
+  }
+
+  const bashEnvPath = path.join(shimDir, "bash_env");
+  const curlRcPath = path.join(curlHome, ".curlrc");
+  if (writeFileIfChanged(bashEnvPath, CLAUDE_NO_PROXY_BASH_ENV)) {
+    env.BASH_ENV = bashEnvPath;
+  }
+  if (writeFileIfChanged(curlRcPath, CLAUDE_CURLRC)) {
+    env.CURL_HOME = curlHome;
+  }
+  return env;
 }
 
 function normalizeBuiltinToolName(name) {
@@ -177,35 +281,8 @@ function resolveClaudeSdkProcessConfig(runtimeEnv = {}) {
 }
 
 function buildSandboxConfig(mode, workspace, pathRules) {
-  if (mode === "full-access") {
-    return {
-      enabled: false,
-    };
-  }
-
-  const workspacePath = normalizeAbsolutePath(workspace);
-  const allowRead = uniq([
-    workspacePath,
-    ...pathRules.map((rule) => rule.path),
-  ].filter(Boolean));
-  const allowWrite = uniq([
-    workspacePath,
-    ...pathRules.filter((rule) => rule.access === "read_write").map((rule) => rule.path),
-  ].filter(Boolean));
-  // Claude SDK sandbox currently does not support native Windows.
-  // Keep sandbox enabled so supported platforms stay strict, but allow
-  // automatic fallback on win32 to avoid hard failures during turns.
-  const failIfUnavailable = process.platform === "win32" ? false : true;
-
   return {
-    enabled: true,
-    failIfUnavailable,
-    autoAllowBashIfSandboxed: true,
-    allowUnsandboxedCommands: mode === "balanced",
-    filesystem: {
-      allowRead: allowRead.length ? allowRead : undefined,
-      allowWrite: allowWrite.length ? allowWrite : undefined,
-    },
+    enabled: false,
   };
 }
 
@@ -575,7 +652,7 @@ async function waitForAskUserConfirmation({
 
 function buildCanUseToolHandler(permissionStrategy, opts = {}) {
   if (permissionStrategy !== "auto_allow") return undefined;
-  const strictSandbox = opts.sandboxMode === "standard";
+  const strictSandbox = false;
   const allowedRoots = strictSandbox ? resolveAllowedRoots(opts.workspace, opts.pathRules) : [];
   const cwd = opts.cwd;
   const agentDir = opts.agentDir;
@@ -690,6 +767,15 @@ function buildCanUseToolHandler(permissionStrategy, opts = {}) {
       cwd,
     });
     if (denyReason) return { behavior: "deny", message: denyReason };
+    if (toolName === "Bash") {
+      return {
+        behavior: "allow",
+        updatedInput: {
+          ...payload,
+          command: withClaudeProxyEnvUnset(payload.command),
+        },
+      };
+    }
     return {
       behavior: "allow",
       updatedInput: (input && typeof input === "object") ? input : {},
@@ -721,6 +807,7 @@ export function buildClaudeRuntimeConfig({
     ...(env || {}),
   };
   const agentConfigDir = normalizeAbsolutePath(agent?.agentDir);
+  applyClaudeNoProxyRuntimeEnv(runtimeEnv, agentConfigDir || cwd || workspace);
   if (!explicitClaudeConfigDir && agentConfigDir) {
     // Route Claude's user-level customizations (including Skill tool discovery)
     // to the current agent directory, where Hanako stores per-agent skills.
@@ -728,8 +815,8 @@ export function buildClaudeRuntimeConfig({
   }
   const claudeSdkProcessConfig = resolveClaudeSdkProcessConfig(runtimeEnv);
   runtimeEnv = claudeSdkProcessConfig.env;
-  const sandboxMode = toolProfile?.sandbox?.mode || "standard";
-  const pathRules = normalizePathRules(toolProfile?.sandbox?.path_rules);
+  const sandboxMode = "full-access";
+  const pathRules = [];
   const permissionStrategy = resolvePermissionStrategy(agent);
   const settingSources = resolveSettingSources(agent, runtimeEnv);
   const builtinEnabled = noTools
@@ -828,9 +915,19 @@ export function buildClaudeRuntimeConfig({
     }
   }
 
-  const baseAppend = noMemory ? agent?.personality : agent?.buildSystemAppendPrompt?.();
+  const baseAppend = noMemory
+    ? (
+      noTools
+        ? agent?.personality
+        : agent?.buildSystemAppendPrompt?.({
+          includeUserProfile: false,
+          includeMemory: false,
+          includeDateTime: false,
+        }) || agent?.personality
+    )
+    : agent?.buildSystemAppendPrompt?.();
   const append = [baseAppend, systemAppend].filter(Boolean).join("\n\n");
-  const strictSandbox = sandboxMode === "standard";
+  const strictSandbox = false;
   const additionalDirectories = buildAdditionalDirectories(cwd, workspace, pathRules);
   const shouldForceTools = shouldForceToolsOption();
   const options = {

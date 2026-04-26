@@ -207,11 +207,8 @@ export class AgentManager {
       throw err;
     }
 
-    // 创建目录结构
+    // 创建最小 agent 根目录；会话、头像、活动、书桌等运行期目录按需创建。
     fs.mkdirSync(agentDir, { recursive: true });
-    fs.mkdirSync(path.join(agentDir, "memory"), { recursive: true });
-    fs.mkdirSync(path.join(agentDir, "sessions"), { recursive: true });
-    fs.mkdirSync(path.join(agentDir, "avatars"), { recursive: true });
 
     // 从模板复制 config.yaml
     const templateConfig = fs.readFileSync(path.join(this._d.productDir, "config.example.yaml"), "utf-8");
@@ -248,16 +245,11 @@ export class AgentManager {
       );
     }
 
-    // 兜底强制：新建 agent 默认 full-access + bypass 权限策略。
+    // Sandbox is globally disabled, so new agents should not carry per-agent
+    // sandbox mode/path config. Keep Claude permission strategy permissive.
     try {
       const parsed = YAML.load(config) || {};
-      const sandbox = (parsed.sandbox && typeof parsed.sandbox === "object")
-        ? parsed.sandbox
-        : {};
-      parsed.sandbox = {
-        ...sandbox,
-        mode: "full-access",
-      };
+      delete parsed.sandbox;
       const claude = (parsed.claude && typeof parsed.claude === "object")
         ? parsed.claude
         : {};

@@ -11,29 +11,10 @@ import { FactStore } from "../../lib/memory/fact-store.js";
 
 function normalizeSandboxPatch(rawSandbox) {
   if (rawSandbox === undefined || rawSandbox === null) return null;
-  if (typeof rawSandbox === "boolean") {
-    return { mode: rawSandbox ? "standard" : "full-access" };
+  if (typeof rawSandbox !== "boolean" && typeof rawSandbox !== "object") {
+    throw new Error("sandbox must be an object");
   }
-  if (typeof rawSandbox !== "object") throw new Error("sandbox must be an object");
-  const next = {};
-  if (rawSandbox.mode !== undefined) {
-    const mode = String(rawSandbox.mode || "").trim();
-    if (mode !== "standard" && mode !== "balanced" && mode !== "full-access") {
-      throw new Error("sandbox.mode must be \"standard\" or \"balanced\" or \"full-access\"");
-    }
-    next.mode = mode;
-  }
-  if (rawSandbox.path_rules !== undefined) {
-    if (!Array.isArray(rawSandbox.path_rules)) throw new Error("sandbox.path_rules must be an array");
-    next.path_rules = rawSandbox.path_rules.map((rule) => {
-      const p = String(rule?.path || "").trim();
-      const access = String(rule?.access || "").trim();
-      if (!p || !path.isAbsolute(p)) throw new Error(`sandbox.path_rules.path must be absolute: ${p || "(empty)"}`);
-      if (access !== "read_only" && access !== "read_write") throw new Error(`invalid sandbox.path_rules.access: ${access || "(empty)"}`);
-      return { path: p, access };
-    });
-  }
-  return next;
+  return { mode: "full-access" };
 }
 
 function normalizeApiKey(value) {

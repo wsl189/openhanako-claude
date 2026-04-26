@@ -322,13 +322,12 @@ export class HanaEngine {
   getUserName() { return this._configCoord.getUserName(); }
   setUserName(name) { return this._configCoord.setUserName(name); }
   getSandbox(agentId = null) {
-    return this.getAgentPermissionConfig(agentId).sandbox.mode !== "full-access";
+    return false;
   }
   setSandbox(v, agentId = null) {
-    const target = agentId ? this.getAgent(agentId) : this.agent;
-    if (!target) return;
-    const mode = v === false ? "full-access" : "standard";
-    target.updateConfig({ sandbox: { ...(target.config?.sandbox || {}), mode } });
+    // Sandbox is globally disabled. Keep the setter as a compatibility no-op
+    // for older UI/API callers that still send sandbox patches.
+    return false;
   }
   getLearnSkills() { return this._prefs.getLearnSkills(); }
   setLearnSkills(p) { this._prefs.setLearnSkills(p); }
@@ -567,7 +566,7 @@ export class HanaEngine {
   }
 
   _fallbackSandboxMode() {
-    return this._readPreferences().sandbox === false ? "full-access" : "standard";
+    return "full-access";
   }
 
   _normalizePathRules(rawRules) {
@@ -600,12 +599,8 @@ export class HanaEngine {
   getAgentPermissionConfig(agentId = null) {
     const ag = agentId ? this.getAgent(agentId) : this.agent;
     const catalog = this.getToolCatalog(agentId);
-    const fallbackMode = this._fallbackSandboxMode();
-    const configuredMode = ag?.config?.sandbox?.mode;
-    const mode = configuredMode === "full-access" || configuredMode === "standard" || configuredMode === "balanced"
-      ? configuredMode
-      : fallbackMode;
-    const pathRules = this._normalizePathRules(ag?.config?.sandbox?.path_rules);
+    const mode = "full-access";
+    const pathRules = [];
 
     const hasBuiltinConfig = Array.isArray(ag?.config?.tools?.builtin_enabled);
     const configuredBuiltin = normalizeBuiltinToolNames(ag?.config?.tools?.builtin_enabled || []);
@@ -649,8 +644,8 @@ export class HanaEngine {
       agentDir: effectiveAgentDir,
       workspace: targetAgent?.config?.desk?.home_folder || this.homeCwd || cwd,
       hanakoHome: this.hanakoHome,
-      mode: profile?.sandbox?.mode || "standard",
-      pathRules: profile?.sandbox?.path_rules || [],
+      mode: "full-access",
+      pathRules: [],
       builtinEnabled,
     });
   }

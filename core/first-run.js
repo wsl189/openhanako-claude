@@ -59,12 +59,8 @@ function seedDefaultAgent(agentsDir, productDir) {
   const agentId = "hanako";
   const agentDir = path.join(agentsDir, agentId);
 
-  // 创建目录结构
+  // 创建最小 agent 根目录；运行期目录由对应功能按需创建。
   fs.mkdirSync(agentDir, { recursive: true });
-  fs.mkdirSync(path.join(agentDir, "memory"), { recursive: true });
-  fs.mkdirSync(path.join(agentDir, "sessions"), { recursive: true });
-  fs.mkdirSync(path.join(agentDir, "avatars"), { recursive: true });
-  fs.mkdirSync(path.join(agentDir, "desk"), { recursive: true });
 
   // config.yaml（保持模板默认值：name=Hanako, yuan=hanako）
   const configSrc = path.join(productDir, "config.example.yaml");

@@ -16,6 +16,9 @@ let _mdPreview: MarkdownIt | null = null;
 const CJK_CHAR_CLASS = '\u3400-\u9FFF\uF900-\uFAFF';
 const HAIR_SPACE = '\u200A';
 const SPACE_LIKE_RE = /^[\s\u00A0\u3000]+|[\s\u00A0\u3000]+$/g;
+const ASTERISK_ENTITY_RE = /(?:&#42;|&#x2a;|&ast;)/gi;
+const UNDERSCORE_ENTITY_RE = /(?:&#95;|&#x5f;|&lowbar;)/gi;
+const BACKSLASH_ENTITY_RE = /(?:&#92;|&#x5c;|&bsol;)/gi;
 const ESCAPED_STRONG_ASTERISK_RE = /\\\*\\\*([^\n]*?)\\\*\\\*/g;
 const ESCAPED_STRONG_UNDERSCORE_RE = /\\_\\_([^\n]*?)\\_\\_/g;
 const LOOSE_STRONG_ASTERISK_RE = /\*\*([^\n]*?)\*\*/g;
@@ -57,6 +60,11 @@ function normalizeMarkdownForCjkEmphasis(src: string): string {
       const chunk = chunks[j];
       if (/^`+[^`]*`+$/.test(chunk)) continue;
       chunks[j] = chunk
+        // 有些历史/桥接消息会把 markdown 标记 HTML 实体化，浏览器会显示成 **，
+        // 但 markdown-it 解析时不会把实体当作强调标记。这里只恢复标记字符本身。
+        .replace(ASTERISK_ENTITY_RE, '*')
+        .replace(UNDERSCORE_ENTITY_RE, '_')
+        .replace(BACKSLASH_ENTITY_RE, '\\')
         // 容错：模型偶发输出 **text ** / ** text** / __text __，会导致 markdown 失效。
         .replace(LOOSE_STRONG_ASTERISK_RE, (m, text: string) => {
           const trimmed = String(text || '').replace(SPACE_LIKE_RE, '');

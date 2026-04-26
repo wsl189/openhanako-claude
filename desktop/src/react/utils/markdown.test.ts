@@ -17,6 +17,17 @@ describe('renderMarkdown CJK emphasis compatibility', () => {
     expect(html).toContain('<strong>不可用</strong>');
   });
 
+  it('recovers entity-escaped strong markdown markers', () => {
+    const html = renderMarkdown('高级官员称伊朗&#42;&#42;已准备好与美国和以色列打持久战&#42;&#42;，不寻求快速结束冲突');
+    expect(html).toContain('<strong>已准备好与美国和以色列打持久战</strong>，');
+  });
+
+  it('recovers entity-escaped markdown markers outside code spans only', () => {
+    const html = renderMarkdown('状态：&ast;&ast;不可用&ast;&ast;，代码 `&#42;&#42;literal&#42;&#42;`。');
+    expect(html).toContain('<strong>不可用</strong>');
+    expect(html).toContain('<code>&amp;#42;&amp;#42;literal&amp;#42;&amp;#42;</code>');
+  });
+
   it('recovers strong markdown with accidental inner-edge spaces', () => {
     const html = renderMarkdown('结论：**第一仓位存疑。 **\n以及：** 第一仓位存疑。**');
     expect(html).toContain('<strong>第一仓位存疑。</strong>');

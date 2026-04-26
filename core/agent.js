@@ -241,7 +241,6 @@ export class Agent {
     // 8. Desk 系统（与 memory 完全独立）
     log(`  [agent] 8. Desk 系统...`);
     this._deskManager = createDeskManager(this.deskDir);
-    this._deskManager.ensureDir();
     this._cronStore = new CronStore(
       path.join(this.deskDir, "cron-jobs.json"),
       path.join(this.deskDir, "cron-runs"),
@@ -639,7 +638,15 @@ export class Agent {
   }
 
   /** 组装附加到 Claude Code preset 后面的 Hanako append prompt */
-  buildSystemAppendPrompt() {
+  buildSystemAppendPrompt(options = {}) {
+    const {
+      includeUserProfile = true,
+      includeMemory = true,
+      includeSettings = true,
+      includeToolAvailability = true,
+      includeWorkspace = true,
+      includeDateTime = true,
+    } = options || {};
     const isZh = String(this._config.locale || "").startsWith("zh");
     const agentId = path.basename(this.agentDir || "");
     const browserProvider = this._resolveBrowserProvider();
@@ -688,15 +695,17 @@ export class Agent {
         ? "你运行在 OpenHanako 平台上，由 liliMozi 开发。项目主页：https://github.com/liliMozi/openhanako"
         : "You are running on the OpenHanako platform, developed by liliMozi. Project page: https://github.com/liliMozi/openhanako",
       ishiki,
-      ...section(
+    ];
+    if (includeUserProfile) {
+      parts.push(...section(
         isZh ? "# 用户档案" : "# User Profile",
         isZh
           ? `当前用户名称（来自设置）：${this.userName}\n以下是用户的自我描述，由用户手动维护。\n\n${userMd}`
           : `Current user name (from settings): ${this.userName}\nThe following is the user's self-description, manually maintained by the user.\n\n${userMd}`
-      ),
-    ];
+      ));
+    }
     // 记忆整体开关：master && session 都开启才注入记忆相关 prompt
-    if (this.memoryEnabled) {
+    if (includeMemory && this.memoryEnabled) {
       const memoryRule = isZh ? [
         "",
         "## 记忆使用规则",
@@ -755,109 +764,117 @@ export class Agent {
       }
     }
 
-    parts.push(isZh
-      ? "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
-      : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
-    );
-
-    parts.push(isZh
-      ? [
-          "",
-          "## 工具可用性（严格）",
-          "",
-          `当前会话可用的标准 Claude 工具（仅以下）：${formatToolList(enabledBuiltin)}`,
-          `当前会话可用的 Hanako/MCP 工具（仅以下）：${formatToolList(enabledCustom)}`,
-          `当前会话可用的外部 MCP 工具前缀（仅以下）：${formatToolList(externalMcpTools)}`,
-          "当用户问“你有哪些工具”时，必须只基于以上三行回答。",
-          "不要把未出现在列表里的工具说成可用；如果用户点名了未启用工具，明确回复“当前不可用”。",
-        ].join("\n")
-      : [
-          "",
-          "## Tool Availability (Strict)",
-          "",
-          `Standard Claude tools available in this session (only these): ${formatToolList(enabledBuiltin)}`,
-          `Hanako/MCP tools available in this session (only these): ${formatToolList(enabledCustom)}`,
-          `External MCP tool prefixes available in this session (only these): ${formatToolList(externalMcpTools)}`,
-          "When the user asks what tools you have, answer strictly from the three lines above.",
-          "Do not claim availability for tools not listed; if asked about one, clearly say it is unavailable now.",
-        ].join("\n")
-    );
-
-    const hasSearchTool = hasTool("web_search");
-    const hasEmbeddedBrowser = hasTool("browser");
-    const hasClaudeInChrome = browserProvider?.useClaudeInChrome === true;
-    if (!hasSearchTool && hasEmbeddedBrowser) {
+    if (includeSettings) {
       parts.push(isZh
-        ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
-        : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser.");
-    } else if (!hasSearchTool && hasClaudeInChrome) {
-      parts.push(isZh
-        ? "如果当前没有可用搜索工具且需要联网检索，请使用 mcp__claude_in_chrome__* 工具访问已登录 Chrome，并先调用 mcp__claude_in_chrome__tabs_context_mcp 获取标签页上下文。"
-        : "If no search tool is available and web lookup is needed, use mcp__claude_in_chrome__* tools against logged-in Chrome, and call mcp__claude_in_chrome__tabs_context_mcp first.");
-    } else if (!hasSearchTool && !hasEmbeddedBrowser && !hasClaudeInChrome) {
-      parts.push(isZh
-        ? "当前无可用联网检索工具（search/browser/claude-in-chrome）；需要联网信息时请明确说明能力受限。"
-        : "No web lookup tools are available (search/browser/claude-in-chrome). If internet data is required, clearly state this limitation.");
+        ? "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
+        : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
+      );
     }
 
-    if (hasClaudeInChrome) {
+    if (includeToolAvailability) {
       parts.push(isZh
-        ? "当用户要求使用自己已登录的 Chrome（例如复用登录态、处理 OAuth、操作真实标签页）时，优先使用 mcp__claude_in_chrome__* 工具。每轮浏览器自动化建议先调用 mcp__claude_in_chrome__tabs_context_mcp。"
-        : "When the user asks to use their logged-in Chrome (session reuse, OAuth, real tabs), prioritize mcp__claude_in_chrome__* tools. Start each browser automation flow with mcp__claude_in_chrome__tabs_context_mcp.");
-    }
+        ? [
+            "",
+            "## 工具可用性（严格）",
+            "",
+            `当前会话可用的标准 Claude 工具（仅以下）：${formatToolList(enabledBuiltin)}`,
+            `当前会话可用的 Hanako/MCP 工具（仅以下）：${formatToolList(enabledCustom)}`,
+            `当前会话可用的外部 MCP 工具前缀（仅以下）：${formatToolList(externalMcpTools)}`,
+            "当用户问“你有哪些工具”时，必须只基于以上三行回答。",
+            "不要把未出现在列表里的工具说成可用；如果用户点名了未启用工具，明确回复“当前不可用”。",
+          ].join("\n")
+        : [
+            "",
+            "## Tool Availability (Strict)",
+            "",
+            `Standard Claude tools available in this session (only these): ${formatToolList(enabledBuiltin)}`,
+            `Hanako/MCP tools available in this session (only these): ${formatToolList(enabledCustom)}`,
+            `External MCP tool prefixes available in this session (only these): ${formatToolList(externalMcpTools)}`,
+            "When the user asks what tools you have, answer strictly from the three lines above.",
+            "Do not claim availability for tools not listed; if asked about one, clearly say it is unavailable now.",
+          ].join("\n")
+      );
 
-    if (hasComputerUse) {
-      parts.push(isZh
-        ? "当用户要求你操作桌面应用（点击、输入、截图、切换窗口）时，使用 mcp__computer_use__*。首次操作前先调用 mcp__computer_use__request_access 申请应用权限，然后通过 screenshot/zoom 观察，再执行鼠标键盘动作。"
-        : "When the user asks for desktop app control (click/type/screenshot/window switching), use mcp__computer_use__* tools. Start with mcp__computer_use__request_access, then observe with screenshot/zoom before taking mouse/keyboard actions.");
-    }
-    if (hasTool(MINIMAX_MCP_WEB_SEARCH_SWITCH)) {
-      parts.push(isZh
-        ? "当用户需要联网检索时，优先使用 mcp__MiniMax__web_search 获取最新网页信息。"
-        : "When web lookup is needed, prefer mcp__MiniMax__web_search for up-to-date web information.");
-    }
-    if (hasTool(MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH)) {
-      parts.push(isZh
-        ? "当用户要求理解网络图片/外链图片内容时，优先使用 mcp__MiniMax__understand_image。"
-        : "When the user asks to understand remote image content, prefer mcp__MiniMax__understand_image.");
-    }
+      const hasSearchTool = hasTool("web_search");
+      const hasEmbeddedBrowser = hasTool("browser");
+      const hasClaudeInChrome = browserProvider?.useClaudeInChrome === true;
+      if (!hasSearchTool && hasEmbeddedBrowser) {
+        parts.push(isZh
+          ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
+          : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser.");
+      } else if (!hasSearchTool && hasClaudeInChrome) {
+        parts.push(isZh
+          ? "如果当前没有可用搜索工具且需要联网检索，请使用 mcp__claude_in_chrome__* 工具访问已登录 Chrome，并先调用 mcp__claude_in_chrome__tabs_context_mcp 获取标签页上下文。"
+          : "If no search tool is available and web lookup is needed, use mcp__claude_in_chrome__* tools against logged-in Chrome, and call mcp__claude_in_chrome__tabs_context_mcp first.");
+      } else if (!hasSearchTool && !hasEmbeddedBrowser && !hasClaudeInChrome) {
+        parts.push(isZh
+          ? "当前无可用联网检索工具（search/browser/claude-in-chrome）；需要联网信息时请明确说明能力受限。"
+          : "No web lookup tools are available (search/browser/claude-in-chrome). If internet data is required, clearly state this limitation.");
+      }
 
-    if (hasTool("describe_images")) {
-      parts.push(isZh
-        ? "当用户给出图片文件的绝对路径（或 file:// URI）并要求识别/描述时，优先调用 describe_images，并通过 image_paths 或 image_path 传入路径。该工具会自动读取图片文件并转换为 base64 后进行理解。"
-        : "When the user provides absolute image file paths (or file:// URIs) and asks for recognition/description, call describe_images first and pass paths via image_paths or image_path. The tool will read image files and convert them to base64 for vision understanding.");
-    }
+      if (hasClaudeInChrome) {
+        parts.push(isZh
+          ? "当用户要求使用自己已登录的 Chrome（例如复用登录态、处理 OAuth、操作真实标签页）时，优先使用 mcp__claude_in_chrome__* 工具。每轮浏览器自动化建议先调用 mcp__claude_in_chrome__tabs_context_mcp。"
+          : "When the user asks to use their logged-in Chrome (session reuse, OAuth, real tabs), prioritize mcp__claude_in_chrome__* tools. Start each browser automation flow with mcp__claude_in_chrome__tabs_context_mcp.");
+      }
 
-    if (hasTool("generate_images")) {
-      parts.push(isZh
-        ? "当用户要求生成图片（文生图或图生图）时，优先调用 generate_images 工具，不要凭空声称“已生成”。图生图可使用当前会话里用户上传的图片作为参考。调用 generate_images 后不要再重复调用 present_files 展示同一图片，除非用户明确要求展示文件卡片/链接。"
-        : "When the user asks to generate images (text-to-image or image-to-image), use the generate_images tool. Do not claim an image was generated without calling it. For image-to-image, use user-uploaded images in the current session as references. After calling generate_images, do not call present_files again for the same images unless the user explicitly asks for file cards/links.");
+      if (hasComputerUse) {
+        parts.push(isZh
+          ? "当用户要求你操作桌面应用（点击、输入、截图、切换窗口）时，使用 mcp__computer_use__*。首次操作前先调用 mcp__computer_use__request_access 申请应用权限，然后通过 screenshot/zoom 观察，再执行鼠标键盘动作。"
+          : "When the user asks for desktop app control (click/type/screenshot/window switching), use mcp__computer_use__* tools. Start with mcp__computer_use__request_access, then observe with screenshot/zoom before taking mouse/keyboard actions.");
+      }
+      if (hasTool(MINIMAX_MCP_WEB_SEARCH_SWITCH)) {
+        parts.push(isZh
+          ? "当用户需要联网检索时，优先使用 mcp__MiniMax__web_search 获取最新网页信息。"
+          : "When web lookup is needed, prefer mcp__MiniMax__web_search for up-to-date web information.");
+      }
+      if (hasTool(MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH)) {
+        parts.push(isZh
+          ? "当用户要求理解网络图片/外链图片内容时，优先使用 mcp__MiniMax__understand_image。"
+          : "When the user asks to understand remote image content, prefer mcp__MiniMax__understand_image.");
+      }
+
+      if (hasTool("describe_images")) {
+        parts.push(isZh
+          ? "当用户给出图片文件的绝对路径（或 file:// URI）并要求识别/描述时，优先调用 describe_images，并通过 image_paths 或 image_path 传入路径。该工具会自动读取图片文件并转换为 base64 后进行理解。"
+          : "When the user provides absolute image file paths (or file:// URIs) and asks for recognition/description, call describe_images first and pass paths via image_paths or image_path. The tool will read image files and convert them to base64 for vision understanding.");
+      }
+
+      if (hasTool("generate_images")) {
+        parts.push(isZh
+          ? "当用户要求生成图片（文生图或图生图）时，优先调用 generate_images 工具，不要凭空声称“已生成”。图生图可使用当前会话里用户上传的图片作为参考。调用 generate_images 后不要再重复调用 present_files 展示同一图片，除非用户明确要求展示文件卡片/链接。"
+          : "When the user asks to generate images (text-to-image or image-to-image), use the generate_images tool. Do not claim an image was generated without calling it. For image-to-image, use user-uploaded images in the current session as references. After calling generate_images, do not call present_files again for the same images unless the user explicitly asks for file cards/links.");
+      }
     }
 
     // 工作区提示（注入默认工作区 + 当前 cwd）
     const defaultWorkspace = this._engine?.getHomeFolder?.(agentId) || this._config?.desk?.home_folder || "";
     const cwdPath = this._engine?.cwd || "";
-    parts.push(isZh
-      ? `\n## 工作区\n\n` +
-        `用户所说的「书桌」「工作空间」指的是你的工作目录（workspace/cwd），不是系统桌面（~/Desktop）。` +
-        (defaultWorkspace ? `\n默认工作区：${defaultWorkspace}` : "") +
-        (cwdPath ? `\n当前执行目录（cwd）：${cwdPath}` : "")
-      : `\n## Workspace\n\n` +
-        `When the user says "desk" (书桌) or "workspace", they mean your working directory (workspace/cwd), NOT the system Desktop (~/Desktop).` +
-        (defaultWorkspace ? `\nDefault workspace: ${defaultWorkspace}` : "") +
-        (cwdPath ? `\nCurrent execution directory (cwd): ${cwdPath}` : "")
-    );
+    if (includeWorkspace) {
+      parts.push(isZh
+        ? `\n## 工作区\n\n` +
+          `用户所说的「书桌」「工作空间」指的是你的工作目录（workspace/cwd），不是系统桌面（~/Desktop）。` +
+          (defaultWorkspace ? `\n默认工作区：${defaultWorkspace}` : "") +
+          (cwdPath ? `\n当前执行目录（cwd）：${cwdPath}` : "")
+        : `\n## Workspace\n\n` +
+          `When the user says "desk" (书桌) or "workspace", they mean your working directory (workspace/cwd), NOT the system Desktop (~/Desktop).` +
+          (defaultWorkspace ? `\nDefault workspace: ${defaultWorkspace}` : "") +
+          (cwdPath ? `\nCurrent execution directory (cwd): ${cwdPath}` : "")
+      );
+    }
 
     // 日期时间
-    const now = new Date();
-    const dateTime = now.toLocaleString("en-US", {
-      weekday: "long", year: "numeric", month: "long", day: "numeric",
-      hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short",
-    });
-    parts.push(`\nCurrent date and time: ${dateTime}`);
-    parts.push(isZh
-      ? "你的一天从凌晨 4:00 开始。4:00 之前的对话属于前一天。"
-      : "Your day starts at 4:00 AM. Conversations before 4:00 AM belong to the previous day.");
+    if (includeDateTime) {
+      const now = new Date();
+      const dateTime = now.toLocaleString("en-US", {
+        weekday: "long", year: "numeric", month: "long", day: "numeric",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+      });
+      parts.push(`\nCurrent date and time: ${dateTime}`);
+      parts.push(isZh
+        ? "你的一天从凌晨 4:00 开始。4:00 之前的对话属于前一天。"
+        : "Your day starts at 4:00 AM. Conversations before 4:00 AM belong to the previous day.");
+    }
 
     return parts.join("\n");
   }

@@ -19,10 +19,6 @@ export default async function avatarRoute(app, { engine }) {
     return path.join(base, "avatars");
   }
 
-  // 确保两个目录都存在
-  await fs.mkdir(avatarDirFor("agent"), { recursive: true });
-  await fs.mkdir(avatarDirFor("user"), { recursive: true });
-
   /** 查找 role 对应的头像文件（支持 png/jpg/webp） */
   async function findAvatar(role) {
     const dir = avatarDirFor(role);
@@ -80,6 +76,7 @@ export default async function avatarRoute(app, { engine }) {
     const ext = match[1] === "jpeg" ? "jpg" : match[1];
     const buf = Buffer.from(match[2], "base64");
     const dir = avatarDirFor(role);
+    await fs.mkdir(dir, { recursive: true });
 
     // 删除旧头像（可能是不同格式）
     for (const oldExt of ["png", "jpg", "jpeg", "webp"]) {

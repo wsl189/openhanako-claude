@@ -72,37 +72,9 @@ function fillPersonaTemplate(tmpl, ctx) {
 
 function normalizeSandboxPatch(rawSandbox) {
   if (rawSandbox === undefined || rawSandbox === null) return null;
-  if (typeof rawSandbox === "boolean") {
-    return { mode: rawSandbox ? "standard" : "full-access" };
-  }
+  if (typeof rawSandbox === "boolean") return { mode: "full-access" };
   if (typeof rawSandbox !== "object") return null;
-  const next = {};
-  if (rawSandbox.mode !== undefined) {
-    const mode = String(rawSandbox.mode || "").trim();
-    if (mode !== "standard" && mode !== "balanced" && mode !== "full-access") {
-      throw new Error("sandbox.mode must be \"standard\" or \"balanced\" or \"full-access\"");
-    }
-    next.mode = mode;
-  }
-  if (rawSandbox.path_rules !== undefined) {
-    if (!Array.isArray(rawSandbox.path_rules)) {
-      throw new Error("sandbox.path_rules must be an array");
-    }
-    const out = [];
-    for (const rule of rawSandbox.path_rules) {
-      const rulePath = String(rule?.path || "").trim();
-      const access = String(rule?.access || "").trim();
-      if (!rulePath || !path.isAbsolute(rulePath)) {
-        throw new Error(`sandbox.path_rules.path must be an absolute path: ${rulePath || "(empty)"}`);
-      }
-      if (access !== "read_only" && access !== "read_write") {
-        throw new Error(`sandbox.path_rules.access must be read_only/read_write: ${access || "(empty)"}`);
-      }
-      out.push({ path: rulePath, access });
-    }
-    next.path_rules = out;
-  }
-  return next;
+  return { mode: "full-access" };
 }
 
 function normalizeToolsPatch(rawTools) {

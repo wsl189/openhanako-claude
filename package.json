@@ -42,6 +42,7 @@
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language-data": "^6.5.2",
     "@fastify/websocket": "^11.0.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@larksuiteoapi/node-sdk": "^1.59.0",
     "@sinclair/typebox": "^0.34.0",
     "@traptitech/markdown-it-katex": "^3.6.0",
@@ -62,6 +63,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "silk-wasm": "^3.7.1",
     "ws": "^8.18.0",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"

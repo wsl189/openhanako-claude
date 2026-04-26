@@ -33,7 +33,6 @@ const OPTIONAL_BUILTINS = [
   'WebFetch',
   'Write',
 ];
-const ABS_PATH_RE = /^([A-Za-z]:[\\/]|\/)/;
 const AGENT_CARD_NAME_MAX_UNITS = 4;
 const HEARTBEAT_MINUTES_MIN = 1;
 const HEARTBEAT_MINUTES_MAX = 120;
@@ -178,8 +177,6 @@ interface ArchivedSession {
   cwd: string | null;
   agentId: string;
 }
-type SandboxMode = 'standard' | 'balanced' | 'full-access';
-
 function parseExperience(raw: string): ExpCategory[] {
   if (!raw?.trim()) return [];
   const cats: ExpCategory[] = [];
@@ -239,14 +236,6 @@ export function AgentTab() {
   const [identity, setIdentity] = useState('');
   const [ishiki, setIshiki] = useState('');
   const [agentWorkspace, setAgentWorkspace] = useState('');
-  const [sandboxMode, setSandboxMode] = useState<SandboxMode>('standard');
-  const [sandboxPathRules, setSandboxPathRules] = useState<Array<{ path: string; access: 'read_only' | 'read_write' }>>([]);
-  const [sandboxPathInput, setSandboxPathInput] = useState('');
-  const [sandboxPathAccess, setSandboxPathAccess] = useState<'read_only' | 'read_write'>('read_only');
-  const [sandboxConfigOpen, setSandboxConfigOpen] = useState(false);
-  const sandboxPathRulesRef = useRef<Array<{ path: string; access: 'read_only' | 'read_write' }>>([]);
-  const sandboxPathInputRef = useRef('');
-  const sandboxPathAccessRef = useRef<'read_only' | 'read_write'>('read_only');
   const [builtinEnabled, setBuiltinEnabled] = useState<string[]>([...REQUIRED_BUILTINS, ...OPTIONAL_BUILTINS]);
   const [customEnabled, setCustomEnabled] = useState<string[]>([]);
   const [builtinExpanded, setBuiltinExpanded] = useState(false);
@@ -258,21 +247,6 @@ export function AgentTab() {
   const [archivedBusyPath, setArchivedBusyPath] = useState<string | null>(null);
   const [hbIntervalInput, setHbIntervalInput] = useState('17');
   const hbIntervalSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const updateSandboxPathRules = (nextRules: Array<{ path: string; access: 'read_only' | 'read_write' }>) => {
-    sandboxPathRulesRef.current = nextRules;
-    setSandboxPathRules(nextRules);
-  };
-
-  const updateSandboxPathInput = (nextPath: string) => {
-    sandboxPathInputRef.current = nextPath;
-    setSandboxPathInput(nextPath);
-  };
-
-  const updateSandboxPathAccess = (nextAccess: 'read_only' | 'read_write') => {
-    sandboxPathAccessRef.current = nextAccess;
-    setSandboxPathAccess(nextAccess);
-  };
 
   const toolCatalog = (() => {
     const raw = settingsConfig?._toolCatalog || {};
@@ -288,19 +262,6 @@ export function AgentTab() {
       setIdentity(settingsConfig._identity || '');
       setIshiki(settingsConfig._ishiki || '');
       setAgentWorkspace(settingsConfig.desk?.home_folder || '');
-      const mode: SandboxMode = settingsConfig.sandbox?.mode === 'full-access'
-        ? 'full-access'
-        : (settingsConfig.sandbox?.mode === 'balanced' ? 'balanced' : 'standard');
-      setSandboxMode(mode);
-      const rules = Array.isArray(settingsConfig.sandbox?.path_rules)
-        ? settingsConfig.sandbox.path_rules
-            .filter((r: any) => r?.path && (r?.access === 'read_only' || r?.access === 'read_write'))
-            .map((r: any) => ({ path: String(r.path), access: r.access }))
-        : [];
-      updateSandboxPathRules(rules);
-      setSandboxConfigOpen(false);
-      updateSandboxPathInput('');
-      updateSandboxPathAccess('read_only');
       const cfgBuiltin = Array.isArray(settingsConfig.tools?.builtin_enabled)
         ? settingsConfig.tools.builtin_enabled.map((name: string) => normalizeBuiltinName(String(name)))
         : [...toolCatalog.builtinRequired, ...toolCatalog.builtinOptional];
@@ -412,101 +373,6 @@ export function AgentTab() {
     if (agentId === currentAgentId) {
       platform?.settingsChanged?.('agent-updated', { agentId, homeFolder: '' });
     }
-  };
-
-  const saveSandbox = async (nextMode: SandboxMode, nextRules: Array<{ path: string; access: 'read_only' | 'read_write' }>) => {
-    await autoSaveConfig({
-      sandbox: {
-        mode: nextMode,
-        path_rules: nextRules,
-      },
-    }, { silent: true });
-  };
-
-  const appendSandboxPathRuleToRules = (
-    baseRules: Array<{ path: string; access: 'read_only' | 'read_write' }>,
-    rawPath: string,
-    access: 'read_only' | 'read_write',
-    notify = true,
-  ) => {
-    const raw = rawPath.trim();
-    if (!raw) return baseRules;
-    if (!ABS_PATH_RE.test(raw)) {
-      if (notify) showToast(t('settings.agent.pathMustAbsolute'), 'error');
-      return null;
-    }
-    if (baseRules.some(r => r.path === raw)) {
-      if (notify) showToast(t('settings.agent.pathDuplicate'), 'error');
-      return null;
-    }
-    return [...baseRules, { path: raw, access }];
-  };
-
-  const finalizeSandboxPathRules = (
-    notify = true,
-    baseRules = sandboxPathRulesRef.current,
-    rawPath = sandboxPathInputRef.current,
-    access = sandboxPathAccessRef.current,
-  ) => {
-    const pending = rawPath.trim();
-    if (!pending) return baseRules;
-    const merged = appendSandboxPathRuleToRules(baseRules, pending, access, notify);
-    if (!merged) return notify ? null : baseRules;
-    return merged;
-  };
-
-  const setSandboxModeAndSave = async (nextMode: SandboxMode) => {
-    let rulesToSave = sandboxPathRulesRef.current;
-    if (sandboxConfigOpen) {
-      const finalized = finalizeSandboxPathRules(false);
-      if (!finalized) return;
-      rulesToSave = finalized;
-      setSandboxConfigOpen(false);
-      updateSandboxPathRules(finalized);
-      updateSandboxPathInput('');
-    }
-    setSandboxMode(nextMode);
-    await saveSandbox(nextMode, rulesToSave);
-  };
-
-  const addSandboxPathRule = async () => {
-    const next = appendSandboxPathRuleToRules(
-      sandboxPathRulesRef.current,
-      sandboxPathInputRef.current,
-      sandboxPathAccessRef.current,
-      true,
-    );
-    if (!next) return;
-    updateSandboxPathRules(next);
-    updateSandboxPathInput('');
-    await saveSandbox(sandboxMode, next);
-  };
-
-  const pickSandboxPathInput = async () => {
-    const folder = await platform?.selectFolder?.();
-    if (!folder) return;
-    updateSandboxPathInput(folder);
-  };
-
-  const openSandboxConfig = () => {
-    updateSandboxPathInput('');
-    updateSandboxPathAccess('read_only');
-    setSandboxConfigOpen(true);
-  };
-
-  const closeSandboxConfigAndSave = async () => {
-    const finalized = finalizeSandboxPathRules(false);
-    if (!finalized) return;
-    setSandboxConfigOpen(false);
-    updateSandboxPathRules(finalized);
-    updateSandboxPathInput('');
-    await saveSandbox(sandboxMode, finalized);
-  };
-
-  const removeSavedSandboxPathRule = async (rulePath: string) => {
-    const next = sandboxPathRulesRef.current.filter(r => r.path !== rulePath);
-    updateSandboxPathRules(next);
-    await saveSandbox(sandboxMode, next);
   };
 
   const setBuiltinEnabledAndSave = async (name: string, enabled: boolean) => {

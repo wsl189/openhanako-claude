@@ -1,3 +1,4 @@
+import fs from "fs";
 import { describe, expect, it } from "vitest";
 import { buildClaudeRuntimeConfig } from "./claude-runtime-config.js";
 
@@ -39,6 +40,34 @@ describe("buildClaudeRuntimeConfig env", () => {
 
     expect(config.options.env.PATH).toBe("/custom/path");
     expect(config.options.env.HANAKO_TEST_ENV).toBe("ok");
+  });
+
+  it("replaces Claude proxy env with the local system proxy", () => {
+    const config = createConfig({
+      env: {
+        http_proxy: "http://localhost:64180",
+        https_proxy: "http://localhost:64180",
+        all_proxy: "socks5://localhost:64181",
+        no_proxy: "localhost,127.0.0.1",
+        HTTP_PROXY: "http://localhost:64180",
+        HTTPS_PROXY: "http://localhost:64180",
+        ALL_PROXY: "socks5://localhost:64181",
+        NO_PROXY: "localhost,127.0.0.1",
+      },
+    });
+
+    expect(config.options.env.http_proxy).toBe("http://127.0.0.1:7897");
+    expect(config.options.env.https_proxy).toBe("http://127.0.0.1:7897");
+    expect(config.options.env.all_proxy).toBe("socks5h://127.0.0.1:7897");
+    expect(config.options.env.HTTP_PROXY).toBe("http://127.0.0.1:7897");
+    expect(config.options.env.HTTPS_PROXY).toBe("http://127.0.0.1:7897");
+    expect(config.options.env.ALL_PROXY).toBe("socks5h://127.0.0.1:7897");
+    expect(config.options.env.no_proxy).toBe("localhost,127.0.0.1,::1");
+    expect(config.options.env.NO_PROXY).toBe("localhost,127.0.0.1,::1");
+    expect(config.options.env.BASH_ENV).toBe("/tmp/agent/.hanako-no-proxy/bash_env");
+    expect(config.options.env.CURL_HOME).toBe("/tmp/agent/.hanako-no-proxy/curl");
+    expect(fs.readFileSync(config.options.env.BASH_ENV, "utf8")).toContain("curl --proxy");
+    expect(fs.readFileSync(`${config.options.env.CURL_HOME}/.curlrc`, "utf8")).toContain('proxy = "http://127.0.0.1:7897"');
   });
 
   it("defaults CLAUDE_CONFIG_DIR to current agent directory", () => {
@@ -83,13 +112,13 @@ describe("buildClaudeRuntimeConfig env", () => {
     const config = createConfig();
     expect(config.options.includePartialMessages).toBe(false);
     expect(config.options.permissionMode).toBe("bypassPermissions");
-    expect(config.options.allowDangerouslySkipPermissions).toBe(false);
+    expect(config.options.allowDangerouslySkipPermissions).toBe(true);
     expect(config.options.settings).toEqual({
       skipWebFetchPreflight: true,
     });
   });
 
-  it("restricts strict sandbox filesystem to workspace and explicit whitelist rules", () => {
+  it("disables sandbox even when legacy sandbox modes/path rules are provided", () => {
     const config = createConfig({
       workspace: "/tmp/workspace",
       toolProfile: {
@@ -103,17 +132,11 @@ describe("buildClaudeRuntimeConfig env", () => {
       },
     });
 
-    expect(config.options.sandbox).toMatchObject({
-      enabled: true,
-      allowUnsandboxedCommands: false,
-      filesystem: {
-        allowRead: ["/tmp/workspace", "/tmp/ro", "/tmp/rw"],
-        allowWrite: ["/tmp/workspace", "/tmp/rw"],
-      },
-    });
+    expect(config.options.sandbox).toEqual({ enabled: false });
+    expect(config.options.allowDangerouslySkipPermissions).toBe(true);
   });
 
-  it("allows sandbox fallback on unsupported win32 runtime", () => {
+  it("keeps sandbox disabled on all platforms", () => {
     const config = createConfig({
       toolProfile: {
         sandbox: {
@@ -121,8 +144,7 @@ describe("buildClaudeRuntimeConfig env", () => {
         },
       },
     });
-    expect(config.options.sandbox.enabled).toBe(true);
-    expect(config.options.sandbox.failIfUnavailable).toBe(process.platform !== "win32");
+    expect(config.options.sandbox).toEqual({ enabled: false });
   });
 
   it("defaults settingSources to user and injects options.tools by default", () => {
@@ -306,6 +328,71 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.mcpServers.MiniMax).toBeUndefined();
     expect(config.options.allowedTools).toEqual([]);
     expect(config.diagnostics?.useMiniMaxMcp).toBe(false);
+  });
+
+  it("keeps tool settings and Skill availability visible in noMemory tool sessions", () => {
+    const calls = [];
+    const config = createConfig({
+      noMemory: true,
+      agent: {
+        personality: "personality only",
+        buildSystemAppendPrompt: (opts) => {
+          calls.push(opts);
+          return [
+            "tool-aware no-memory append",
+            "Standard Claude tools available in this session (only these): Skill / Read",
+            "Hanako/MCP tools available in this session (only these): todo",
+          ].join("\n");
+        },
+      },
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Skill", "Read"],
+          custom_enabled: ["todo"],
+        },
+      },
+      customTools: [
+        { name: "todo", parameters: { type: "object", properties: {} } },
+      ],
+    });
+
+    expect(calls).toEqual([{
+      includeUserProfile: false,
+      includeMemory: false,
+      includeDateTime: false,
+    }]);
+    expect(config.options.systemPrompt.append).toContain("tool-aware no-memory append");
+    expect(config.options.systemPrompt.append).toContain("Skill / Read");
+    expect(config.options.allowedTools).toEqual(["Skill", "Read", "mcp__hanako__*"]);
+    expect(config.diagnostics?.customToolsLoaded).toEqual(["todo"]);
+  });
+
+  it("uses personality-only prompt for noMemory sessions when tools are disabled", () => {
+    let called = false;
+    const config = createConfig({
+      noMemory: true,
+      noTools: true,
+      agent: {
+        personality: "personality only",
+        buildSystemAppendPrompt: () => {
+          called = true;
+          return "should not appear";
+        },
+      },
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Skill", "Read"],
+          custom_enabled: ["todo"],
+        },
+      },
+      customTools: [
+        { name: "todo", parameters: { type: "object", properties: {} } },
+      ],
+    });
+
+    expect(called).toBe(false);
+    expect(config.options.systemPrompt.append).toBe("personality only");
+    expect(config.options.allowedTools).toEqual([]);
   });
 
   it("auto-attaches claude-in-chrome MCP server when extension is installed", () => {
@@ -616,11 +703,35 @@ describe("buildClaudeRuntimeConfig env", () => {
     });
     expect(allowed).toMatchObject({
       behavior: "allow",
-      updatedInput: { command: "npm test" },
     });
+    expect(allowed.updatedInput.command).toContain("unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY");
+    expect(allowed.updatedInput.command).toContain('export http_proxy="http://127.0.0.1:7897"');
+    expect(allowed.updatedInput.command).toContain("npm test");
   });
 
-  it("denies Bash path access outside workspace/path_rules in strict mode", async () => {
+  it("strips proxy variables from allowed Bash commands", async () => {
+    const config = createConfig();
+    const decision = await config.options.canUseTool("Bash", {
+      command: "curl -v https://mkapi2.dfcfs.com/finskillshub/api/claw/query",
+      description: "probe",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-proxy",
+    });
+
+    expect(decision).toMatchObject({
+      behavior: "allow",
+      updatedInput: {
+        description: "probe",
+      },
+    });
+    expect(decision.updatedInput.command).toBe([
+      'unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY; export http_proxy="http://127.0.0.1:7897" https_proxy="http://127.0.0.1:7897" HTTP_PROXY="http://127.0.0.1:7897" HTTPS_PROXY="http://127.0.0.1:7897";',
+      "curl -v https://mkapi2.dfcfs.com/finskillshub/api/claw/query",
+    ].join("\n"));
+  });
+
+  it("allows Bash path access outside legacy workspace/path_rules when sandbox is disabled", async () => {
     const config = createConfig({
       workspace: "/tmp/workspace",
       toolProfile: {
@@ -631,14 +742,13 @@ describe("buildClaudeRuntimeConfig env", () => {
       },
     });
 
-    const denied = await config.options.canUseTool("Bash", {
+    const outside = await config.options.canUseTool("Bash", {
       command: "ls -la /tmp/outside",
     }, {
       signal: new AbortController().signal,
       toolUseID: "tool-bash-4",
     });
-    expect(denied).toMatchObject({ behavior: "deny" });
-    expect(denied.message).toContain("/tmp/outside");
+    expect(outside).toMatchObject({ behavior: "allow" });
 
     const allowedWorkspace = await config.options.canUseTool("Bash", {
       command: "ls -la /tmp/workspace",
@@ -657,7 +767,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(allowedWhitelist).toMatchObject({ behavior: "allow" });
   });
 
-  it("denies Write/Edit paths outside workspace/path_rules in strict mode", async () => {
+  it("allows Write/Edit paths outside legacy workspace/path_rules when sandbox is disabled", async () => {
     const config = createConfig({
       workspace: "/tmp/workspace",
       toolProfile: {
@@ -668,15 +778,14 @@ describe("buildClaudeRuntimeConfig env", () => {
       },
     });
 
-    const denied = await config.options.canUseTool("Write", {
+    const outside = await config.options.canUseTool("Write", {
       file_path: "/tmp/outside/file.txt",
       content: "x",
     }, {
       signal: new AbortController().signal,
       toolUseID: "tool-write-outside",
     });
-    expect(denied).toMatchObject({ behavior: "deny" });
-    expect(String(denied.message || "")).toContain("/tmp/outside/file.txt");
+    expect(outside).toMatchObject({ behavior: "allow" });
 
     const allowedWorkspace = await config.options.canUseTool("Write", {
       file_path: "/tmp/workspace/file.txt",
@@ -723,7 +832,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(deniedRead).toMatchObject({ behavior: "deny" });
   });
 
-  it("allows outside path inspection in balanced mode (sandbox policy governs runtime execution)", async () => {
+  it("ignores legacy balanced mode and keeps outside path inspection allowed", async () => {
     const config = createConfig({
       workspace: "/tmp/workspace",
       toolProfile: {

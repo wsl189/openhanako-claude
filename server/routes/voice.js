@@ -5,6 +5,33 @@ const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 const TRANSCRIBE_TIMEOUT_MS = 45_000;
 const TEST_AUDIO_DURATION_SEC = 0.45;
 const TEST_AUDIO_SAMPLE_RATE = 16_000;
+const AUDIO_MIME_BY_EXT = {
+  mp3: "audio/mpeg",
+  ogg: "audio/ogg",
+  wav: "audio/wav",
+  m4a: "audio/mp4",
+  opus: "audio/opus",
+  amr: "audio/amr",
+  silk: "audio/silk",
+  aac: "audio/aac",
+  flac: "audio/flac",
+  webm: "audio/webm",
+  weba: "audio/webm",
+};
+const AUDIO_EXT_BY_MIME = {
+  "audio/mpeg": "mp3",
+  "audio/ogg": "ogg",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/mp4": "m4a",
+  "audio/aac": "aac",
+  "audio/opus": "opus",
+  "audio/amr": "amr",
+  "audio/3gpp": "amr",
+  "audio/silk": "silk",
+  "audio/flac": "flac",
+  "audio/webm": "webm",
+};
 
 function stripTrailingSlash(url) {
   return String(url || "").replace(/\/+$/, "");
@@ -106,6 +133,43 @@ function parseErrorMessage(data, fallback) {
   ).trim();
 }
 
+function normalizeAudioExt(pathLike = "") {
+  const raw = String(pathLike || "").trim();
+  if (!raw) return "";
+  const clean = raw.split(/[?#]/)[0];
+  const name = clean.split("/").pop() || clean;
+  const m = /\.([a-zA-Z0-9]{1,12})$/.exec(name);
+  return m?.[1]?.toLowerCase() || "";
+}
+
+function inferAudioMimeFromPath(pathLike = "") {
+  const ext = normalizeAudioExt(pathLike);
+  return AUDIO_MIME_BY_EXT[ext] || "";
+}
+
+function inferAudioExtFromMime(mimeType = "") {
+  const lower = String(mimeType || "").trim().toLowerCase().split(";")[0];
+  return AUDIO_EXT_BY_MIME[lower] || "";
+}
+
+function normalizeAudioMime(mimeType = "", pathLike = "") {
+  const raw = String(mimeType || "").trim().toLowerCase();
+  if (!raw || raw === "voice" || raw === "audio" || raw === "application/octet-stream") {
+    return inferAudioMimeFromPath(pathLike);
+  }
+  if (raw.startsWith("audio/")) {
+    return raw.split(";")[0];
+  }
+  if (raw === "amr") return "audio/amr";
+  if (raw === "silk") return "audio/silk";
+  if (raw === "wav") return "audio/wav";
+  if (raw === "mp3") return "audio/mpeg";
+  if (raw === "ogg") return "audio/ogg";
+  if (raw === "m4a") return "audio/mp4";
+  if (raw === "weba" || raw === "webm") return "audio/webm";
+  return inferAudioMimeFromPath(pathLike);
+}
+
 function buildTranscriptionEndpointCandidates(baseUrl) {
   const trimmed = stripTrailingSlash(baseUrl);
   if (!trimmed) return [];
@@ -119,19 +183,21 @@ function buildTranscriptionEndpointCandidates(baseUrl) {
     candidates.push(endpoint);
   };
 
-  push(`${trimmed}/audio/transcriptions`);
-
   try {
     const parsed = new URL(trimmed);
     const pathname = String(parsed.pathname || "").replace(/\/+$/, "");
     const origin = `${parsed.protocol}//${parsed.host}`;
     if (pathname.endsWith("/v1")) {
+      push(`${trimmed}/audio/transcriptions`);
+      push(`${origin}/v1/audio/transcriptions`);
       push(`${origin}/audio/transcriptions`);
     } else {
       push(`${trimmed}/v1/audio/transcriptions`);
+      push(`${trimmed}/audio/transcriptions`);
     }
   } catch {
-    // ignore invalid url parsing
+    push(`${trimmed}/v1/audio/transcriptions`);
+    push(`${trimmed}/audio/transcriptions`);
   }
 
   return candidates;
@@ -172,6 +238,7 @@ async function transcribeViaProvider({
   audioBuffer,
   mimeType,
   language,
+  fileName = "",
   modelHints = [],
 }) {
   const modelCandidates = [...new Set(modelHints.filter(Boolean).map((m) => String(m).trim()).filter(Boolean))];
@@ -189,14 +256,18 @@ async function transcribeViaProvider({
   let lastError = "Voice transcription failed";
   let lastStatus = 0;
   let lastEndpoint = "";
+  let preferredError = null;
+  const uploadMimeType = normalizeAudioMime(mimeType, fileName) || "audio/webm";
+  const uploadExt = normalizeAudioExt(fileName) || inferAudioExtFromMime(uploadMimeType) || "webm";
+  const uploadName = `voice-input.${uploadExt}`;
 
   for (const endpoint of endpointCandidates) {
     for (const model of modelCandidates) {
       const form = new FormData();
       form.append(
         "file",
-        new Blob([audioBuffer], { type: mimeType || "audio/webm" }),
-        "voice-input.webm",
+        new Blob([audioBuffer], { type: uploadMimeType }),
+        uploadName,
       );
       form.append("model", model);
       if (language) form.append("language", language);
@@ -225,6 +296,9 @@ async function transcribeViaProvider({
         lastError = message;
         lastStatus = Number(res.status || 0);
         lastEndpoint = endpoint;
+        if (res.status !== 404 && !preferredError) {
+          preferredError = { message, endpoint, status: Number(res.status || 0) };
+        }
         // 模型不支持或端点找不到时，尝试下一个候选。
         if (res.status === 400 || res.status === 404) continue;
         throw new Error(message);
@@ -240,10 +314,10 @@ async function transcribeViaProvider({
     }
   }
 
-  const notFoundSuffix = lastStatus === 404 && lastEndpoint
-    ? ` (endpoint: ${lastEndpoint})`
-    : "";
-  throw new Error(`${lastError}${notFoundSuffix}`);
+  const finalMessage = preferredError?.message || lastError;
+  const finalEndpoint = preferredError?.endpoint || lastEndpoint;
+  const endpointSuffix = finalEndpoint ? ` (endpoint: ${finalEndpoint})` : "";
+  throw new Error(`${finalMessage}${endpointSuffix}`);
 }
 
 export default async function voiceRoute(app, { engine }) {
@@ -305,6 +379,7 @@ export default async function voiceRoute(app, { engine }) {
         audioBuffer,
         mimeType,
         language,
+        fileName: String(body.fileName || ""),
         modelHints,
       });
 
@@ -362,6 +437,7 @@ export default async function voiceRoute(app, { engine }) {
         target,
         audioBuffer: createSilentWavBuffer(),
         mimeType: "audio/wav",
+        fileName: "voice-test.wav",
         language: normalizeLanguage(body.language || "en"),
         modelHints,
       });

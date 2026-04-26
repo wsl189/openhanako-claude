@@ -1666,7 +1666,7 @@
     },
     "askAgent": {
       "label": "Cross-Agent Call",
-      "description": "Assign a task to one or more agents and get immediate results. The target agents process tasks on the spot and respond, and you can relay the results to the user.\nGood for: code review, translation, domain-specific analysis, or any task requiring instant feedback.\nTarget agents respond with their own persona and model, have read-only tools (read files, search, web fetch), and cannot write files or call other agents.\nIn channel mode, pass channel so called agents post directly in that channel as themselves; when multiple agents are provided, calls run in parallel.",
+      "description": "Assign a task to one or more agents and get immediate results. The target agents process tasks on the spot and respond, and you can relay the results to the user.\nGood for: code review, translation, domain-specific analysis, or any task requiring instant feedback.\nTarget agents respond with their own persona and model, can use their enabled Skills, and can only use tools allowed by that agent's Tool Permissions settings.\nIn channel mode, pass channel so called agents post directly in that channel as themselves; when multiple agents are provided, calls run in parallel.",
       "agentDesc": "Target agent's ID",
       "agentsDesc": "Optional array of target agent IDs. If provided, calls run in parallel",
       "taskDesc": "Task description (the full prompt the other agent sees)",
