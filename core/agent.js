@@ -715,6 +715,7 @@ export class Agent {
         "- **只有当" + this.userName + "提到了相关内容，记忆才参与进来。** " + this.userName + "没有提起的话题，你不要主动从记忆里翻出来讲。不要因为记忆里有某条信息就觉得\"我应该提一下\"。记忆参与的方式是无声的：影响你的角度、语气、判断，但不出现在文字里。",
         "- **永远不要让" + this.userName + "感觉到\"记忆\"这个东西的存在。** 禁止使用\"我记得\"\"你之前说过\"\"根据记忆\"这类表述。除非" + this.userName + "主动问\"你还记得 xxx 吗\"。",
         "- **记忆可能过时，当前对话永远优先。** 信息冲突时以对话为准，不要用旧记忆纠正" + this.userName + "。",
+        "- **每条记忆都必须结合记录时间判断是否仍然有效。** 股票/基金/仓位/账户余额、所在地、当前工作、正在进行的项目、临时计划、健康状态、关系状态等都属于可能变化的状态事实。除非当前对话确认、记忆本身有明确仍有效的证据，或记录时间非常接近且没有变化迹象，否则不要把它直接当成现在事实；只能作为历史线索、上次记录或需要确认的信息来处理。",
         "- **不要在 projects 目录下创建任何 memory/MEMORY.md/user_role.md 之类文件。** 当用户让你“记住”某事时，使用内置记忆流程或 pin_memory / unpin_memory 工具，不要写项目内记忆文件。",
       ].join("\n") : [
         "",
@@ -725,6 +726,7 @@ export class Agent {
         "- **Memory only participates when " + this.userName + " brings up something related.** If " + this.userName + " hasn't touched on a topic, don't pull it from memory. Don't think \"I should mention this\" just because it's in your memory. When memory does participate, it's silent: shaping your angle, tone, and judgment, but never appearing in the text itself.",
         "- **Never let " + this.userName + " sense that \"memory\" exists as a thing.** Never use phrases like \"I remember,\" \"you mentioned before,\" or \"based on my memory.\" The only exception is when " + this.userName + " explicitly asks \"do you remember xxx.\"",
         "- **Memory can be outdated; the current conversation always takes priority.** When information conflicts, go with the conversation. Don't use old memories to correct " + this.userName + ".",
+        "- **Judge every memory against its recorded time before treating it as still valid.** Stocks/funds/positions/account balances, location, current job, active projects, temporary plans, health status, relationship status, and similar stateful facts can change. Unless the current conversation confirms it, the memory itself gives clear evidence that it remains valid, or it was recorded very recently with no sign of change, do not treat it as a present-tense fact; use it only as historical context, last-known state, or something to confirm.",
         "- **Do not create project-local memory files such as projects/*/memory/MEMORY.md or user_role.md.** When the user asks you to remember something, use the built-in memory flow or pin_memory / unpin_memory tools instead.",
       ].join("\n");
       const memoryTimelinessLegend = isZh ? [
@@ -735,6 +737,7 @@ export class Agent {
         "- `(persistent)`：长期稳定事实（身份、长期偏好、长期背景），通常持续有效，直到出现明确新信息。",
         "- `(stateful)`：当前状态事实（正在做什么/是否持有/当前安排等），可能变化。若时间较久或与当前对话冲突，优先当前对话。",
         "- `(ephemeral)`：短期临时事实（临时安排、一次性状态），最容易过期。若不在近期上下文内，默认低置信度处理。",
+        "- 对“现在是否仍然如此”的问题，如果只有旧的 `(stateful)` / `(ephemeral)` 记忆支撑，回答时必须保守：说明只能知道上次记录的状态，或先询问/检索/确认，不要直接断言当前仍有效。",
       ].join("\n") : [
         "",
         "## Memory Timeliness Legend",
@@ -743,14 +746,15 @@ export class Agent {
         "- `(persistent)`: long-term stable facts (identity, durable preferences, background). Usually valid until explicit new evidence appears.",
         "- `(stateful)`: current-state facts (what is currently happening/holding status/current plans). Can change; if old or conflicting, prefer current dialogue.",
         "- `(ephemeral)`: short-lived temporary facts (temporary arrangements, one-off states). Most likely to expire; treat with low confidence unless recently reaffirmed.",
+        "- For questions about whether something is true now, if the only support is an old `(stateful)` or `(ephemeral)` memory, answer conservatively: treat it as the last-known state or ask/search/confirm before making a present-tense claim.",
       ].join("\n");
 
       if (pinnedMd.trim()) {
         parts.push(...section(
           isZh ? "# 置顶记忆" : "# Pinned Memories",
           isZh
-            ? "用户主动要求你记住的内容，始终保留。你可以读写这些记忆。\n" + memoryRule + "\n" + memoryTimelinessLegend + "\n\n" + pinnedMd
-            : "Content the user explicitly asked you to remember. Always retained. You can read and write these memories.\n" + memoryRule + "\n" + memoryTimelinessLegend + "\n\n" + pinnedMd
+            ? "用户主动要求你记住的内容，始终保留。你可以读写这些记忆。注意：始终保留不等于始终按当前事实采信；带时效的置顶内容仍要按记录时间判断有效性。\n" + memoryRule + "\n" + memoryTimelinessLegend + "\n\n" + pinnedMd
+            : "Content the user explicitly asked you to remember. Always retained. You can read and write these memories. Note: always retained does not mean always currently true; time-sensitive pinned content still has to be judged by its recorded time.\n" + memoryRule + "\n" + memoryTimelinessLegend + "\n\n" + pinnedMd
         ));
       }
       const trimmedMemory = memory.trim();

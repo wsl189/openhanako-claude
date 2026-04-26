@@ -8,6 +8,31 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSessionRuntime } from "./claude-session-runtime.js";
 
 describe("ClaudeSessionRuntime resume recovery", () => {
+  it("returns cached context usage before SDK query starts", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "s1",
+      resumeSessionId: "s1",
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-cached-context.json",
+      options: {},
+      initialContextUsage: {
+        tokens: 12345,
+        contextWindow: 200000,
+        percent: 6,
+      },
+    });
+
+    await expect(runtime.refreshContextUsage()).resolves.toEqual({
+      tokens: 12345,
+      contextWindow: 200000,
+      percent: 6,
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("forces includePartialMessages=false for SDK query", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();

@@ -148,6 +148,21 @@ function toContextUsageSnapshot(usage, fallbackUsage = null) {
   };
 }
 
+function normalizeContextUsageSnapshot(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const tokens = Number.isFinite(raw.tokens) ? Number(raw.tokens) : null;
+  const contextWindow = Number.isFinite(raw.contextWindow) ? Number(raw.contextWindow) : null;
+  const percent = Number.isFinite(raw.percent)
+    ? Math.max(0, Math.min(100, Math.round(Number(raw.percent))))
+    : (
+      tokens != null && contextWindow
+        ? Math.min(100, Math.round((tokens / contextWindow) * 100))
+        : null
+    );
+  if (tokens == null && contextWindow == null && percent == null) return null;
+  return { tokens, contextWindow, percent };
+}
+
 export class ClaudeSessionRuntime {
   constructor({
     sessionId = null,
@@ -155,6 +170,7 @@ export class ClaudeSessionRuntime {
     cwd,
     sessionPath,
     options,
+    initialContextUsage = null,
   }) {
     this.sessionId = sessionId;
     this.resumeSessionId = resumeSessionId;
@@ -181,7 +197,7 @@ export class ClaudeSessionRuntime {
     this._pendingTurn = null;
     this._pendingCompaction = null;
     this._lastUsage = null;
-    this._lastContextUsage = null;
+    this._lastContextUsage = normalizeContextUsageSnapshot(initialContextUsage);
     this.isCompacting = false;
     this._query = null;
     this._pumpPromise = null;
@@ -190,6 +206,21 @@ export class ClaudeSessionRuntime {
     this._activeCompactionTrigger = null;
     this._allowSessionNotFoundRetry = false;
     this._abortRequested = false;
+  }
+
+  _persistContextUsageSnapshot(snapshot) {
+    const normalized = normalizeContextUsageSnapshot(snapshot);
+    if (!this.sessionPath || !normalized) return;
+    try {
+      patchSessionMetadata(this.sessionPath, {
+        contextUsage: {
+          ...normalized,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    } catch {
+      // ignore metadata patch failures
+    }
   }
 
   _syncSessionId(nextSessionId) {
@@ -592,17 +623,23 @@ export class ClaudeSessionRuntime {
     if (!this._query?.getContextUsage) {
       if (fallbackUsage) {
         this._lastContextUsage = toContextUsageSnapshot(null, fallbackUsage);
+        this._persistContextUsageSnapshot(this._lastContextUsage);
       }
       return this._lastContextUsage;
     }
 
     try {
       const usage = await this._query.getContextUsage();
-      this._lastContextUsage = toContextUsageSnapshot(usage, fallbackUsage || this._lastUsage);
+      const nextContextUsage = toContextUsageSnapshot(usage, fallbackUsage || this._lastUsage);
+      if (nextContextUsage) {
+        this._lastContextUsage = nextContextUsage;
+        this._persistContextUsageSnapshot(this._lastContextUsage);
+      }
       return this._lastContextUsage;
     } catch {
       if (!this._lastContextUsage && fallbackUsage) {
         this._lastContextUsage = toContextUsageSnapshot(null, fallbackUsage);
+        this._persistContextUsageSnapshot(this._lastContextUsage);
       }
       return this._lastContextUsage;
     }

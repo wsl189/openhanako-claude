@@ -754,6 +754,7 @@ export class SessionCoordinator {
       cwd: normalizedCwd,
       sessionPath,
       options: runtimeConfig.options,
+      initialContextUsage: metadata?.contextUsage || null,
     });
     runtime.model = model;
     if (sessionPath && resolvedModelRef && resolvedModelRef !== metadata?.model) {
