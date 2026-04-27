@@ -163,6 +163,52 @@ function normalizeContextUsageSnapshot(raw) {
   return { tokens, contextWindow, percent };
 }
 
+function shouldLogContextUsage() {
+  const raw = String(process.env.HANAKO_CONTEXT_USAGE_LOG || "").trim();
+  return /^(1|true|yes|on)$/i.test(raw);
+}
+
+function formatUsageList(items = [], nameKey = "name", limit = 12) {
+  if (!Array.isArray(items) || items.length === 0) return "(none)";
+  return items
+    .slice()
+    .sort((a, b) => Number(b?.tokens || 0) - Number(a?.tokens || 0))
+    .slice(0, limit)
+    .map((item) => {
+      const name = String(item?.[nameKey] || item?.name || item?.categoryName || "(unnamed)");
+      const tokens = Number.isFinite(item?.tokens) ? item.tokens : 0;
+      const suffix = item?.isLoaded != null ? ` loaded=${!!item.isLoaded}` : "";
+      return `${name}:${tokens}${suffix}`;
+    })
+    .join(", ");
+}
+
+function buildContextUsageLog(usage, snapshot) {
+  if (!usage && !snapshot) return "";
+  const total = usage?.totalTokens ?? snapshot?.tokens ?? "?";
+  const max = usage?.maxTokens ?? usage?.rawMaxTokens ?? snapshot?.contextWindow ?? "?";
+  const percent = usage?.percentage != null ? Math.round(usage.percentage) : (snapshot?.percent ?? "?");
+  const lines = [
+    `[context-usage] total=${total}/${max} (${percent}%) model=${usage?.model || "unknown"}`,
+  ];
+  if (usage?.categories) lines.push(`[context-usage] categories: ${formatUsageList(usage.categories)}`);
+  if (usage?.systemPromptSections) lines.push(`[context-usage] systemPromptSections: ${formatUsageList(usage.systemPromptSections)}`);
+  if (usage?.systemTools) lines.push(`[context-usage] systemTools: ${formatUsageList(usage.systemTools)}`);
+  if (usage?.deferredBuiltinTools) lines.push(`[context-usage] deferredBuiltinTools: ${formatUsageList(usage.deferredBuiltinTools)}`);
+  if (usage?.mcpTools) lines.push(`[context-usage] mcpTools: ${formatUsageList(usage.mcpTools)}`);
+  if (usage?.skills) {
+    const skills = usage.skills;
+    lines.push(`[context-usage] skills: total=${skills.totalSkills ?? "?"} included=${skills.includedSkills ?? "?"} tokens=${skills.tokens ?? "?"}`);
+    lines.push(`[context-usage] skillFrontmatter: ${formatUsageList(skills.skillFrontmatter)}`);
+  }
+  if (usage?.memoryFiles) lines.push(`[context-usage] memoryFiles: ${formatUsageList(usage.memoryFiles, "path")}`);
+  if (usage?.messageBreakdown) {
+    const mb = usage.messageBreakdown;
+    lines.push(`[context-usage] messages: toolCalls=${mb.toolCallTokens ?? 0}, toolResults=${mb.toolResultTokens ?? 0}, attachments=${mb.attachmentTokens ?? 0}`);
+  }
+  return lines.join("\n");
+}
+
 export class ClaudeSessionRuntime {
   constructor({
     sessionId = null,
@@ -206,6 +252,7 @@ export class ClaudeSessionRuntime {
     this._activeCompactionTrigger = null;
     this._allowSessionNotFoundRetry = false;
     this._abortRequested = false;
+    this._lastContextUsageLogKey = "";
   }
 
   _persistContextUsageSnapshot(snapshot) {
@@ -634,6 +681,19 @@ export class ClaudeSessionRuntime {
       if (nextContextUsage) {
         this._lastContextUsage = nextContextUsage;
         this._persistContextUsageSnapshot(this._lastContextUsage);
+      }
+      if (shouldLogContextUsage()) {
+        const logKey = JSON.stringify({
+          total: usage?.totalTokens ?? nextContextUsage?.tokens ?? null,
+          skills: usage?.skills?.tokens ?? null,
+          tools: usage?.categories?.find?.((c) => c?.name === "tools")?.tokens ?? null,
+          messages: usage?.categories?.find?.((c) => c?.name === "messages")?.tokens ?? null,
+        });
+        if (logKey !== this._lastContextUsageLogKey) {
+          this._lastContextUsageLogKey = logKey;
+          const text = buildContextUsageLog(usage, nextContextUsage);
+          if (text) console.log(text);
+        }
       }
       return this._lastContextUsage;
     } catch {

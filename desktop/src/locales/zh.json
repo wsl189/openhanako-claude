@@ -548,6 +548,7 @@
       "memory": "记忆",
       "work": "工作",
       "skills": "技能",
+      "mcp": "MCP",
       "bridge": "社交平台",
       "about": "关于"
     },
@@ -626,6 +627,10 @@
       "builtinTools": "内建工具",
       "customTools": "自定义工具",
       "customToolsEmpty": "当前没有可配置的自定义工具",
+      "externalMcpTools": "外部 MCP",
+      "externalMcpEmpty": "请先在 MCP 页签添加外部 MCP",
+      "externalMcpHint": "类型：{type}；启用后允许调用 {prefix}",
+      "externalMcpManagedHint": "MCP Server：{server}；启用后允许调用 {prefix}",
       "builtinLocked": "必开工具，不能关闭",
       "toolsExpand": "展开",
       "toolsCollapse": "收起",
@@ -994,6 +999,40 @@
         "body2": "关闭后，所有技能将不经审查直接安装。",
         "confirm": "我了解风险，关闭审查"
       }
+    },
+    "mcp": {
+      "title": "外部 MCP",
+      "desc": "添加全局外部 MCP Server。每个助手都能在外部 MCP 列表中单独控制是否启用。",
+      "name": "名称",
+      "namePlaceholder": "例如 context7",
+      "type": "类型",
+      "command": "命令",
+      "commandPlaceholder": "例如 npx 或 uvx",
+      "args": "参数",
+      "argsPlaceholder": "每行一个参数，或填写 JSON 数组",
+      "env": "环境变量 JSON",
+      "url": "服务 URL",
+      "headers": "请求头 JSON",
+      "builtinMcp": "内置 MCP",
+      "disabled": "先保存为停用",
+      "add": "添加 / 更新",
+      "added": "已添加的 MCP",
+      "empty": "暂无外部 MCP",
+      "delete": "删除 MCP",
+      "deleteConfirm": "确定删除 MCP「{name}」？新对话将不再加载它。",
+      "deleteTitle": "删除 {name}？",
+      "deleteDesc": "这会从当前助手移除此 MCP，新对话将不再加载它。",
+      "deleted": "已删除 MCP",
+      "nameRequired": "请输入 MCP 名称",
+      "commandRequired": "请输入启动命令",
+      "urlRequired": "请输入服务 URL",
+      "argsInvalid": "参数必须是 JSON 数组",
+      "envInvalid": "环境变量必须是 JSON 对象",
+      "headersInvalid": "请求头必须是 JSON 对象",
+      "statusDisabled": "已停用",
+      "noCommand": "未配置命令",
+      "envKeys": "环境变量",
+      "headerKeys": "请求头"
     },
     "bridge": {
       "telegram": "Telegram",
@@ -1617,6 +1656,10 @@
     "computerUse": {
       "label": "电脑控制",
       "description": "通过本地桌面自动化能力操作电脑应用（截图、点击、输入、滚动、快捷键）。启用后会暴露 mcp__computer_use__* 工具，适合需要真实 GUI 操作的任务。"
+    },
+    "claudeInChrome": {
+      "label": "Claude in Chrome",
+      "description": "通过已登录的 Chrome 和浏览器扩展操作真实标签页。启用后会暴露 mcp__claude_in_chrome__* 工具。"
     },
     "minimaxMcpWebSearch": {
       "label": "MiniMax 网络搜索",

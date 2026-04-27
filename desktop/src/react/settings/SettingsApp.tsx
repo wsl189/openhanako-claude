@@ -13,6 +13,7 @@ import { InterfaceTab } from './tabs/InterfaceTab';
 import { SkillsTab } from './tabs/SkillsTab';
 import { BridgeTab } from './tabs/BridgeTab';
 import { ProvidersTab } from './tabs/ProvidersTab';
+import { McpTab } from './tabs/McpTab';
 import { CropOverlay } from './overlays/CropOverlay';
 import { AgentCreateOverlay } from './overlays/AgentCreateOverlay';
 import { AgentDeleteOverlay } from './overlays/AgentDeleteOverlay';
@@ -30,6 +31,7 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   me: MeTab,
   interface: InterfaceTab,
   skills: SkillsTab,
+  mcp: McpTab,
   bridge: BridgeTab,
   providers: ProvidersTab,
 };

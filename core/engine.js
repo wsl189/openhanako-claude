@@ -35,9 +35,13 @@ import { SimpleResourceLoader } from "./skill-loader.js";
 import { CLAUDE_BUILTIN_TOOL_NAMES, HANAKO_TO_CLAUDE_BUILTIN } from "./claude-runtime-config.js";
 import { createSandboxedTools } from "../lib/sandbox/index.js";
 import { normalizeModelRef } from "./model-ref.js";
+import { cleanupStartupArtifacts } from "./session-env-cleanup.js";
 
 const REQUIRED_BUILTIN_TOOLS = ["Read", "Glob", "Grep"];
-const OPTIONAL_BUILTIN_TOOLS = CLAUDE_BUILTIN_TOOL_NAMES.filter((name) => !REQUIRED_BUILTIN_TOOLS.includes(name));
+const DISABLED_BUILTIN_TOOLS = new Set(["RemoteTrigger"]);
+const OPTIONAL_BUILTIN_TOOLS = CLAUDE_BUILTIN_TOOL_NAMES
+  .filter((name) => !REQUIRED_BUILTIN_TOOLS.includes(name))
+  .filter((name) => !DISABLED_BUILTIN_TOOLS.has(name));
 const ALL_BUILTIN_TOOL_NAMES = [...REQUIRED_BUILTIN_TOOLS, ...OPTIONAL_BUILTIN_TOOLS];
 const LEGACY_OPTIONAL_BUILTIN_DEFAULT = new Set(["Write", "Edit", "Bash"]);
 const PATH_RULE_ACCESS = new Set(["read_only", "read_write"]);
@@ -209,6 +213,9 @@ export class HanaEngine {
   getAgent(agentId) { return this._agentMgr.getAgent(agentId); }
   get currentAgentId() { return this._agentMgr.activeAgentId; }
   get confirmStore() { return this._confirmStore; }
+  getExternalMcpServers() { return this._prefs.getExternalMcpServers(); }
+  patchExternalMcpServers(patch) { return this._prefs.patchExternalMcpServers(patch); }
+  refreshCurrentSessionTools() { return this._sessionCoord.refreshCurrentSessionTools(); }
 
   // 向后兼容 getter
   get agentDir() { return this.agent?.agentDir || path.join(this.agentsDir, this.currentAgentId); }
@@ -465,10 +472,37 @@ export class HanaEngine {
     }
     log(`[init] 2/5 ${this._agentMgr.agents.size} 个 agent 已就绪`);
 
+    const skillsDir = path.join(this.hanakoHome, "skills");
+    const startupCleanup = cleanupStartupArtifacts({
+      hanakoHome: this.hanakoHome,
+      agentsDir: this.agentsDir,
+      skillsDir,
+    });
+    if (
+      startupCleanup.rootsScanned > 0
+      || startupCleanup.dirsRemoved > 0
+      || startupCleanup.filesRemoved > 0
+      || startupCleanup.finderFilesRemoved > 0
+      || startupCleanup.tempDirsRemoved > 0
+      || startupCleanup.emptyShellSnapshotDirsRemoved > 0
+      || startupCleanup.errors > 0
+    ) {
+      log(
+        `[init] 启动清理: agents=${startupCleanup.agentsScanned}, `
+        + `sessionEnvRoots=${startupCleanup.rootsScanned}, `
+        + `sessionEnvDirs=${startupCleanup.dirsRemoved}, `
+        + `sessionEnvFiles=${startupCleanup.filesRemoved}, `
+        + `finderFiles=${startupCleanup.finderFilesRemoved}, `
+        + `skillTempDirs=${startupCleanup.tempDirsRemoved}, `
+        + `emptyShellSnapshots=${startupCleanup.emptyShellSnapshotDirsRemoved}, `
+        + `kept=${startupCleanup.dirsKept + startupCleanup.tempDirsKept + startupCleanup.emptyShellSnapshotDirsKept}, `
+        + `errors=${startupCleanup.errors}`
+      );
+    }
+
     // 3. ResourceLoader + Skills
     log(`[init] 3/5 ResourceLoader 初始化...`);
     const t_rl = Date.now();
-    const skillsDir = path.join(this.hanakoHome, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });
 
     this._skills = new SkillManager({ skillsDir, agentsDir: this.agentsDir });

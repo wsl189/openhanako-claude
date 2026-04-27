@@ -145,6 +145,24 @@ const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
   generate_images: 'toolDef.generateImages.description',
   pdf2md: 'toolDef.pdf2md.description',
 };
+const MANAGED_EXTERNAL_MCP_TOOLS = [
+  {
+    name: 'claude_in_chrome',
+    serverName: 'claude_in_chrome',
+    prefix: 'mcp__claude_in_chrome__*',
+    labelKey: 'toolDef.claudeInChrome.label',
+    descKey: 'toolDef.claudeInChrome.description',
+  },
+  {
+    name: 'computer_use',
+    serverName: 'computer_use',
+    prefix: 'mcp__computer_use__*',
+    label: 'Computer Use',
+    labelKey: 'toolDef.computerUse.label',
+    descKey: 'toolDef.computerUse.description',
+  },
+];
+const MANAGED_EXTERNAL_MCP_TOOL_NAMES = new Set(MANAGED_EXTERNAL_MCP_TOOLS.map(tool => tool.name));
 
 function getBuiltinDisplayName(name: string): string {
   return BUILTIN_CLAUDE_DISPLAY_NAMES[name] || name;
@@ -230,6 +248,7 @@ export function AgentTab() {
   const [customEnabled, setCustomEnabled] = useState<string[]>([]);
   const [builtinExpanded, setBuiltinExpanded] = useState(false);
   const [customExpanded, setCustomExpanded] = useState(false);
+  const [externalMcpExpanded, setExternalMcpExpanded] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [expCategories, setExpCategories] = useState<ExpCategory[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
@@ -245,6 +264,22 @@ export function AgentTab() {
     const custom = Array.isArray(raw.custom) ? raw.custom.map(String) : [];
     return { builtinRequired, builtinOptional, custom };
   })();
+  const visibleCustomTools = toolCatalog.custom.filter((name: string) => !MANAGED_EXTERNAL_MCP_TOOL_NAMES.has(name));
+  const managedExternalMcpEntries = MANAGED_EXTERNAL_MCP_TOOLS
+    .filter(tool => toolCatalog.custom.includes(tool.name));
+  const externalMcpServers = (() => {
+    const raw = settingsConfig?.mcp?.external_servers;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {} as Record<string, any>;
+    return raw as Record<string, any>;
+  })();
+  const externalMcpEntries = Object.entries(externalMcpServers)
+    .filter(([, server]) => server && typeof server === 'object')
+    .sort(([a], [b]) => a.localeCompare(b));
+  const disabledExternalMcpServers = new Set<string>(
+    Array.isArray(settingsConfig?.mcp?.disabled_servers)
+      ? settingsConfig.mcp.disabled_servers.map((name: string) => String(name || '').trim()).filter(Boolean)
+      : [],
+  );
 
   useEffect(() => {
     if (settingsConfig) {
@@ -393,9 +428,42 @@ export function AgentTab() {
   };
 
   const setAllCustomEnabledAndSave = async (enabled: boolean) => {
-    const next = enabled ? [...toolCatalog.custom] : [];
+    const next = enabled
+      ? Array.from(new Set([...customEnabled, ...visibleCustomTools]))
+      : customEnabled.filter(name => !visibleCustomTools.includes(name));
     setCustomEnabled(next);
     await autoSaveConfig({ tools: { custom_enabled: next } }, { silent: true });
+  };
+
+  const setManagedExternalMcpEnabledAndSave = async (name: string, enabled: boolean) => {
+    await setCustomEnabledAndSave(name, enabled);
+  };
+
+  const setAllExternalMcpEnabledAndSave = async (enabled: boolean) => {
+    const managedNames = managedExternalMcpEntries.map(tool => tool.name);
+    const externalNames = externalMcpEntries.map(([name]) => name);
+    const nextCustom = enabled
+      ? Array.from(new Set([...customEnabled, ...managedNames]))
+      : customEnabled.filter(name => !managedNames.includes(name));
+    const nextDisabled = new Set<string>(Array.from(disabledExternalMcpServers));
+    for (const name of externalNames) {
+      if (enabled) nextDisabled.delete(name);
+      else nextDisabled.add(name);
+    }
+    setCustomEnabled(nextCustom);
+    await autoSaveConfig({
+      tools: { custom_enabled: nextCustom },
+      mcp: { disabled_servers: Array.from(nextDisabled).sort((a, b) => a.localeCompare(b)) },
+    }, { silent: true });
+  };
+
+  const setExternalMcpEnabledAndSave = async (name: string, enabled: boolean) => {
+    const nextDisabled = new Set<string>(Array.from(disabledExternalMcpServers));
+    if (enabled) nextDisabled.delete(name);
+    else nextDisabled.add(name);
+    await autoSaveConfig({
+      mcp: { disabled_servers: Array.from(nextDisabled).sort((a, b) => a.localeCompare(b)) },
+    }, { silent: true });
   };
 
   const deletePin = (index: number) => {
@@ -572,8 +640,13 @@ export function AgentTab() {
   };
 
   const allBuiltinEnabled = toolCatalog.builtinOptional.every((name: string) => builtinEnabled.includes(name));
-  const allCustomEnabled = toolCatalog.custom.length > 0
-    && toolCatalog.custom.every((name: string) => customEnabled.includes(name));
+  const allCustomEnabled = visibleCustomTools.length > 0
+    && visibleCustomTools.every((name: string) => customEnabled.includes(name));
+  const allExternalMcpEnabled = managedExternalMcpEntries.length + externalMcpEntries.length > 0
+    && managedExternalMcpEntries.every((tool) => customEnabled.includes(tool.name))
+    && externalMcpEntries.every(([name, server]) => !disabledExternalMcpServers.has(name)
+      && server.disabled !== true
+      && server.enabled !== false);
 
   return (
     <div className="settings-tab-content active" data-tab="agent">
@@ -837,12 +910,12 @@ export function AgentTab() {
               <span className="agent-tool-collapse-meta">
                 {customExpanded ? t('settings.agent.toolsCollapse') : t('settings.agent.toolsExpand')}
                 {' · '}
-                {toolCatalog.custom.length}
+                {visibleCustomTools.length}
               </span>
             </button>
             {customExpanded && (
               <div className="agent-tool-list">
-                {toolCatalog.custom.length === 0 ? (
+                {visibleCustomTools.length === 0 ? (
                   <div className="pin-empty">{t('settings.agent.customToolsEmpty')}</div>
                 ) : (
                   <>
@@ -854,7 +927,7 @@ export function AgentTab() {
                         title={t('settings.agent.toolsSelectAll')}
                       />
                     </div>
-                    {toolCatalog.custom.map((name: string) => {
+                    {visibleCustomTools.map((name: string) => {
                       const enabled = customEnabled.includes(name);
                       return (
                         <div
@@ -878,6 +951,94 @@ export function AgentTab() {
                         </div>
                       );
                     })}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="agent-tool-block">
+            <button
+              className="agent-tool-collapse"
+              onClick={() => {
+                setExternalMcpExpanded(v => !v);
+              }}
+            >
+              <span className="settings-field-label">{t('settings.agent.externalMcpTools')}</span>
+              <span className="agent-tool-collapse-meta">
+                {externalMcpExpanded ? t('settings.agent.toolsCollapse') : t('settings.agent.toolsExpand')}
+                {' · '}
+                {managedExternalMcpEntries.length + externalMcpEntries.length}
+              </span>
+            </button>
+            {externalMcpExpanded && (
+              <div className="agent-tool-list">
+                {managedExternalMcpEntries.length + externalMcpEntries.length === 0 ? (
+                  <div className="pin-empty">{t('settings.agent.externalMcpEmpty')}</div>
+                ) : (
+                  <>
+                  <div className="agent-tool-bulk-row">
+                    <span className="agent-tool-bulk-label">{t('settings.agent.toolsSelectAll')}</span>
+                    <button
+                      className={`hana-toggle mini${allExternalMcpEnabled ? ' on' : ''}`}
+                      onClick={() => setAllExternalMcpEnabledAndSave(!allExternalMcpEnabled)}
+                      title={t('settings.agent.toolsSelectAll')}
+                    />
+                  </div>
+                  {managedExternalMcpEntries.map((tool) => {
+                    const enabled = customEnabled.includes(tool.name);
+                    const label = tool.label || t(tool.labelKey);
+                    const desc = t(tool.descKey);
+                    return (
+                      <div
+                        className="agent-tool-item"
+                        key={tool.name}
+                      >
+                        <div className="agent-tool-row">
+                          <code>{label === tool.labelKey ? tool.serverName : label}</code>
+                          <div
+                            className="agent-tool-toggle-wrap"
+                          >
+                            <button
+                              className={`hana-toggle mini${enabled ? ' on' : ''}`}
+                              onClick={() => setManagedExternalMcpEnabledAndSave(tool.name, !enabled)}
+                            />
+                            <div className="agent-tool-tooltip">
+                              {(desc === tool.descKey ? t('settings.agent.externalMcpManagedHint') : desc)
+                                .replace('{server}', tool.serverName)
+                                .replace('{prefix}', tool.prefix)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {externalMcpEntries.map(([name, server]) => {
+                    const enabled = !disabledExternalMcpServers.has(name)
+                      && server.disabled !== true
+                      && server.enabled !== false;
+                    const type = server.type || (server.url ? 'sse' : 'stdio');
+                    return (
+                      <div
+                        className="agent-tool-item"
+                        key={name}
+                      >
+                        <div className="agent-tool-row">
+                          <code>{name}</code>
+                          <div
+                            className="agent-tool-toggle-wrap"
+                          >
+                            <button
+                              className={`hana-toggle mini${enabled ? ' on' : ''}`}
+                              onClick={() => setExternalMcpEnabledAndSave(name, !enabled)}
+                            />
+                            <div className="agent-tool-tooltip">
+                              {t('settings.agent.externalMcpHint').replace('{type}', type).replace('{prefix}', `mcp__${name}__*`)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                   </>
                 )}
               </div>

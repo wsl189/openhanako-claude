@@ -7,6 +7,7 @@ import {
   MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
   MINIMAX_MCP_WEB_SEARCH_SWITCH,
 } from "../lib/tools/minimax-mcp-tools.js";
+import { CLAUDE_IN_CHROME_SWITCH } from "../lib/tools/claude-in-chrome-tool.js";
 import { extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
 import { resolveBrowserProvider } from "./browser-provider.js";
 
@@ -48,6 +49,11 @@ export const HANAKO_TO_CLAUDE_BUILTIN = {
 };
 
 const MINIMAX_MCP_SERVER_KEY = "MiniMax";
+const RESERVED_MCP_SERVER_KEYS = new Set([
+  "hanako",
+  "claude_in_chrome",
+  "computer_use",
+]);
 const MINIMAX_MCP_TOOL_BY_SWITCH = {
   [MINIMAX_MCP_WEB_SEARCH_SWITCH]: "web_search",
   [MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH]: "understand_image",
@@ -303,7 +309,7 @@ function toMcpAllowedPrefix(name) {
 }
 
 function toMcpServerName(name) {
-  return String(name || "").trim().replace(/[^A-Za-z0-9_-]/g, "_");
+  return String(name || "").trim().replace(/[^A-Za-z0-9_]/g, "_");
 }
 
 function toMcpToolName(serverName, toolName) {
@@ -327,6 +333,86 @@ function buildMcpExactAllowedTools(serverName, toolNames = []) {
     }
   }
   return uniq(out);
+}
+
+function normalizeExternalMcpServerConfig(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.disabled === true || raw.enabled === false) return null;
+
+  const type = String(raw.type || (raw.url ? "sse" : "stdio")).trim() || "stdio";
+  if (type === "stdio") {
+    const command = String(raw.command || "").trim();
+    if (!command) return null;
+    const args = Array.isArray(raw.args)
+      ? raw.args.map((item) => String(item || "").trim()).filter(Boolean)
+      : parseCommandArgs(raw.args);
+    const env = {};
+    if (raw.env && typeof raw.env === "object" && !Array.isArray(raw.env)) {
+      for (const [key, value] of Object.entries(raw.env)) {
+        const envKey = String(key || "").trim();
+        if (!envKey) continue;
+        env[envKey] = String(value ?? "");
+      }
+    }
+    return {
+      type: "stdio",
+      command,
+      ...(args.length > 0 ? { args } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+    };
+  }
+
+  if (type === "sse" || type === "http") {
+    const url = String(raw.url || "").trim();
+    if (!url) return null;
+    const headers = {};
+    if (raw.headers && typeof raw.headers === "object" && !Array.isArray(raw.headers)) {
+      for (const [key, value] of Object.entries(raw.headers)) {
+        const headerKey = String(key || "").trim();
+        if (!headerKey) continue;
+        headers[headerKey] = String(value ?? "");
+      }
+    }
+    return {
+      type,
+      url,
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    };
+  }
+
+  return null;
+}
+
+export function resolveExternalMcpServers(rawConfig = {}, opts = {}) {
+  const globalConfigured = opts.externalServers || rawConfig?._globalMcp?.external_servers || {};
+  const localConfigured = rawConfig?.mcp?.external_servers || rawConfig?.external_mcp?.servers || {};
+  const configured = {
+    ...(globalConfigured && typeof globalConfigured === "object" && !Array.isArray(globalConfigured) ? globalConfigured : {}),
+    ...(localConfigured && typeof localConfigured === "object" && !Array.isArray(localConfigured) ? localConfigured : {}),
+  };
+  if (!configured || typeof configured !== "object" || Array.isArray(configured)) {
+    return { servers: {}, allowedTools: [] };
+  }
+
+  const disabledServers = new Set(
+    Array.isArray(rawConfig?.mcp?.disabled_servers)
+      ? rawConfig.mcp.disabled_servers.map(toMcpServerName).filter(Boolean)
+      : [],
+  );
+  const servers = {};
+  const allowedTools = [];
+  for (const [rawName, rawServer] of Object.entries(configured)) {
+    const key = toMcpServerName(rawName);
+    if (!key || RESERVED_MCP_SERVER_KEYS.has(key)) continue;
+    if (disabledServers.has(key)) continue;
+    if (Object.prototype.hasOwnProperty.call(servers, key)) continue;
+    const server = normalizeExternalMcpServerConfig(rawServer);
+    if (!server) continue;
+    servers[key] = server;
+    const prefix = toMcpAllowedPrefix(key);
+    if (prefix) allowedTools.push(prefix);
+  }
+  return { servers, allowedTools: uniq(allowedTools) };
 }
 
 function inferMiniMaxApiHost(baseUrl = "") {
@@ -826,7 +912,9 @@ export function buildClaudeRuntimeConfig({
     ? []
     : uniq(customEnabledOverride || toolProfile?.tools?.custom_enabled || []);
   const browserProvider = resolveBrowserProvider(runtimeEnv, { cwd, workspace });
-  const useClaudeInChrome = !noTools && browserProvider.useClaudeInChrome === true;
+  const useClaudeInChrome = !noTools
+    && customEnabled.includes(CLAUDE_IN_CHROME_SWITCH)
+    && browserProvider.useClaudeInChrome === true;
   const useComputerUse = !noTools && customEnabled.includes("computer_use");
   const enabledMiniMaxMcpTools = !noTools
     ? uniq(
@@ -840,6 +928,7 @@ export function buildClaudeRuntimeConfig({
     .filter((toolDef) => customEnabled.includes(toolDef?.name))
     .filter((toolDef) => ![
       "computer_use",
+      CLAUDE_IN_CHROME_SWITCH,
       MINIMAX_MCP_WEB_SEARCH_SWITCH,
       MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
     ].includes(String(toolDef?.name || "")));
@@ -868,12 +957,18 @@ export function buildClaudeRuntimeConfig({
   const minimaxMcpAllowedTools = useMiniMaxMcp
     ? buildMcpExactAllowedTools(MINIMAX_MCP_SERVER_KEY, enabledMiniMaxMcpTools)
     : [];
+  const externalMcp = noTools
+    ? { servers: {}, allowedTools: [] }
+    : resolveExternalMcpServers(agent?.config || {}, {
+      externalServers: agent?._engine?.getExternalMcpServers?.() || {},
+    });
   const allowedTools = uniq([
     ...builtinEnabled,
     ...customAllowedTools,
     ...claudeInChromeAllowedTools,
     ...computerUseAllowedTools,
     ...minimaxMcpAllowedTools,
+    ...externalMcp.allowedTools,
   ]);
   const canUseTool = buildCanUseToolHandler(permissionStrategy, {
     sandboxMode,
@@ -912,6 +1007,11 @@ export function buildClaudeRuntimeConfig({
     const minimaxMcpServer = resolveMiniMaxMcpServer(runtimeEnv, agent);
     if (minimaxMcpServer) {
       mcpServers[MINIMAX_MCP_SERVER_KEY] = minimaxMcpServer;
+    }
+  }
+  for (const [serverKey, serverConfig] of Object.entries(externalMcp.servers)) {
+    if (!Object.prototype.hasOwnProperty.call(mcpServers, serverKey)) {
+      mcpServers[serverKey] = serverConfig;
     }
   }
 
@@ -983,6 +1083,8 @@ export function buildClaudeRuntimeConfig({
       claudeInChromeAllowedTools,
       computerUseAllowedTools,
       minimaxMcpAllowedTools,
+      externalMcpAllowedTools: externalMcp.allowedTools,
+      externalMcpServers: Object.keys(externalMcp.servers),
       browserProvider,
       useClaudeInChrome,
       useComputerUse,

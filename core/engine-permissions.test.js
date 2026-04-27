@@ -61,6 +61,8 @@ describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
     expect(permission.tools.builtin_enabled).toContain("Skill");
     expect(permission.tools.builtin_enabled).toContain("Task");
     expect(permission.tools.builtin_enabled).toContain("WebFetch");
+    expect(permission.tools.builtin_enabled).not.toContain("RemoteTrigger");
+    expect(permission.tool_catalog.builtin_optional).not.toContain("RemoteTrigger");
   });
 
   it("accepts lowercase skill alias in builtin_enabled", () => {
@@ -72,6 +74,17 @@ describe("HanaEngine.getAgentPermissionConfig custom_enabled semantics", () => {
 
     const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
     expect(permission.tools.builtin_enabled).toEqual(["Skill", "Read", "Glob", "Grep"]);
+  });
+
+  it("filters RemoteTrigger out of explicit builtin config", () => {
+    const engineLike = createEngineLikeForPermissions({
+      toolsConfig: {
+        builtin_enabled: ["RemoteTrigger", "write"],
+      },
+    });
+
+    const permission = HanaEngine.prototype.getAgentPermissionConfig.call(engineLike);
+    expect(permission.tools.builtin_enabled).toEqual(["Write", "Read", "Glob", "Grep"]);
   });
 
   it("allows all custom tools when custom_enabled is missing", () => {

@@ -1,6 +1,7 @@
 import fs from "fs";
 import { describe, expect, it } from "vitest";
 import { buildClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { CLAUDE_IN_CHROME_SWITCH } from "../lib/tools/claude-in-chrome-tool.js";
 
 function createConfig(overrides = {}) {
   const { env: envOverride = {}, ...rest } = overrides;
@@ -329,6 +330,149 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.diagnostics?.useMiniMaxMcp).toBe(false);
   });
 
+  it("attaches configured external MCP servers and allows their tool namespace", async () => {
+    const config = createConfig({
+      agent: {
+        config: {
+          mcp: {
+            external_servers: {
+              context7: {
+                type: "stdio",
+                command: "npx",
+                args: ["-y", "@upstash/context7-mcp"],
+                env: { CONTEXT7_API_KEY: "test" },
+              },
+            },
+          },
+        },
+      },
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.context7).toEqual({
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "@upstash/context7-mcp"],
+      env: { CONTEXT7_API_KEY: "test" },
+    });
+    expect(config.options.allowedTools).toEqual(["Read", "mcp__context7__*"]);
+    expect(config.diagnostics?.externalMcpServers).toEqual(["context7"]);
+
+    const allowed = await config.options.canUseTool("mcp__context7__resolve-library-id", {
+      libraryName: "react",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-context7",
+    });
+    expect(allowed).toMatchObject({
+      behavior: "allow",
+      updatedInput: { libraryName: "react" },
+    });
+  });
+
+  it("attaches global external MCP servers and respects per-agent disabled list", () => {
+    const config = createConfig({
+      agent: {
+        _engine: {
+          getExternalMcpServers: () => ({
+            context7: {
+              type: "stdio",
+              command: "npx",
+              args: ["-y", "@upstash/context7-mcp"],
+            },
+            playwright: {
+              type: "stdio",
+              command: "npx",
+              args: ["@playwright/mcp"],
+            },
+          }),
+        },
+        config: {
+          mcp: {
+            disabled_servers: ["context7"],
+          },
+        },
+      },
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.context7).toBeUndefined();
+    expect(config.options.mcpServers.playwright).toEqual({
+      type: "stdio",
+      command: "npx",
+      args: ["@playwright/mcp"],
+    });
+    expect(config.options.allowedTools).toEqual(["Read", "mcp__playwright__*"]);
+    expect(config.diagnostics?.externalMcpServers).toEqual(["playwright"]);
+  });
+
+  it("allows a user-configured MiniMax external MCP server", () => {
+    const config = createConfig({
+      agent: {
+        config: {
+          mcp: {
+            external_servers: {
+              MiniMax: {
+                type: "stdio",
+                command: "uvx",
+                args: ["minimax-coding-plan-mcp", "-y"],
+                env: {
+                  MINIMAX_API_KEY: "test",
+                  MINIMAX_API_HOST: "https://api.minimaxi.com",
+                },
+              },
+            },
+          },
+        },
+      },
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+          custom_enabled: [],
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.MiniMax).toEqual({
+      type: "stdio",
+      command: "uvx",
+      args: ["minimax-coding-plan-mcp", "-y"],
+      env: {
+        MINIMAX_API_KEY: "test",
+        MINIMAX_API_HOST: "https://api.minimaxi.com",
+      },
+    });
+    expect(config.options.allowedTools).toContain("mcp__MiniMax__*");
+    expect(config.diagnostics?.externalMcpServers).toEqual(["MiniMax"]);
+  });
+
+  it("skips external MCP servers in noTools mode", () => {
+    const config = createConfig({
+      noTools: true,
+      agent: {
+        config: {
+          mcp: {
+            external_servers: {
+              context7: { command: "npx", args: ["-y", "@upstash/context7-mcp"] },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.context7).toBeUndefined();
+    expect(config.options.allowedTools).toEqual([]);
+    expect(config.diagnostics?.externalMcpServers).toEqual([]);
+  });
+
   it("keeps tool settings and Skill availability visible in noMemory tool sessions", () => {
     const calls = [];
     const config = createConfig({
@@ -400,6 +544,11 @@ describe("buildClaudeRuntimeConfig env", () => {
         HANAKO_BROWSER_PROVIDER: "auto",
         HANAKO_CLAUDE_IN_CHROME_INSTALLED: "1",
       },
+      toolProfile: {
+        tools: {
+          custom_enabled: [CLAUDE_IN_CHROME_SWITCH],
+        },
+      },
     });
 
     expect(config.options.mcpServers.claude_in_chrome?.type).toBe("stdio");
@@ -418,6 +567,11 @@ describe("buildClaudeRuntimeConfig env", () => {
         HANAKO_CLAUDE_IN_CHROME_ARGS:
           "[\"/tmp/custom-browser-mcp.js\",\"--claude-in-chrome-mcp\"]",
       },
+      toolProfile: {
+        tools: {
+          custom_enabled: [CLAUDE_IN_CHROME_SWITCH],
+        },
+      },
     });
 
     expect(config.options.mcpServers.claude_in_chrome).toEqual({
@@ -426,6 +580,23 @@ describe("buildClaudeRuntimeConfig env", () => {
       args: ["/tmp/custom-browser-mcp.js", "--claude-in-chrome-mcp"],
     });
     expect(config.options.allowedTools).toContain("mcp__claude_in_chrome__*");
+  });
+
+  it("does not attach claude-in-chrome when its switch tool is disabled", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_BROWSER_PROVIDER: "claude-in-chrome",
+      },
+      toolProfile: {
+        tools: {
+          custom_enabled: [],
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.claude_in_chrome).toBeUndefined();
+    expect(config.options.allowedTools || []).not.toContain("mcp__claude_in_chrome__*");
+    expect(config.diagnostics?.useClaudeInChrome).toBe(false);
   });
 
   it("does not attach claude-in-chrome tools in noTools mode", () => {

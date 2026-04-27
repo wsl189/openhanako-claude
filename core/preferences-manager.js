@@ -142,6 +142,29 @@ export class PreferencesManager {
     return typeof raw === "string" ? raw.trim() : "";
   }
 
+  /** 读取全局外部 MCP 服务配置（跨 agent 共享） */
+  getExternalMcpServers() {
+    const raw = this.getPreferences().mcp?.external_servers;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    return structuredClone(raw);
+  }
+
+  /** 合并写入全局外部 MCP 服务配置 */
+  patchExternalMcpServers(patch = {}) {
+    const prefs = this.getPreferences();
+    if (!prefs.mcp || typeof prefs.mcp !== "object" || Array.isArray(prefs.mcp)) {
+      prefs.mcp = {};
+    }
+    const current = this.getExternalMcpServers();
+    for (const [name, value] of Object.entries(patch || {})) {
+      if (value === null) delete current[name];
+      else current[name] = value;
+    }
+    prefs.mcp.external_servers = current;
+    this.savePreferences(prefs);
+    return structuredClone(current);
+  }
+
   /** 记录上次激活的 agentId */
   setLastAgentId(agentId) {
     const id = String(agentId || "").trim();

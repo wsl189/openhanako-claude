@@ -19,6 +19,7 @@ import { createArtifactTool } from "../lib/tools/artifact-tool.js";
 import { createChannelTool } from "../lib/tools/channel-tool.js";
 import { createAskAgentTool } from "../lib/tools/ask-agent-tool.js";
 import { createBrowserTool } from "../lib/tools/browser-tool.js";
+import { createClaudeInChromeTool, CLAUDE_IN_CHROME_SWITCH } from "../lib/tools/claude-in-chrome-tool.js";
 import { createComputerUseTool } from "../lib/tools/computer-use-tool.js";
 import {
   createMiniMaxMcpSwitchTools,
@@ -33,6 +34,7 @@ import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { createPdf2MdTool } from "../lib/tools/pdf2md-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { resolveBrowserProvider } from "./browser-provider.js";
+import { resolveExternalMcpServers } from "./claude-runtime-config.js";
 import { t } from "../server/i18n.js";
 
 export class Agent {
@@ -254,6 +256,7 @@ export class Agent {
       ? createBrowserTool()
       : null;
     this._computerUseTool = createComputerUseTool();
+    this._claudeInChromeTool = createClaudeInChromeTool();
     this._minimaxMcpSwitchTools = createMiniMaxMcpSwitchTools();
     this._notifyTool = createNotifyTool({
       onNotify: (title, body, opts) => this._notifyHandler?.(title, body, opts),
@@ -421,6 +424,7 @@ export class Agent {
       this._channelTool,
       this._askAgentTool,
       this._browserTool,
+      this._claudeInChromeTool,
       this._computerUseTool,
       ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
@@ -640,17 +644,36 @@ export class Agent {
     const hasComputerUse = enabledCustom.includes("computer_use");
     const hasMiniMaxMcpWebSearch = enabledCustom.includes(MINIMAX_MCP_WEB_SEARCH_SWITCH);
     const hasMiniMaxMcpUnderstandImage = enabledCustom.includes(MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH);
-    const externalMcpTools = browserProvider?.useClaudeInChrome
+    const hasClaudeInChromeSwitch = enabledCustom.includes(CLAUDE_IN_CHROME_SWITCH);
+    const externalMcpTools = browserProvider?.useClaudeInChrome && hasClaudeInChromeSwitch
       ? ["mcp__claude_in_chrome__*"]
       : [];
     if (hasComputerUse) externalMcpTools.push("mcp__computer_use__*");
     if (hasMiniMaxMcpWebSearch) externalMcpTools.push("mcp__MiniMax__web_search");
     if (hasMiniMaxMcpUnderstandImage) externalMcpTools.push("mcp__MiniMax__understand_image");
+    externalMcpTools.push(...resolveExternalMcpServers(this._config, {
+      externalServers: this._engine?.getExternalMcpServers?.() || {},
+    }).allowedTools);
     const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
     const formatToolList = (list = []) => {
       const cleaned = [...new Set((list || []).map((item) => String(item || "").trim()).filter(Boolean))];
       if (cleaned.length === 0) return isZh ? "（无）" : "(none)";
       return cleaned.join(" / ");
+    };
+    const formatSkillList = (list = []) => {
+      const cleaned = (list || [])
+        .map((item) => {
+          const name = String(item?.name || "").trim();
+          if (!name) return null;
+          const description = String(item?.description || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 180);
+          return description ? `${name}: ${description}` : name;
+        })
+        .filter(Boolean);
+      if (cleaned.length === 0) return isZh ? "（无）" : "(none)";
+      return cleaned.join("\n");
     };
     const referenceData = (label, content) => {
       const body = String(content || "").trim();
@@ -787,9 +810,34 @@ export class Agent {
           ].join("\n")
       );
 
+      parts.push(isZh
+        ? [
+            "",
+            "## 工具与技能的区别",
+            "",
+            "- 工具（tools）是可调用的执行能力，例如 Read、Bash、notify、pdf2md、browser。",
+            "- Skill（大写）如果出现在标准 Claude 工具列表里，只表示“加载/应用某个技能”的内置工具；它本身不是某个具体技能。",
+            "- 技能（skills）是按 SKILL.md 编写的任务规范/工作流。需要使用技能时，先用 Skill 工具加载匹配技能，再按技能说明执行。",
+            "- 不要把具体技能名称说成工具；也不要把工具名称说成技能。",
+            "- 当用户问“你有哪些工具”时，只回答工具可用性列表；当用户问“你有哪些技能/skills”时，回答下面的技能列表。",
+            `当前可加载技能（skills）：\n${formatSkillList(this._enabledSkills)}`,
+          ].join("\n")
+        : [
+            "",
+            "## Tools vs Skills",
+            "",
+            "- Tools are callable execution capabilities, such as Read, Bash, notify, pdf2md, and browser.",
+            "- If `Skill` appears in the standard Claude tool list, it only means the built-in tool for loading/applying a skill; it is not a concrete skill itself.",
+            "- Skills are task instructions/workflows defined by SKILL.md. When a skill is needed, use the Skill tool to load the matching skill, then follow that skill's instructions.",
+            "- Do not describe concrete skill names as tools, and do not describe tool names as skills.",
+            "- When the user asks what tools you have, answer only from the tool availability list. When the user asks what skills you have, answer from the skill list below.",
+            `Currently loadable skills:\n${formatSkillList(this._enabledSkills)}`,
+          ].join("\n")
+      );
+
       const hasSearchTool = hasMiniMaxMcpWebSearch;
       const hasEmbeddedBrowser = hasTool("browser");
-      const hasClaudeInChrome = browserProvider?.useClaudeInChrome === true;
+      const hasClaudeInChrome = browserProvider?.useClaudeInChrome === true && enabledCustom.includes(CLAUDE_IN_CHROME_SWITCH);
       if (!hasSearchTool && hasEmbeddedBrowser) {
         parts.push(isZh
           ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"

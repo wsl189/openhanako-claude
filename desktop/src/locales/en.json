@@ -548,6 +548,7 @@
       "memory": "Memory",
       "work": "Work",
       "skills": "Skills",
+      "mcp": "MCP",
       "bridge": "Social",
       "about": "About"
     },
@@ -626,6 +627,10 @@
       "builtinTools": "Built-in tools",
       "customTools": "Custom tools",
       "customToolsEmpty": "No configurable custom tools for this agent",
+      "externalMcpTools": "External MCP",
+      "externalMcpEmpty": "Add external MCP servers in the MCP tab first",
+      "externalMcpHint": "Type: {type}; when enabled, allows {prefix}",
+      "externalMcpManagedHint": "MCP server: {server}; when enabled, allows {prefix}",
       "builtinLocked": "Required tool, cannot disable",
       "toolsExpand": "Expand",
       "toolsCollapse": "Collapse",
@@ -994,6 +999,40 @@
         "body2": "After disabling, all skills will be installed without review.",
         "confirm": "I understand the risks, disable review"
       }
+    },
+    "mcp": {
+      "title": "External MCP",
+      "desc": "Add global external MCP servers. Each agent can control whether they are enabled in its External MCP list.",
+      "name": "Name",
+      "namePlaceholder": "e.g. context7",
+      "type": "Type",
+      "command": "Command",
+      "commandPlaceholder": "e.g. npx or uvx",
+      "args": "Args",
+      "argsPlaceholder": "One argument per line, or a JSON array",
+      "env": "Environment JSON",
+      "url": "Service URL",
+      "headers": "Headers JSON",
+      "builtinMcp": "Built-in MCP",
+      "disabled": "Save disabled",
+      "add": "Add / Update",
+      "added": "Added MCP Servers",
+      "empty": "No external MCP servers",
+      "delete": "Delete MCP",
+      "deleteConfirm": "Delete MCP \"{name}\"? New chats will no longer load it.",
+      "deleteTitle": "Delete {name}?",
+      "deleteDesc": "This removes the MCP from the current agent. New chats will no longer load it.",
+      "deleted": "MCP deleted",
+      "nameRequired": "Enter an MCP name",
+      "commandRequired": "Enter a command",
+      "urlRequired": "Enter a service URL",
+      "argsInvalid": "Args must be a JSON array",
+      "envInvalid": "Environment must be a JSON object",
+      "headersInvalid": "Headers must be a JSON object",
+      "statusDisabled": "Disabled",
+      "noCommand": "No command configured",
+      "envKeys": "Env",
+      "headerKeys": "Headers"
     },
     "bridge": {
       "telegram": "Telegram",
@@ -1617,6 +1656,10 @@
     "computerUse": {
       "label": "Computer Use",
       "description": "Control local desktop applications via native GUI automation (screenshots, clicks, typing, scrolling, key combos). When enabled, it exposes mcp__computer_use__* tools for real app interactions."
+    },
+    "claudeInChrome": {
+      "label": "Claude in Chrome",
+      "description": "Use the signed-in Chrome browser and extension to operate real tabs. When enabled, it exposes mcp__claude_in_chrome__* tools."
     },
     "minimaxMcpWebSearch": {
       "label": "MiniMax Web Search",

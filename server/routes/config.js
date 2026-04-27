@@ -21,6 +21,147 @@ function normalizeApiKey(value) {
   return String(value || "").replace(/[^\x20-\x7E]/g, "").trim();
 }
 
+function normalizeMcpServerKey(name) {
+  return String(name || "").trim().replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+function parseMcpArgs(rawArgs) {
+  if (Array.isArray(rawArgs)) {
+    return rawArgs.map(v => String(v || "").trim()).filter(Boolean);
+  }
+  const text = String(rawArgs || "").trim();
+  if (!text) return [];
+  return text.split(/\s+/).map(v => v.trim()).filter(Boolean);
+}
+
+function normalizeStringMap(rawMap, label) {
+  if (rawMap === undefined || rawMap === null || rawMap === "") return undefined;
+  if (typeof rawMap !== "object" || Array.isArray(rawMap)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const out = {};
+  for (const [key, value] of Object.entries(rawMap)) {
+    const name = String(key || "").trim();
+    if (!name) continue;
+    out[name] = String(value ?? "");
+  }
+  return out;
+}
+
+function normalizeExternalMcpServer(rawServer) {
+  if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) {
+    throw new Error("mcp.external_servers entries must be objects");
+  }
+  const type = String(rawServer.type || (rawServer.url ? "sse" : "stdio")).trim() || "stdio";
+  const disabled = rawServer.disabled === true || rawServer.enabled === false;
+  const shouldClearDisabled = rawServer.disabled === false || rawServer.enabled === true;
+  if (type === "stdio") {
+    const command = String(rawServer.command || "").trim();
+    if (!command) throw new Error("mcp stdio server command is required");
+    const args = parseMcpArgs(rawServer.args);
+    const env = normalizeStringMap(rawServer.env, "mcp env");
+    return {
+      type: "stdio",
+      command,
+      ...(args.length > 0 ? { args } : {}),
+      ...(env && Object.keys(env).length > 0 ? { env } : {}),
+      ...(disabled ? { disabled: true } : {}),
+      ...(shouldClearDisabled ? { disabled: null, enabled: null } : {}),
+    };
+  }
+  if (type === "sse" || type === "http") {
+    const url = String(rawServer.url || "").trim();
+    if (!url) throw new Error("mcp url is required");
+    const headers = normalizeStringMap(rawServer.headers, "mcp headers");
+    return {
+      type,
+      url,
+      ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(disabled ? { disabled: true } : {}),
+      ...(shouldClearDisabled ? { disabled: null, enabled: null } : {}),
+    };
+  }
+  throw new Error("mcp server type must be stdio, sse, or http");
+}
+
+function normalizeMcpPatch(rawMcp) {
+  if (rawMcp === undefined || rawMcp === null) return rawMcp;
+  if (typeof rawMcp !== "object" || Array.isArray(rawMcp)) {
+    throw new Error("mcp must be an object");
+  }
+  const out = { ...rawMcp };
+  if (rawMcp.external_servers !== undefined) {
+    if (!rawMcp.external_servers || typeof rawMcp.external_servers !== "object" || Array.isArray(rawMcp.external_servers)) {
+      throw new Error("mcp.external_servers must be an object");
+    }
+    out.external_servers = {};
+    for (const [rawName, rawServer] of Object.entries(rawMcp.external_servers)) {
+      const name = normalizeMcpServerKey(rawName);
+      if (!name) throw new Error("mcp server name is required");
+      out.external_servers[name] = rawServer === null ? null : normalizeExternalMcpServer(rawServer);
+    }
+  }
+  if (rawMcp.disabled_servers !== undefined) {
+    if (!Array.isArray(rawMcp.disabled_servers)) {
+      throw new Error("mcp.disabled_servers must be an array");
+    }
+    out.disabled_servers = rawMcp.disabled_servers
+      .map(name => normalizeMcpServerKey(name))
+      .filter(Boolean);
+  }
+  return out;
+}
+
+function injectGlobalMcpConfig(engine, config) {
+  const globalServers = engine.getExternalMcpServers?.() || {};
+  const disabledServers = Array.isArray(config?.mcp?.disabled_servers)
+    ? config.mcp.disabled_servers.map(name => normalizeMcpServerKey(name)).filter(Boolean)
+    : [];
+  config.mcp = {
+    ...(config.mcp || {}),
+    external_servers: globalServers,
+    disabled_servers: disabledServers,
+  };
+}
+
+function promoteLegacyExternalMcpServers(engine, config, configPath) {
+  const legacyServers = config?.mcp?.external_servers;
+  if (!legacyServers || typeof legacyServers !== "object" || Array.isArray(legacyServers)) return;
+  const currentGlobal = engine.getExternalMcpServers?.() || {};
+  const globalPatch = {};
+  const cleanupPatch = {};
+  for (const [rawName, rawServer] of Object.entries(legacyServers)) {
+    const name = normalizeMcpServerKey(rawName);
+    if (!name) continue;
+    cleanupPatch[name] = null;
+    if (rawServer === null || currentGlobal[name] !== undefined) continue;
+    globalPatch[name] = rawServer;
+  }
+  if (Object.keys(globalPatch).length > 0) {
+    engine.patchExternalMcpServers?.(globalPatch);
+  }
+  if (Object.keys(cleanupPatch).length > 0 && configPath) {
+    try {
+      const cleanup = { mcp: { external_servers: cleanupPatch } };
+      if (engine.agent?.configPath === configPath && typeof engine.agent.updateConfig === "function") {
+        engine.agent.updateConfig(cleanup);
+      } else {
+        saveConfig(configPath, cleanup);
+      }
+    } catch {}
+  }
+  delete config.mcp.external_servers;
+}
+
+function extractGlobalMcpPatch(engine, partial) {
+  if (!partial?.mcp || typeof partial.mcp !== "object") return false;
+  if (partial.mcp.external_servers === undefined) return false;
+  engine.patchExternalMcpServers?.(partial.mcp.external_servers);
+  delete partial.mcp.external_servers;
+  if (Object.keys(partial.mcp).length === 0) delete partial.mcp;
+  return true;
+}
+
 export default async function configRoute(app, { engine }) {
 
   // 读取配置（脱敏：隐藏 API key，附带 _raw 原始结构 + providers）
@@ -28,6 +169,7 @@ export default async function configRoute(app, { engine }) {
     try {
       const config = { ...engine.config };
       const raw = getRawConfig(engine.configPath) || {};
+      promoteLegacyExternalMcpServers(engine, config, engine.configPath);
 
       // 脱敏 API key
       const mask = (key) => {
@@ -81,6 +223,7 @@ export default async function configRoute(app, { engine }) {
       config.sandbox = permissions.sandbox;
       config.tools = permissions.tools;
       config._toolCatalog = permissions.tool_catalog;
+      injectGlobalMcpConfig(engine, config);
       const globalLocale = engine.getLocale();
       if (globalLocale) config.locale = globalLocale;
       const globalTz = engine.getTimezone();
@@ -104,6 +247,7 @@ export default async function configRoute(app, { engine }) {
         return { error: t("error.invalidJson") };
       }
       // ── 全局设置拦截：存 preferences / providers.yaml 而非 agent config ──
+      let externalMcpChanged = false;
 
       // thinking_level → preference（跨 agent 共享）
       if (partial.thinking_level !== undefined) {
@@ -137,6 +281,11 @@ export default async function configRoute(app, { engine }) {
       // sandbox（per-agent）
       if (partial.sandbox !== undefined) {
         partial.sandbox = normalizeSandboxPatch(partial.sandbox);
+      }
+
+      if (partial.mcp !== undefined) {
+        partial.mcp = normalizeMcpPatch(partial.mcp);
+        externalMcpChanged = extractGlobalMcpPatch(engine, partial);
       }
 
       // providers 块 → 全局 providers.yaml
@@ -241,13 +390,25 @@ export default async function configRoute(app, { engine }) {
         return { ok: true };
       }
 
-      if (Object.keys(partial).length === 0) return { ok: true };
+      if (Object.keys(partial).length === 0) {
+        if (externalMcpChanged) {
+          try { await engine.refreshCurrentSessionTools?.(); } catch (e) {
+            debugLog()?.warn("api", `refresh tools after external MCP change: ${e.message}`);
+          }
+        }
+        return { ok: true };
+      }
       debugLog()?.log("api", `PUT /api/config keys=[${Object.keys(partial).join(",")}]`);
       if (providersChanged) clearConfigCache();
       await engine.updateConfig(partial);
       if (needsModelSync) {
         try { await engine.syncModelsAndRefresh(); } catch (e) {
           debugLog()?.warn("api", `syncModelsAndRefresh after config update: ${e.message}`);
+        }
+      }
+      if (externalMcpChanged) {
+        try { await engine.refreshCurrentSessionTools?.(); } catch (e) {
+          debugLog()?.warn("api", `refresh tools after external MCP change: ${e.message}`);
         }
       }
       return { ok: true };
