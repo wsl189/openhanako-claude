@@ -18,6 +18,9 @@
     /* 动效 */
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     --duration: 0.3s;
+    --reveal-duration: 0.46s;
+    --reveal-duration-slow: 0.56s;
+    --reveal-distance: 10px;
 
     /* 字体 */
     --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -15612,4 +15615,213 @@ html[data-platform="linux"] .onboarding {
 .ob-finish-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+
+/* ========================================
+   慢速显示动效：下拉、展开内容、弹窗
+   ======================================== */
+@keyframes soft-reveal-down {
+    from {
+        opacity: 0;
+        transform: translateY(calc(-1 * var(--reveal-distance)));
+        filter: blur(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+        filter: blur(0);
+    }
+}
+
+@keyframes soft-reveal-up {
+    from {
+        opacity: 0;
+        transform: translateY(var(--reveal-distance));
+        filter: blur(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+        filter: blur(0);
+    }
+}
+
+@keyframes soft-reveal-pop {
+    from {
+        opacity: 0;
+        transform: translateY(var(--reveal-distance)) scale(0.97);
+        filter: blur(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+@keyframes soft-overlay-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.float-card {
+    transition:
+        opacity var(--reveal-duration) var(--ease-out),
+        transform var(--reveal-duration) var(--ease-out);
+}
+
+.sidebar,
+.jian-sidebar,
+.preview-panel {
+    transition:
+        width var(--reveal-duration-slow) var(--ease-out),
+        border-color var(--reveal-duration-slow) var(--ease-out);
+}
+
+.sidebar-inner,
+.jian-sidebar-inner,
+.preview-panel-inner {
+    transition: opacity var(--reveal-duration) var(--ease-out);
+}
+
+.floating-session-list.show,
+.thinking-selector.open .thinking-dropdown,
+.model-selector.open .model-dropdown,
+.todo-display.open .todo-list,
+.slash-menu,
+.folder-select-wrap.show-history .folder-history,
+.desk-cwd-panel,
+.desk-cwd-ctx-menu,
+.context-menu,
+.bridge-agent-select-menu,
+.bridge-unified-card,
+.agent-tool-list,
+.memory-action-dropdown.open .memory-more-popup,
+.sdw.open .sdw-popup,
+.sdw-popup.sdw-popup-fixed,
+.cml-picker.open,
+.cml-combo-dropdown.open,
+.mdw-popup.open,
+.pv-add-popover,
+.pv-model-dropdown-panel,
+.pv-model-edit-card,
+.pv-confirm-dialog,
+.channel-mention-dropdown,
+.about-license-text,
+.compat-drawer-skills,
+.sv-tree-children,
+.thinking-block-panel:not(.collapsed),
+.skills-system-details[open] > :not(.skills-system-summary) {
+    animation: soft-reveal-down var(--reveal-duration) var(--ease-out) both;
+    transform-origin: top center;
+}
+
+.thinking-selector.open .thinking-dropdown,
+.model-selector.open .model-dropdown,
+.todo-display.open .todo-list,
+.slash-menu,
+.memory-action-dropdown.open .memory-more-popup,
+.cml-combo-dropdown.open,
+.channel-mention-dropdown {
+    animation-name: soft-reveal-up;
+    transform-origin: bottom center;
+}
+
+.folder-select-wrap.show-history .folder-history {
+    animation-name: folder-history-in;
+    animation-duration: var(--reveal-duration);
+}
+
+.floating-panel-inner,
+.devtools-panel .devtools-inner,
+.sv-container,
+.agent-create-card,
+.agent-delete-card,
+.channel-announcement-card,
+.automation-prompt-card,
+.memory-confirm-card,
+.memory-viewer,
+.crop-card,
+.bridge-tutorial-panel,
+.pv-confirm-dialog {
+    animation: soft-reveal-pop var(--reveal-duration-slow) var(--ease-out) both;
+}
+
+.agent-create-overlay.visible,
+.agent-delete-overlay.visible,
+.channel-announcement-overlay.visible,
+.automation-prompt-overlay.visible,
+.memory-confirm-overlay.visible,
+.memory-viewer-overlay.visible,
+.crop-overlay.visible,
+.bridge-tutorial-overlay,
+.bridge-overlay:not(.hidden),
+.sv-overlay,
+.pv-model-edit-overlay,
+.chat-image-lightbox {
+    animation: soft-overlay-fade var(--reveal-duration) ease-out both;
+}
+
+.tool-group-content:not(.collapsed),
+.tool-panel-collapse.expanded,
+.chain-collapsible.expanded,
+.agent-sandbox-config-box {
+    transition-duration: var(--reveal-duration-slow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .floating-session-list.show,
+    .thinking-selector.open .thinking-dropdown,
+    .model-selector.open .model-dropdown,
+    .todo-display.open .todo-list,
+    .slash-menu,
+    .folder-select-wrap.show-history .folder-history,
+    .desk-cwd-panel,
+    .desk-cwd-ctx-menu,
+    .context-menu,
+    .bridge-agent-select-menu,
+    .bridge-unified-card,
+    .agent-tool-list,
+    .memory-action-dropdown.open .memory-more-popup,
+    .sdw.open .sdw-popup,
+    .sdw-popup.sdw-popup-fixed,
+    .cml-picker.open,
+    .cml-combo-dropdown.open,
+    .mdw-popup.open,
+    .pv-add-popover,
+    .pv-model-dropdown-panel,
+    .pv-model-edit-card,
+    .pv-confirm-dialog,
+    .channel-mention-dropdown,
+    .about-license-text,
+    .compat-drawer-skills,
+    .sv-tree-children,
+    .thinking-block-panel:not(.collapsed),
+    .skills-system-details[open] > :not(.skills-system-summary),
+    .floating-panel-inner,
+    .devtools-panel .devtools-inner,
+    .sv-container,
+    .agent-create-card,
+    .agent-delete-card,
+    .channel-announcement-card,
+    .automation-prompt-card,
+    .memory-confirm-card,
+    .memory-viewer,
+    .crop-card,
+    .bridge-tutorial-panel,
+    .agent-create-overlay.visible,
+    .agent-delete-overlay.visible,
+    .channel-announcement-overlay.visible,
+    .automation-prompt-overlay.visible,
+    .memory-confirm-overlay.visible,
+    .memory-viewer-overlay.visible,
+    .crop-overlay.visible,
+    .bridge-tutorial-overlay,
+    .bridge-overlay:not(.hidden),
+    .sv-overlay,
+    .pv-model-edit-overlay,
+    .chat-image-lightbox {
+        animation: none;
+        filter: none;
+    }
 }

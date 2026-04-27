@@ -11,6 +11,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  animation: wechatOverlayFade var(--reveal-duration, 0.46s) ease-out both;
 }
 
 .card {
@@ -21,6 +22,33 @@
   width: 90%;
   position: relative;
   text-align: center;
+  animation: wechatCardReveal var(--reveal-duration-slow, 0.56s) var(--ease-out) both;
+}
+
+@keyframes wechatOverlayFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes wechatCardReveal {
+  from {
+    opacity: 0;
+    transform: translateY(var(--reveal-distance, 10px)) scale(0.97);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay.visible,
+  .card {
+    animation: none;
+    filter: none;
+  }
 }
 
 .closeBtn {
