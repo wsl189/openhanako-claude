@@ -345,24 +345,29 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
   const { showToast } = useSettingsStore();
   const [keyVal, setKeyVal] = useState('');
   const baseUrl = summary.base_url || providerConfig?.base_url || presetInfo?.url || '';
-  const isCustomBaseUrlProvider = providerId === 'ollama';
   const [baseUrlVal, setBaseUrlVal] = useState(baseUrl);
   useEffect(() => {
     setBaseUrlVal(baseUrl);
   }, [baseUrl, providerId]);
-  const effectiveBaseUrl = isCustomBaseUrlProvider ? baseUrlVal.trim() : baseUrl;
+  const effectiveBaseUrl = baseUrlVal.trim();
+  const hasSavedCredentials = summary.has_credentials || !!summary.api_key_masked;
+  const baseUrlChanged = effectiveBaseUrl !== String(baseUrl || '').trim();
   const api = summary.api || presetInfo?.api || '';
 
   // 验证 + 保存 API Key
   const verifyAndSave = async (btn: HTMLButtonElement) => {
     const key = keyVal.trim();
-    if (!key && !presetInfo?.local) return;
+    if (!key && !presetInfo?.local && !hasSavedCredentials && !baseUrlChanged) return;
+    if (!effectiveBaseUrl) {
+      showToast(t('settings.providers.urlRequired'), 'error');
+      return;
+    }
     btn.classList.add('spinning');
     try {
       const testRes = await hanaFetch('/api/providers/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: providerId, base_url: effectiveBaseUrl, api, api_key: key }),
+        body: JSON.stringify({ name: providerId, base_url: effectiveBaseUrl, api, api_key: key || undefined }),
       });
       const testData = await testRes.json();
       if (!testData.ok) {
@@ -370,7 +375,8 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
         return;
       }
       // 始终带上 base_url/api，避免已注册 provider 仅更新 api_key 时丢失基础配置
-      const payload: Record<string, any> = { api_key: key };
+      const payload: Record<string, any> = {};
+      if (key) payload.api_key = key;
       if (effectiveBaseUrl) payload.base_url = effectiveBaseUrl;
       if (api) payload.api = api;
       if (isPresetSetup) payload.models = [];
@@ -432,7 +438,7 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
             title={t('settings.providers.verifyConnection')}
             onClick={(e) => {
               const key = keyVal.trim();
-              if (key || presetInfo?.local) {
+              if (key || presetInfo?.local || hasSavedCredentials || baseUrlChanged) {
                 verifyAndSave(e.currentTarget);
               } else {
                 verifyOnly(e.currentTarget);
@@ -448,17 +454,16 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
       </div>
       <div className="pv-cred-row">
         <span className="pv-cred-label">Base URL</span>
-        {isCustomBaseUrlProvider ? (
-          <input
-            className="settings-input"
-            type="text"
-            value={baseUrlVal}
-            onChange={(e) => setBaseUrlVal(e.target.value)}
-            placeholder={presetInfo?.url || 'http://localhost:11434/v1'}
-          />
-        ) : (
-          <span className="pv-cred-value muted">{baseUrl || '—'}</span>
-        )}
+        <input
+          className="settings-input"
+          type="text"
+          value={baseUrlVal}
+          onChange={(e) => {
+            setBaseUrlVal(e.target.value);
+            setConnStatus('idle');
+          }}
+          placeholder={presetInfo?.url || 'https://api.example.com/v1'}
+        />
       </div>
       <div className="pv-cred-row">
         <span className="pv-cred-label">{t('settings.providers.apiType')}</span>
