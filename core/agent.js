@@ -860,8 +860,8 @@ export class Agent {
 
       if (hasComputerUse) {
         parts.push(isZh
-          ? "当用户要求你操作桌面应用（点击、输入、截图、切换窗口）时，使用 mcp__computer_use__*。首次操作前先调用 mcp__computer_use__request_access 申请应用权限，然后通过 screenshot/zoom 观察，再执行鼠标键盘动作。"
-          : "When the user asks for desktop app control (click/type/screenshot/window switching), use mcp__computer_use__* tools. Start with mcp__computer_use__request_access, then observe with screenshot/zoom before taking mouse/keyboard actions.");
+          ? "当用户要求你操作桌面应用（点击、输入、截图、切换窗口）时，使用 mcp__computer_use__*。首次操作前先调用 mcp__computer_use__request_access 申请目标应用权限，然后通过 computer_use 的 screenshot/zoom 观察，再执行鼠标键盘动作；不要直接拿用户上传截图里的坐标去点，也不要为了切换窗口把 Codex/Finder/Hanako 加进授权列表。若 click_text 在自绘/Electron 应用里找不到按钮文字，改用 computer_use 重新 screenshot/zoom 后按视觉中心 left_click，并在点击后再截图确认。"
+          : "When the user asks for desktop app control (click/type/screenshot/window switching), use mcp__computer_use__* tools. Start with mcp__computer_use__request_access for the target app, then observe with a computer_use screenshot/zoom before taking mouse/keyboard actions; do not click coordinates taken directly from a user-uploaded screenshot, and do not add Codex/Finder/Hanako to the allowlist just to switch windows. If click_text cannot find text in a custom-rendered/Electron app, use a fresh screenshot/zoom, left_click the visual center, then screenshot again to verify.");
       }
       if (hasTool(MINIMAX_MCP_WEB_SEARCH_SWITCH)) {
         parts.push(isZh

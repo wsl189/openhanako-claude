@@ -39,6 +39,47 @@ function getSteerPrefix() {
   return isZh ? "（插话）\n" : "(Interjection)\n";
 }
 
+function compactForLog(value, limit = 900) {
+  if (value === undefined) return "undefined";
+  if (value === null) return "null";
+  const scrubValue = (input) => {
+    if (Array.isArray(input)) return input.map(scrubValue);
+    if (!input || typeof input !== "object") return input;
+    const out = {};
+    for (const [key, val] of Object.entries(input)) {
+      const lower = key.toLowerCase();
+      if (["text", "content", "base64", "data"].includes(lower)) {
+        out[key] = typeof val === "string" ? `[${val.length} chars]` : "[redacted]";
+      } else {
+        out[key] = scrubValue(val);
+      }
+    }
+    return out;
+  };
+  let text = "";
+  try {
+    text = JSON.stringify(scrubValue(value));
+  } catch {
+    text = String(value || "");
+  }
+  if (typeof text !== "string") text = String(text);
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function logToolEvent(event = {}) {
+  const name = String(event?.name || "");
+  if (!name) return;
+  if (event.type === "tool_start") {
+    log.log(`[tool] start ${name} args=${compactForLog(event.args)}`);
+  } else if (event.type === "tool_end") {
+    const ok = resolveToolEndSuccess(event);
+    log.log(
+      `[tool] end ${name} success=${ok} `
+      + `args=${compactForLog(event.args)} details=${compactForLog(event.details)}`,
+    );
+  }
+}
+
 function normalizeAnthropicBaseUrlForSdk(url = "") {
   return String(url || "")
     .trim()
@@ -733,6 +774,7 @@ export class SessionCoordinator {
         sessionManager: runtime?.sessionManager,
       }),
       emitToolEvent: (event) => {
+        logToolEvent(event);
         runtime?._recordToolEvent?.(event);
         runtime?._emit?.(event);
       },
