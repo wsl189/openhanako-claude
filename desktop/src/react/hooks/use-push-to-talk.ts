@@ -109,6 +109,7 @@ export function usePushToTalk({
   const speechRecognitionCtor = useMemo(() => resolveSpeechRecognitionCtor(), []);
   const [state, setState] = useState<PushToTalkState>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [volumeLevel, setVolumeLevel] = useState(0);
 
   const holdRef = useRef({
     isDown: false,
@@ -123,6 +124,10 @@ export function usePushToTalk({
   const transcribingRef = useRef(false);
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechFallbackTranscriptRef = useRef('');
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const meterFrameRef = useRef<number | null>(null);
+  const volumeLevelRef = useRef(0);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -133,7 +138,79 @@ export function usePushToTalk({
     onError?.(text);
   }, [onError]);
 
+  const cleanupLevelMeter = useCallback(() => {
+    if (meterFrameRef.current !== null) {
+      window.cancelAnimationFrame(meterFrameRef.current);
+      meterFrameRef.current = null;
+    }
+    try {
+      audioSourceRef.current?.disconnect();
+    } catch {
+      // ignore
+    }
+    audioSourceRef.current = null;
+
+    const audioContext = audioContextRef.current;
+    audioContextRef.current = null;
+    if (audioContext && audioContext.state !== 'closed') {
+      void audioContext.close().catch(() => {});
+    }
+
+    if (volumeLevelRef.current !== 0) {
+      volumeLevelRef.current = 0;
+      setVolumeLevel(0);
+    }
+  }, []);
+
+  const startLevelMeter = useCallback((stream: MediaStream) => {
+    cleanupLevelMeter();
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    try {
+      const audioContext = new AudioContextCtor();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.72;
+      source.connect(analyser);
+
+      const samples = new Uint8Array(analyser.fftSize);
+      let lastCommit = 0;
+
+      const tick = (time: number) => {
+        analyser.getByteTimeDomainData(samples);
+        let sum = 0;
+        for (let i = 0; i < samples.length; i += 1) {
+          const centered = (samples[i] - 128) / 128;
+          sum += centered * centered;
+        }
+
+        const rms = Math.sqrt(sum / samples.length);
+        const nextLevel = Math.min(1, Math.max(0, (rms - 0.012) * 8));
+        const smoothed = (volumeLevelRef.current * 0.62) + (nextLevel * 0.38);
+
+        if (time - lastCommit > 55 || Math.abs(smoothed - volumeLevelRef.current) > 0.05) {
+          volumeLevelRef.current = smoothed;
+          setVolumeLevel(smoothed);
+          lastCommit = time;
+        } else {
+          volumeLevelRef.current = smoothed;
+        }
+
+        meterFrameRef.current = window.requestAnimationFrame(tick);
+      };
+
+      audioContextRef.current = audioContext;
+      audioSourceRef.current = source;
+      meterFrameRef.current = window.requestAnimationFrame(tick);
+    } catch {
+      cleanupLevelMeter();
+    }
+  }, [cleanupLevelMeter]);
+
   const cleanupStream = useCallback(() => {
+    cleanupLevelMeter();
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {
         try {
@@ -144,7 +221,7 @@ export function usePushToTalk({
       }
       streamRef.current = null;
     }
-  }, []);
+  }, [cleanupLevelMeter]);
 
   const stopSpeechRecognition = useCallback(() => {
     const recognition = speechRecognitionRef.current;
@@ -344,6 +421,7 @@ export function usePushToTalk({
     try {
       recorder.start(180);
       setState('recording');
+      startLevelMeter(stream);
       startSpeechRecognition(mySession);
       if (stopRequestedRef.current || !holdRef.current.isDown) {
         await stopRecording();
@@ -355,7 +433,7 @@ export function usePushToTalk({
       setState('idle');
       emitError('VOICE_RECORDER_ERROR');
     }
-  }, [cleanupStream, emitError, enabled, onInterimTranscript, startSpeechRecognition, stopRecording, supported]);
+  }, [cleanupStream, emitError, enabled, onInterimTranscript, startLevelMeter, startSpeechRecognition, stopRecording, supported]);
 
   const handleKeyDown = useCallback((e: KeyLikeEvent): boolean => {
     if (!enabled || !supported) return false;
@@ -459,6 +537,7 @@ export function usePushToTalk({
     supported,
     state,
     error,
+    volumeLevel,
     clearError,
     handleKeyDown,
     handleKeyUp,

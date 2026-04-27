@@ -15,6 +15,8 @@ export const SVG_ICONS: Record<string, string> = {
   image:    _s('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>'),
   video:    _s('<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>'),
   music:    _s('<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'),
+  mic:      _s('<path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/>'),
+  micFill:  '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10h2v1a5 5 0 0 0 10 0v-1h2v1a7 7 0 0 1-6 6.93V20h3v2H8v-2h3v-2.07A7 7 0 0 1 5 11v-1z"/></svg>',
   archive:  _s('<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>'),
   code:     _s('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
   globe:    _s('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),

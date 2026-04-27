@@ -250,6 +250,7 @@ function InputAreaInner() {
     supported: voiceSupported,
     state: voiceState,
     error: voiceErrorRaw,
+    volumeLevel: voiceVolumeLevel,
     clearError: clearVoiceError,
     handleKeyDown: handleVoiceKeyDown,
     handleKeyUp: handleVoiceKeyUp,
@@ -822,8 +823,25 @@ function InputAreaInner() {
               onToggle={toggleDocContext}
             />
             {voiceSupported && (
-              <span className={`voice-status-pill state-${voiceState}${voiceState !== 'idle' ? ' active' : ''}`}>
-                {voiceStatusText}
+              <span
+                className={`voice-mic-indicator state-${voiceState}${voiceState !== 'idle' ? ' active' : ''}`}
+                title={voiceStatusText}
+                aria-label={voiceStatusText}
+                style={{ '--voice-level': voiceVolumeLevel.toFixed(3) } as any}
+              >
+                <span
+                  className="voice-mic-glyph"
+                  aria-hidden="true"
+                >
+                  <span
+                    className="voice-mic-outline"
+                    dangerouslySetInnerHTML={{ __html: SVG_ICONS.mic }}
+                  />
+                  <span
+                    className="voice-mic-fill"
+                    dangerouslySetInnerHTML={{ __html: SVG_ICONS.micFill }}
+                  />
+                </span>
               </span>
             )}
           </div>
