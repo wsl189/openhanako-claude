@@ -709,8 +709,10 @@
       "fullAccessWarningBody3": "仅建议在完全信任 Agent 行为且需要系统级操作时开启。",
       "fullAccessCancel": "取消",
       "fullAccessConfirm": "我了解风险，开启",
-      "updateAvailable": "有新版本可用：v{{version}}",
-      "updateDownload": "下载"
+      "updateAvailable": "有新版本可用：v{version}",
+      "updateReady": "新版本 v{version} 已下载",
+      "updateDownload": "下载",
+      "updateInstall": "重启安装"
     },
     "me": {
       "title": "我",
@@ -1570,6 +1572,13 @@
     },
     "notification": {
       "ready": "通知已就绪"
+    },
+    "update": {
+      "restartNow": "重启安装",
+      "later": "稍后",
+      "readyTitle": "更新已就绪",
+      "readyMessage": "Hanako v{version} 已下载完成。",
+      "readyDetail": "重启 Hanako 后将自动安装更新。"
     }
   },
   "devtools": {

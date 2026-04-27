@@ -17,6 +17,12 @@ contextBridge.exposeInMainWorld("hana", {
   getServerToken: () => ipcRenderer.invoke("get-server-token"),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   checkUpdate: () => ipcRenderer.invoke("check-update"),
+  installUpdate: () => ipcRenderer.invoke("install-update"),
+  onUpdateInfo: (cb) => {
+    const handler = (_, info) => cb(info);
+    ipcRenderer.on("update-info", handler);
+    return () => ipcRenderer.removeListener("update-info", handler);
+  },
   appReady: () => ipcRenderer.invoke("app-ready"),
   selectFolder: () => ipcRenderer.invoke("select-folder"),
   selectSkill: () => ipcRenderer.invoke("select-skill"),

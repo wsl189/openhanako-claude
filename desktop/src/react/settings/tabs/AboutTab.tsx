@@ -7,13 +7,17 @@ const hana = (window as any).hana;
 export function AboutTab() {
   const [version, setVersion] = useState('');
   const [licenseOpen, setLicenseOpen] = useState(false);
-  const [updateInfo, setUpdateInfo] = useState<{ version: string; downloadUrl: string } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{ version: string; downloadUrl?: string; downloaded?: boolean; percent?: number } | null>(null);
 
   useEffect(() => {
     hana?.getAppVersion?.().then((v: string) => setVersion(v || ''));
     hana?.checkUpdate?.().then((info: any) => {
       if (info?.version) setUpdateInfo(info);
     });
+    const unsubscribe = hana?.onUpdateInfo?.((info: any) => {
+      setUpdateInfo(info?.version ? info : null);
+    });
+    return () => unsubscribe?.();
   }, []);
 
   return (
@@ -29,16 +33,22 @@ export function AboutTab() {
         {version && <div className="about-version">v{version}</div>}
         {updateInfo && (
           <div className="about-update">
-            <span>{t('settings.about.updateAvailable', { version: updateInfo.version })}</span>
+            <span>
+              {updateInfo.downloaded
+                ? t('settings.about.updateReady', { version: updateInfo.version })
+                : t('settings.about.updateAvailable', { version: updateInfo.version })}
+              {!updateInfo.downloaded && typeof updateInfo.percent === 'number' ? ` ${updateInfo.percent}%` : ''}
+            </span>
             <a
               className="about-update-link"
               href="#"
               onClick={(e) => {
                 e.preventDefault();
-                hana?.openExternal?.(updateInfo.downloadUrl);
+                if (updateInfo.downloaded) hana?.installUpdate?.();
+                else if (updateInfo.downloadUrl) hana?.openExternal?.(updateInfo.downloadUrl);
               }}
             >
-              {t('settings.about.updateDownload')}
+              {updateInfo.downloaded ? t('settings.about.updateInstall') : t('settings.about.updateDownload')}
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                 <polyline points="15 3 21 3 21 9" />

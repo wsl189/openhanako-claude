@@ -14,6 +14,7 @@ const path = require("path");
 const { fork, execFileSync, execFile } = require("child_process");
 const fs = require("fs");
 const WebSocket = require("ws");
+const { autoUpdater } = require("electron-updater");
 
 // Windows 通知必须绑定 AppUserModelID，否则常见“任务触发但通知不弹窗”。
 if (process.platform === "win32") {
@@ -70,6 +71,7 @@ let _browserBackend = null; // "embedded" | "external"
 const EXTERNAL_CHROME_MODE = String(process.env.HANA_BROWSER_EXTERNAL_CHROME || "off").toLowerCase();
 const EXTERNAL_CHROME_HOST = process.env.HANA_BROWSER_EXTERNAL_CHROME_HOST || "127.0.0.1";
 const EXTERNAL_CHROME_PORT = Number(process.env.HANA_BROWSER_EXTERNAL_CHROME_PORT || 9222);
+const UPDATE_RELEASES_URL = process.env.HANA_UPDATE_RELEASES_URL || "https://github.com/wsl189/myagent-releases/releases/latest";
 
 const _externalChrome = {
   active: false,
@@ -1845,45 +1847,134 @@ function setupBrowserCommands() {
   });
 }
 
-// ── 更新检查 ──
+// ── 自动更新 ──
 let _updateInfo = null;
+let _updateCheckPromise = null;
+let _autoUpdaterReady = false;
 
-async function checkForUpdates() {
-  try {
-    const res = await fetch("https://api.github.com/repos/liliMozi/openhanako/releases/latest", {
-      headers: { "User-Agent": "Hanako" },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    const latest = (data.tag_name || "").replace(/^v/, "");
-    const current = app.getVersion();
-    if (!latest || !isNewerVersion(latest, current)) return;
-    const ext = process.platform === "win32" ? ".exe" : ".dmg";
-    _updateInfo = {
-      version: latest,
-      url: data.html_url,
-      downloadUrl: (data.assets || []).find(a => a.name?.endsWith(ext))?.browser_download_url || data.html_url,
-    };
-    console.log(`[desktop] 发现新版本: v${latest}（当前 v${current}）`);
-  } catch {}
+function _broadcastUpdateInfo() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win || win.isDestroyed()) continue;
+    try { win.webContents.send("update-info", _updateInfo); } catch {}
+  }
 }
 
-function isNewerVersion(latest, current) {
-  const a = latest.split(".").map(Number);
-  const b = current.split(".").map(Number);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if ((a[i] || 0) > (b[i] || 0)) return true;
-    if ((a[i] || 0) < (b[i] || 0)) return false;
+function _toUpdateInfo(info, status, extra = {}) {
+  const version = String(info?.version || "").replace(/^v/, "");
+  return {
+    status,
+    version,
+    releaseName: info?.releaseName || "",
+    releaseDate: info?.releaseDate || "",
+    url: UPDATE_RELEASES_URL,
+    downloadUrl: UPDATE_RELEASES_URL,
+    ...extra,
+  };
+}
+
+function setupAutoUpdater() {
+  if (_autoUpdaterReady) return;
+  _autoUpdaterReady = true;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = console;
+
+  autoUpdater.on("checking-for-update", () => {
+    console.log("[desktop:update] checking for updates...");
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    _updateInfo = _toUpdateInfo(info, "available", { downloaded: false });
+    console.log(`[desktop:update] update available: v${_updateInfo.version}`);
+    _broadcastUpdateInfo();
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    if (!_updateInfo?.version) return;
+    _updateInfo = {
+      ..._updateInfo,
+      status: "downloading",
+      percent: Math.round(Number(progress?.percent || 0)),
+      downloaded: false,
+    };
+    _broadcastUpdateInfo();
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    _updateInfo = _toUpdateInfo(info, "downloaded", { downloaded: true, percent: 100 });
+    console.log(`[desktop:update] update downloaded: v${_updateInfo.version}`);
+    _broadcastUpdateInfo();
+
+    dialog.showMessageBox({
+      type: "info",
+      buttons: [
+        mt("update.restartNow", null, "Restart and Install"),
+        mt("update.later", null, "Later"),
+      ],
+      defaultId: 0,
+      cancelId: 1,
+      title: mt("update.readyTitle", null, "Update Ready"),
+      message: mt("update.readyMessage", { version: _updateInfo.version }, `Hanako v${_updateInfo.version} has been downloaded.`),
+      detail: mt("update.readyDetail", null, "Restart Hanako to install the update."),
+    }).then(({ response }) => {
+      if (response !== 0) return;
+      isQuitting = true;
+      isExitingServer = true;
+      setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    }).catch(() => {});
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    if (_updateInfo?.status !== "downloaded") _updateInfo = null;
+    _broadcastUpdateInfo();
+    console.log("[desktop:update] no update available");
+  });
+
+  autoUpdater.on("error", (err) => {
+    console.warn("[desktop:update] update check failed:", err?.message || err);
+    if (_updateInfo?.status !== "downloaded") {
+      _updateInfo = null;
+      _broadcastUpdateInfo();
+    }
+  });
+}
+
+async function checkForUpdates() {
+  setupAutoUpdater();
+  if (!app.isPackaged && process.env.HANA_AUTO_UPDATE_DEV !== "1") {
+    console.log("[desktop:update] skipped in development build");
+    return _updateInfo;
   }
-  return false;
+  if (_updateCheckPromise) return _updateCheckPromise;
+
+  _updateCheckPromise = autoUpdater.checkForUpdates()
+    .then(() => _updateInfo)
+    .catch((err) => {
+      console.warn("[desktop:update] check failed:", err?.message || err);
+      return _updateInfo;
+    })
+    .finally(() => {
+      _updateCheckPromise = null;
+    });
+
+  return _updateCheckPromise;
+}
+
+function installDownloadedUpdate() {
+  if (_updateInfo?.status !== "downloaded") return false;
+  isQuitting = true;
+  isExitingServer = true;
+  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  return true;
 }
 
 // ── IPC ──
 ipcMain.handle("get-server-port", () => serverPort);
 ipcMain.handle("get-server-token", () => serverToken);
 ipcMain.handle("get-app-version", () => app.getVersion());
-ipcMain.handle("check-update", () => _updateInfo);
+ipcMain.handle("check-update", () => checkForUpdates());
+ipcMain.handle("install-update", () => installDownloadedUpdate());
 
 ipcMain.handle("open-settings", (_event, tab, theme) => createSettingsWindow(tab, theme));
 

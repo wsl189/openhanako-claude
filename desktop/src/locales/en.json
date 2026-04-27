@@ -709,8 +709,10 @@
       "fullAccessWarningBody3": "Only recommended when you fully trust the agent's behavior and need system-level operations.",
       "fullAccessCancel": "Cancel",
       "fullAccessConfirm": "I understand the risks, enable",
-      "updateAvailable": "New version available: v{{version}}",
-      "updateDownload": "Download"
+      "updateAvailable": "New version available: v{version}",
+      "updateReady": "Version v{version} is ready",
+      "updateDownload": "Download",
+      "updateInstall": "Restart to Install"
     },
     "me": {
       "title": "Me",
@@ -1570,6 +1572,13 @@
     },
     "notification": {
       "ready": "Notifications enabled"
+    },
+    "update": {
+      "restartNow": "Restart and Install",
+      "later": "Later",
+      "readyTitle": "Update Ready",
+      "readyMessage": "Hanako v{version} has been downloaded.",
+      "readyDetail": "Restart Hanako to install the update."
     }
   },
   "devtools": {

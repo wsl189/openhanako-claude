@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "type": "module",
   "description": "Hanako - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -31,7 +31,8 @@
     "rebuild:node": "npm rebuild better-sqlite3 --build-from-source",
     "rebuild": "npm run rebuild:electron",
     "pack": "npm run build:renderer && electron-builder --dir",
-    "dist": "npm run build:renderer && electron-builder --mac dmg",
+    "dist": "npm run build:renderer && electron-builder --mac",
+    "dist:publish": "npm run build:renderer && electron-builder --mac --win --publish always",
     "dist:win": "npm run build:renderer && electron-builder --win nsis",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -53,6 +54,7 @@
     "croner": "^10.0.1",
     "docx-preview": "^0.3.7",
     "duck-duck-scrape": "^2.2.7",
+    "electron-updater": "^6.8.3",
     "exceljs": "^4.4.0",
     "fastify": "^5.2.0",
     "js-yaml": "^4.1.0",
@@ -90,6 +92,13 @@
     "productName": "Hanako",
     "asar": false,
     "afterPack": "./scripts/fix-modules.cjs",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wsl189",
+        "repo": "myagent-releases"
+      }
+    ],
     "files": [
       "core/**",
       "hub/**",
@@ -103,7 +112,10 @@
       "!**/node_modules/*/{CHANGELOG.md,README.md,readme.md,LICENSE,license,test,tests,__tests__,docs,doc,.github}"
     ],
     "mac": {
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.productivity",
       "icon": "desktop/src/icon.icns",
       "artifactName": "${productName}-${version}-macOS-${arch}.${ext}"
