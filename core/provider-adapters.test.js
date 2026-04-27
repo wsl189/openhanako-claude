@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OpenAIAdapter, streamSSE } from "./provider-adapters.js";
+import { AnthropicAdapter, OpenAIAdapter, streamSSE } from "./provider-adapters.js";
 
 function createSseResponse(events = []) {
   const encoder = new TextEncoder();
@@ -71,5 +71,25 @@ describe("provider-adapters streamSSE", () => {
       name: "Glob",
       arguments: { pattern: "*", path: "/tmp" },
     });
+  });
+});
+
+describe("AnthropicAdapter", () => {
+  it("builds /v1/messages endpoints for Anthropic-compatible base URLs", () => {
+    const adapter = new AnthropicAdapter();
+
+    expect(adapter.buildStreamRequest({
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "test-key",
+      modelId: "claude-test",
+      userMessage: "hi",
+    }).url).toBe("https://api.anthropic.com/v1/messages");
+
+    expect(adapter.buildStreamRequest({
+      baseUrl: "https://api.minimaxi.com/anthropic",
+      apiKey: "test-key",
+      modelId: "MiniMax-test",
+      userMessage: "hi",
+    }).url).toBe("https://api.minimaxi.com/anthropic/v1/messages");
   });
 });

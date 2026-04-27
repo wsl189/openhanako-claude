@@ -10,6 +10,13 @@ function normalizeAnthropicBaseUrl(url = "") {
   return stripTrailingSlash(String(url || "").replace(/\/(v1\/)?messages$/i, ""));
 }
 
+function buildAnthropicMessagesUrl(baseUrl = "") {
+  const normalized = normalizeAnthropicBaseUrl(baseUrl);
+  return /\/v1$/i.test(normalized)
+    ? `${normalized}/messages`
+    : `${normalized}/v1/messages`;
+}
+
 function buildOpenAIMessageContent(text = "", images = []) {
   if (!Array.isArray(images) || images.length === 0) return text;
   const content = images.map((img) => ({
@@ -361,9 +368,7 @@ export class AnthropicAdapter {
 
     const baseUrl = normalizeAnthropicBaseUrl(input.baseUrl);
     return {
-      url: /\/anthropic$/i.test(baseUrl)
-        ? `${baseUrl}/v1/messages`
-        : `${baseUrl}/messages`,
+      url: buildAnthropicMessagesUrl(baseUrl),
       headers: {
         "x-api-key": input.apiKey,
         Authorization: `Bearer ${input.apiKey}`,

@@ -362,6 +362,7 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
       showToast(t('settings.providers.urlRequired'), 'error');
       return;
     }
+    setConnStatus('testing');
     btn.classList.add('spinning');
     try {
       const testRes = await hanaFetch('/api/providers/test', {
@@ -371,6 +372,7 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
       });
       const testData = await testRes.json();
       if (!testData.ok) {
+        setConnStatus('fail');
         showToast(t('settings.providers.verifyFailed'), 'error');
         return;
       }
@@ -385,11 +387,13 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providers: { [providerId]: payload } }),
       });
+      setConnStatus('ok');
       showToast(t('settings.providers.verifySuccess'), 'success');
       if (isPresetSetup) useSettingsStore.setState({ selectedProviderId: providerId });
       await onRefresh();
       platform?.settingsChanged?.('models-changed');
     } catch (err: any) {
+      setConnStatus('fail');
       showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
     } finally {
       btn.classList.remove('spinning');

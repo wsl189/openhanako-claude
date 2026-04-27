@@ -43,6 +43,39 @@ function buildModelEndpointCandidates(baseUrl, api) {
   return candidates;
 }
 
+export function buildAnthropicMessagesEndpoint(baseUrl) {
+  const normalized = String(baseUrl || "")
+    .replace(/\/+$/, "")
+    .replace(/\/(v1\/)?messages$/i, "");
+  if (!normalized) return "";
+  return /\/v1$/i.test(normalized)
+    ? `${normalized}/messages`
+    : `${normalized}/v1/messages`;
+}
+
+export function isAnthropicProbeAuthenticated(status, bodyText = "") {
+  if (status >= 200 && status < 300) return true;
+  if (status === 401 || status === 403) return false;
+
+  const body = String(bodyText || "").toLowerCase();
+  const authError =
+    /unauthori[sz]ed|authentication|permission denied/.test(body)
+    || /(?:invalid|incorrect|missing|expired).{0,24}(?:api[_ -]?key|token)/.test(body)
+    || /(?:api[_ -]?key|token).{0,24}(?:invalid|incorrect|missing|expired)/.test(body);
+  if (authError) return false;
+
+  // 400/422 from a Messages probe usually means the endpoint and key were accepted,
+  // but the deliberately tiny probe body/model was rejected by validation.
+  if (status === 400 || status === 422) return true;
+
+  // Some compatible gateways report an unknown probe model as 404.
+  if (status === 404 && /model/.test(body) && /not found|does not exist|unknown/.test(body)) {
+    return true;
+  }
+
+  return false;
+}
+
 function normalizeRemoteModels(data) {
   const remoteList = Array.isArray(data?.data)
     ? data.data
@@ -435,20 +468,18 @@ export default async function providersRoute(app, { engine }) {
 
       // Anthropic 格式没有 /models 端点，用最小化 messages 请求验证认证
       if (api === "anthropic-messages") {
-        const baseUrl = normalizedBaseUrl;
         const headers = buildProviderAuthHeaders(api, api_key);
-        const res = await fetch(baseUrl + "/messages", {
+        const res = await fetch(buildAnthropicMessagesEndpoint(normalizedBaseUrl), {
           method: "POST",
           headers,
           body: JSON.stringify({ model: "test", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
           signal: AbortSignal.timeout(10000),
         });
-        // 401/403 = key 无效，其他错误（400 model not found 等）说明认证通过了
-        const authOk = res.status !== 401 && res.status !== 403;
+        const raw = await res.text();
+        const authOk = isAnthropicProbeAuthenticated(res.status, raw);
         return { ok: authOk, status: res.status };
       }
 
-      const url = normalizedBaseUrl + "/models";
       let headers = {};
       if (api_key) {
         if (!api) {
@@ -457,24 +488,27 @@ export default async function providersRoute(app, { engine }) {
         }
         headers = buildProviderAuthHeaders(api, api_key);
       }
-      const res = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) return { ok: false, status: res.status };
+      let lastStatus = 0;
+      let lastError = "";
+      for (const url of buildModelEndpointCandidates(normalizedBaseUrl, api)) {
+        const res = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(10000),
+        });
+        lastStatus = res.status;
+        if (!res.ok) continue;
 
-      const raw = await res.text();
-      try {
-        const data = raw ? JSON.parse(raw) : {};
-        const hasList = Array.isArray(data?.data) || Array.isArray(data?.models);
-        return { ok: hasList, status: res.status };
-      } catch {
-        return {
-          ok: false,
-          status: res.status,
-          error: "Non-JSON response from /models (check Base URL points to API endpoint)",
-        };
+        const raw = await res.text();
+        try {
+          const data = raw ? JSON.parse(raw) : {};
+          const hasList = Array.isArray(data?.data) || Array.isArray(data?.models);
+          if (hasList) return { ok: true, status: res.status };
+          lastError = "Model list response did not contain data/models array";
+        } catch {
+          lastError = "Non-JSON response from /models (check Base URL points to API endpoint)";
+        }
       }
+      return { ok: false, status: lastStatus || undefined, error: lastError || undefined };
     } catch (err) {
       return { ok: false, error: err.message };
     }
