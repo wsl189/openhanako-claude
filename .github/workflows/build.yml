@@ -93,6 +93,8 @@ jobs:
           target_commitish: main
           draft: false
           prerelease: false
+          make_latest: true
+          overwrite_files: true
           generate_release_notes: true
           files: |
             artifacts/**/*.dmg
