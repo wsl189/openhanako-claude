@@ -1851,6 +1851,8 @@ function setupBrowserCommands() {
 let _updateInfo = null;
 let _updateCheckPromise = null;
 let _autoUpdaterReady = false;
+let _updatePromptVersion = null;
+let _updateCheckTimer = null;
 
 function _broadcastUpdateInfo() {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -1888,6 +1890,7 @@ function setupAutoUpdater() {
     _updateInfo = _toUpdateInfo(info, "available", { downloaded: false });
     console.log(`[desktop:update] update available: v${_updateInfo.version}`);
     _broadcastUpdateInfo();
+    showUpdateAvailablePrompt(_updateInfo);
   });
 
   autoUpdater.on("download-progress", (progress) => {
@@ -1940,6 +1943,19 @@ function setupAutoUpdater() {
   });
 }
 
+function showUpdateAvailablePrompt(info) {
+  if (!info?.version || _updatePromptVersion === info.version) return;
+  _updatePromptVersion = info.version;
+  dialog.showMessageBox({
+    type: "info",
+    buttons: [mt("update.ok", null, "OK")],
+    defaultId: 0,
+    title: mt("update.availableTitle", null, "Update Available"),
+    message: mt("update.availableMessage", { version: info.version }, `Hanako v${info.version} is available.`),
+    detail: mt("update.availableDetail", null, "The update is downloading in the background. Hanako will ask you to restart after it is ready."),
+  }).catch(() => {});
+}
+
 async function checkForUpdates() {
   setupAutoUpdater();
   if (!app.isPackaged && process.env.HANA_AUTO_UPDATE_DEV !== "1") {
@@ -1967,6 +1983,15 @@ function installDownloadedUpdate() {
   isExitingServer = true;
   setImmediate(() => autoUpdater.quitAndInstall(false, true));
   return true;
+}
+
+function scheduleUpdateChecks() {
+  checkForUpdates().catch(() => {});
+  if (_updateCheckTimer) return;
+  _updateCheckTimer = setInterval(() => {
+    checkForUpdates().catch(() => {});
+  }, 6 * 60 * 60 * 1000);
+  _updateCheckTimer.unref?.();
 }
 
 // ── IPC ──
@@ -2657,8 +2682,8 @@ app.whenReady().then(async () => {
     // 4. 直接进入主窗口
     createMainWindow();
 
-    // 5. 后台检查更新（不阻塞启动）
-    checkForUpdates().catch(() => {});
+    // 5. 后台检查更新（不阻塞启动），之后定时检查
+    setTimeout(scheduleUpdateChecks, 10000).unref?.();
   } catch (err) {
     console.error("[desktop] 启动失败:", err.message);
     // 写入 crash.log 并获取详细日志

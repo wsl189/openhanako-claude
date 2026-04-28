@@ -1574,6 +1574,10 @@
       "ready": "通知已就绪"
     },
     "update": {
+      "ok": "知道了",
+      "availableTitle": "发现新版本",
+      "availableMessage": "Hanako v{version} 可用。",
+      "availableDetail": "更新正在后台下载，准备好后会提示你重启安装。",
       "restartNow": "重启安装",
       "later": "稍后",
       "readyTitle": "更新已就绪",

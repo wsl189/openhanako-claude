@@ -1574,6 +1574,10 @@
       "ready": "Notifications enabled"
     },
     "update": {
+      "ok": "OK",
+      "availableTitle": "Update Available",
+      "availableMessage": "Hanako v{version} is available.",
+      "availableDetail": "The update is downloading in the background. Hanako will ask you to restart after it is ready.",
       "restartNow": "Restart and Install",
       "later": "Later",
       "readyTitle": "Update Ready",
