@@ -154,22 +154,12 @@ const MANAGED_EXTERNAL_MCP_TOOLS: Array<{
     labelKey: 'toolDef.claudeInChrome.label',
     descKey: 'toolDef.claudeInChrome.description',
   },
-  {
-    name: 'minimax_mcp_web_search',
-    serverName: 'MiniMax',
-    prefix: 'mcp__MiniMax__web_search',
-    labelKey: 'toolDef.minimaxMcpWebSearch.label',
-    descKey: 'toolDef.minimaxMcpWebSearch.description',
-  },
-  {
-    name: 'minimax_mcp_understand_image',
-    serverName: 'MiniMax',
-    prefix: 'mcp__MiniMax__understand_image',
-    labelKey: 'toolDef.minimaxMcpUnderstandImage.label',
-    descKey: 'toolDef.minimaxMcpUnderstandImage.description',
-  },
 ];
 const MANAGED_EXTERNAL_MCP_TOOL_NAMES = new Set(MANAGED_EXTERNAL_MCP_TOOLS.map(tool => tool.name));
+const HIDDEN_CUSTOM_TOOL_NAMES = new Set([
+  'minimax_mcp_web_search',
+  'minimax_mcp_understand_image',
+]);
 
 function getBuiltinDisplayName(name: string): string {
   return BUILTIN_CLAUDE_DISPLAY_NAMES[name] || name;
@@ -271,7 +261,10 @@ export function AgentTab() {
     const custom = Array.isArray(raw.custom) ? raw.custom.map(String) : [];
     return { builtinRequired, builtinOptional, custom };
   })();
-  const visibleCustomTools = toolCatalog.custom.filter((name: string) => !MANAGED_EXTERNAL_MCP_TOOL_NAMES.has(name));
+  const visibleCustomTools = toolCatalog.custom.filter((name: string) => (
+    !MANAGED_EXTERNAL_MCP_TOOL_NAMES.has(name)
+    && !HIDDEN_CUSTOM_TOOL_NAMES.has(name)
+  ));
   const managedExternalMcpEntries = MANAGED_EXTERNAL_MCP_TOOLS
     .filter(tool => toolCatalog.custom.includes(tool.name));
   const externalMcpServers = (() => {

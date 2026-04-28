@@ -28,18 +28,6 @@ const MANAGED_EXTERNAL_MCP_TOOLS: Array<{
     prefix: 'mcp__claude_in_chrome__*',
     labelKey: 'toolDef.claudeInChrome.label',
   },
-  {
-    name: 'minimax_mcp_web_search',
-    serverName: 'MiniMax',
-    prefix: 'mcp__MiniMax__web_search',
-    labelKey: 'toolDef.minimaxMcpWebSearch.label',
-  },
-  {
-    name: 'minimax_mcp_understand_image',
-    serverName: 'MiniMax',
-    prefix: 'mcp__MiniMax__understand_image',
-    labelKey: 'toolDef.minimaxMcpUnderstandImage.label',
-  },
 ];
 
 function normalizeName(name: string): string {
