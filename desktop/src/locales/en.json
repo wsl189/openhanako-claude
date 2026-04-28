@@ -1582,7 +1582,12 @@
       "later": "Later",
       "readyTitle": "Update Ready",
       "readyMessage": "Hanako v{version} has been downloaded.",
-      "readyDetail": "Restart Hanako to install the update."
+      "readyDetail": "Restart Hanako to install the update.",
+      "openRelease": "Open Release Page",
+      "installFallbackTitle": "Install Update Manually",
+      "installFallbackMessage": "Hanako v{version} is ready, but automatic installation could not continue.",
+      "installFallbackDetail": "Automatic installation did not start. Please download and install the latest version manually.",
+      "installFallbackDetailWithError": "Automatic installation did not start: {error}"
     }
   },
   "devtools": {

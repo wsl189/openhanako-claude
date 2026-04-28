@@ -1881,7 +1881,9 @@ function setupAutoUpdater() {
   _autoUpdaterReady = true;
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // macOS 由点击“重启安装”明确触发 Squirrel.Mac 安装准备，避免用户看到下载完成时
+  // native updater 还没准备好而点击无反馈。
+  autoUpdater.autoInstallOnAppQuit = process.platform !== "darwin";
   autoUpdater.logger = console;
 
   autoUpdater.on("checking-for-update", () => {
@@ -1986,9 +1988,44 @@ function installDownloadedUpdate() {
   isQuitting = true;
   isExitingServer = true;
   prepareForUpdateInstall().finally(() => {
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    setImmediate(() => {
+      try {
+        autoUpdater.quitAndInstall(false, true);
+        showUpdateInstallFallbackIfStillRunning(_updateInfo);
+      } catch (err) {
+        console.warn("[desktop:update] quitAndInstall failed:", err?.message || err);
+        showUpdateInstallFallback(_updateInfo, err);
+      }
+    });
   });
   return true;
+}
+
+function showUpdateInstallFallbackIfStillRunning(info) {
+  setTimeout(() => {
+    if (!_installingDownloadedUpdate || !info?.version) return;
+    showUpdateInstallFallback(info);
+  }, 15000).unref?.();
+}
+
+function showUpdateInstallFallback(info, err) {
+  const detail = err?.message
+    ? mt("update.installFallbackDetailWithError", { error: err.message }, `Automatic installation did not start: ${err.message}`)
+    : mt("update.installFallbackDetail", null, "Automatic installation did not start. Please download and install the latest version manually.");
+  dialog.showMessageBox({
+    type: "warning",
+    buttons: [
+      mt("update.openRelease", null, "Open Release Page"),
+      mt("update.later", null, "Later"),
+    ],
+    defaultId: 0,
+    cancelId: 1,
+    title: mt("update.installFallbackTitle", null, "Install Update Manually"),
+    message: mt("update.installFallbackMessage", { version: info?.version || "" }, `Hanako v${info?.version || ""} is ready, but automatic installation could not continue.`),
+    detail,
+  }).then(({ response }) => {
+    if (response === 0) shell.openExternal(UPDATE_RELEASES_URL).catch(() => {});
+  }).catch(() => {});
 }
 
 async function prepareForUpdateInstall() {
