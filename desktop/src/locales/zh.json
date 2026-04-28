@@ -72,7 +72,13 @@
     "jian": "书桌",
     "bridge": "接入社交平台",
     "toggle": "侧边栏",
-    "bridgeShort": "接入"
+    "bridgeShort": "接入",
+    "updateDownload": "下载",
+    "updateInstall": "安装",
+    "updateDownloadTitle": "下载新版本安装包",
+    "updateDownloadingTitle": "正在下载新版本：{percent}%",
+    "updateInstallTitle": "打开安装包所在位置",
+    "updateDownloadFailed": "下载安装包失败"
   },
   "session": {
     "untitled": "新对话",
@@ -712,7 +718,7 @@
       "updateAvailable": "有新版本可用：v{version}",
       "updateReady": "新版本 v{version} 已下载",
       "updateDownload": "下载",
-      "updateInstall": "重启安装"
+      "updateInstall": "安装"
     },
     "me": {
       "title": "我",
@@ -1577,7 +1583,7 @@
       "ok": "知道了",
       "availableTitle": "发现新版本",
       "availableMessage": "Hanako v{version} 可用。",
-      "availableDetail": "更新正在后台下载，准备好后会提示你重启安装。",
+      "availableDetail": "请点击侧边栏的新版本按钮下载新版安装包。",
       "restartNow": "重启安装",
       "later": "稍后",
       "readyTitle": "更新已就绪",

@@ -497,6 +497,44 @@ html[data-platform="linux"] .tb-toggle-right {
     background: var(--accent-light);
 }
 
+.sidebar-action-btn:disabled {
+    cursor: default;
+    opacity: 1;
+}
+
+.sidebar-update-btn {
+    width: auto;
+    min-width: 42px;
+    padding: 0 7px;
+    color: var(--accent);
+    background: var(--accent-light);
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.sidebar-update-btn:hover {
+    color: var(--accent);
+    background: rgba(100, 140, 200, 0.18);
+}
+
+.sidebar-update-btn.downloading {
+    min-width: 46px;
+}
+
+.sidebar-update-btn.downloaded {
+    color: var(--success, #5a9);
+    background: rgba(85, 170, 153, 0.14);
+}
+
+.sidebar-update-btn-label {
+    display: block;
+    max-width: 4em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* 活动条（session 列表上方） */
 .sidebar-activity-bar {
     display: flex;

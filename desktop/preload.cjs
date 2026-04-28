@@ -18,10 +18,18 @@ contextBridge.exposeInMainWorld("hana", {
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   checkUpdate: () => ipcRenderer.invoke("check-update"),
   installUpdate: () => ipcRenderer.invoke("install-update"),
+  downloadUpdateInstaller: () => ipcRenderer.invoke("download-update-installer"),
+  openDownloadedUpdateInstaller: () => ipcRenderer.invoke("open-downloaded-update-installer"),
+  getUpdateDownloadInfo: () => ipcRenderer.invoke("get-update-download-info"),
   onUpdateInfo: (cb) => {
     const handler = (_, info) => cb(info);
     ipcRenderer.on("update-info", handler);
     return () => ipcRenderer.removeListener("update-info", handler);
+  },
+  onUpdateDownloadInfo: (cb) => {
+    const handler = (_, info) => cb(info);
+    ipcRenderer.on("manual-update-download-info", handler);
+    return () => ipcRenderer.removeListener("manual-update-download-info", handler);
   },
   appReady: () => ipcRenderer.invoke("app-ready"),
   selectFolder: () => ipcRenderer.invoke("select-folder"),

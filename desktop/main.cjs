@@ -13,6 +13,8 @@ const os = require("os");
 const path = require("path");
 const { fork, execFileSync, execFile } = require("child_process");
 const fs = require("fs");
+const { once } = require("events");
+const { Readable } = require("stream");
 const WebSocket = require("ws");
 const { autoUpdater } = require("electron-updater");
 
@@ -1852,9 +1854,11 @@ function setupBrowserCommands() {
 let _updateInfo = null;
 let _updateCheckPromise = null;
 let _autoUpdaterReady = false;
-let _updatePromptVersion = null;
 let _updateCheckTimer = null;
 let _installingDownloadedUpdate = false;
+let _manualInstallerInfo = null;
+let _manualUpdateDownloadInfo = null;
+let _manualUpdateDownloadPromise = null;
 
 function _broadcastUpdateInfo() {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -1880,10 +1884,9 @@ function setupAutoUpdater() {
   if (_autoUpdaterReady) return;
   _autoUpdaterReady = true;
 
-  autoUpdater.autoDownload = true;
-  // macOS 由点击“重启安装”明确触发 Squirrel.Mac 安装准备，避免用户看到下载完成时
-  // native updater 还没准备好而点击无反馈。
-  autoUpdater.autoInstallOnAppQuit = process.platform !== "darwin";
+  // 更新改为用户显式点击下载安装包，避免 macOS 自动替换安装在未签名/未公证包上无反馈。
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = console;
 
   autoUpdater.on("checking-for-update", () => {
@@ -1894,7 +1897,7 @@ function setupAutoUpdater() {
     _updateInfo = _toUpdateInfo(info, "available", { downloaded: false });
     console.log(`[desktop:update] update available: v${_updateInfo.version}`);
     _broadcastUpdateInfo();
-    showUpdateAvailablePrompt(_updateInfo);
+    resolveManualInstallerInfo().catch(() => {});
   });
 
   autoUpdater.on("download-progress", (progress) => {
@@ -1947,17 +1950,166 @@ function setupAutoUpdater() {
   });
 }
 
-function showUpdateAvailablePrompt(info) {
-  if (!info?.version || _updatePromptVersion === info.version) return;
-  _updatePromptVersion = info.version;
-  dialog.showMessageBox({
-    type: "info",
-    buttons: [mt("update.ok", null, "OK")],
-    defaultId: 0,
-    title: mt("update.availableTitle", null, "Update Available"),
-    message: mt("update.availableMessage", { version: info.version }, `Hanako v${info.version} is available.`),
-    detail: mt("update.availableDetail", null, "The update is downloading in the background. Hanako will ask you to restart after it is ready."),
-  }).catch(() => {});
+function _broadcastManualUpdateDownloadInfo() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win || win.isDestroyed()) continue;
+    try { win.webContents.send("manual-update-download-info", _manualUpdateDownloadInfo); } catch {}
+  }
+}
+
+async function resolveManualInstallerInfo() {
+  const latest = await fetchLatestReleaseInfo();
+  _manualInstallerInfo = latest;
+  if (_updateInfo?.version && latest?.version === _updateInfo.version) {
+    _updateInfo = {
+      ..._updateInfo,
+      installerDownloadUrl: latest.downloadUrl,
+      installerFileName: latest.fileName,
+      installerSize: latest.size,
+    };
+    _broadcastUpdateInfo();
+  }
+  return latest;
+}
+
+async function fetchLatestReleaseInfo() {
+  const res = await fetch("https://api.github.com/repos/wsl189/myagent-releases/releases/latest", {
+    headers: { "User-Agent": "Hanako" },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`GitHub release request failed: ${res.status}`);
+  const release = await res.json();
+  const version = String(release?.tag_name || release?.name || "").replace(/^v/, "");
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  const asset = selectInstallerAsset(assets);
+  if (!version || !asset?.browser_download_url) {
+    throw new Error("No compatible installer asset found in latest release");
+  }
+  return {
+    version,
+    releaseUrl: release.html_url || UPDATE_RELEASES_URL,
+    downloadUrl: asset.browser_download_url,
+    fileName: asset.name || path.basename(new URL(asset.browser_download_url).pathname),
+    size: Number(asset.size || 0),
+  };
+}
+
+function selectInstallerAsset(assets) {
+  const names = assets.filter(a => typeof a?.name === "string" && !a.name.endsWith(".blockmap"));
+  if (process.platform === "darwin") {
+    const archMatches = names.filter(a => a.name.endsWith(".dmg") && a.name.includes(process.arch));
+    return archMatches[0] || names.find(a => a.name.endsWith(".dmg"));
+  }
+  if (process.platform === "win32") {
+    const archMatches = names.filter(a => a.name.endsWith(".exe") && a.name.includes("x64"));
+    return archMatches[0] || names.find(a => a.name.endsWith(".exe"));
+  }
+  return names.find(a => a.name.endsWith(".AppImage")) || names.find(a => a.name.endsWith(".deb")) || names.find(a => a.name.endsWith(".rpm"));
+}
+
+function getManualInstallerDownloadDir() {
+  return path.join(app.getPath("downloads"), "Hanako Updates");
+}
+
+async function downloadUpdateInstaller() {
+  if (_manualUpdateDownloadPromise) return _manualUpdateDownloadPromise;
+  _manualUpdateDownloadPromise = _downloadUpdateInstaller().finally(() => {
+    _manualUpdateDownloadPromise = null;
+  });
+  return _manualUpdateDownloadPromise;
+}
+
+async function _downloadUpdateInstaller() {
+  const installer = _manualInstallerInfo || await resolveManualInstallerInfo();
+  const downloadDir = getManualInstallerDownloadDir();
+  await fs.promises.mkdir(downloadDir, { recursive: true });
+  const filePath = path.join(downloadDir, installer.fileName);
+  const tmpPath = `${filePath}.download`;
+
+  try {
+    const existing = await fs.promises.stat(filePath).catch(() => null);
+    if (existing && (!installer.size || existing.size === installer.size)) {
+      _manualUpdateDownloadInfo = {
+        status: "downloaded",
+        version: installer.version,
+        percent: 100,
+        filePath,
+        fileName: installer.fileName,
+      };
+      _broadcastManualUpdateDownloadInfo();
+      return _manualUpdateDownloadInfo;
+    }
+
+    _manualUpdateDownloadInfo = {
+      status: "downloading",
+      version: installer.version,
+      percent: 0,
+      fileName: installer.fileName,
+    };
+    _broadcastManualUpdateDownloadInfo();
+
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+    const res = await fetch(installer.downloadUrl, {
+      headers: { "User-Agent": "Hanako" },
+      signal: AbortSignal.timeout(30 * 60 * 1000),
+    });
+    if (!res.ok || !res.body) throw new Error(`Installer download failed: ${res.status}`);
+
+    const total = Number(res.headers.get("content-length") || installer.size || 0);
+    const output = fs.createWriteStream(tmpPath);
+    let downloaded = 0;
+    let lastPercent = -1;
+
+    for await (const chunk of Readable.fromWeb(res.body)) {
+      downloaded += chunk.length;
+      if (!output.write(chunk)) await once(output, "drain");
+      const percent = total ? Math.min(99, Math.floor((downloaded / total) * 100)) : 0;
+      if (percent !== lastPercent) {
+        lastPercent = percent;
+        _manualUpdateDownloadInfo = {
+          status: "downloading",
+          version: installer.version,
+          percent,
+          fileName: installer.fileName,
+        };
+        _broadcastManualUpdateDownloadInfo();
+      }
+    }
+
+    output.end();
+    await Promise.race([
+      once(output, "finish"),
+      once(output, "error").then(([err]) => { throw err; }),
+    ]);
+    await fs.promises.rename(tmpPath, filePath);
+
+    _manualUpdateDownloadInfo = {
+      status: "downloaded",
+      version: installer.version,
+      percent: 100,
+      filePath,
+      fileName: installer.fileName,
+    };
+    _broadcastManualUpdateDownloadInfo();
+    return _manualUpdateDownloadInfo;
+  } catch (err) {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+    _manualUpdateDownloadInfo = {
+      status: "error",
+      version: installer?.version || "",
+      percent: 0,
+      error: err?.message || String(err),
+    };
+    _broadcastManualUpdateDownloadInfo();
+    throw err;
+  }
+}
+
+function openDownloadedUpdateInstaller() {
+  const filePath = _manualUpdateDownloadInfo?.filePath;
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  shell.showItemInFolder(filePath);
+  return true;
 }
 
 async function checkForUpdates() {
@@ -2108,6 +2260,9 @@ ipcMain.handle("get-server-token", () => serverToken);
 ipcMain.handle("get-app-version", () => app.getVersion());
 ipcMain.handle("check-update", () => checkForUpdates());
 ipcMain.handle("install-update", () => installDownloadedUpdate());
+ipcMain.handle("download-update-installer", () => downloadUpdateInstaller());
+ipcMain.handle("open-downloaded-update-installer", () => openDownloadedUpdateInstaller());
+ipcMain.handle("get-update-download-info", () => _manualUpdateDownloadInfo);
 
 ipcMain.handle("open-settings", (_event, tab, theme) => createSettingsWindow(tab, theme));
 

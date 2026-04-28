@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore } from './stores';
-import type { ActivePanel } from './types';
+import type { ActivePanel, UpdateDownloadInfo, UpdateInfo } from './types';
 import { hanaFetch } from './hooks/use-hana-fetch';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ActivityPanel } from './components/ActivityPanel';
@@ -361,6 +361,8 @@ function App() {
   const [announcementModalOpen, setAnnouncementModalOpen] = useState(false);
   const [announcementDraft, setAnnouncementDraft] = useState('');
   const [announcementSaving, setAnnouncementSaving] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateDownloadInfo, setUpdateDownloadInfo] = useState<UpdateDownloadInfo | null>(null);
 
   const openAnnouncementModal = useCallback(() => {
     if (!currentChannel || channelIsDM) return;
@@ -406,6 +408,34 @@ function App() {
     });
   }, []);
 
+  useEffect(() => {
+    const platform = window.platform;
+
+    platform?.checkUpdate?.()
+      .then((info) => {
+        if (info?.version) setUpdateInfo(info);
+      })
+      .catch(() => {});
+
+    platform?.getUpdateDownloadInfo?.()
+      .then((info) => {
+        if (info?.status) setUpdateDownloadInfo(info);
+      })
+      .catch(() => {});
+
+    const unsubscribeUpdate = platform?.onUpdateInfo?.((info) => {
+      setUpdateInfo(info?.version ? info : null);
+    });
+    const unsubscribeDownload = platform?.onUpdateDownloadInfo?.((info) => {
+      setUpdateDownloadInfo(info?.status ? info : null);
+    });
+
+    return () => {
+      if (typeof unsubscribeUpdate === 'function') unsubscribeUpdate();
+      if (typeof unsubscribeDownload === 'function') unsubscribeDownload();
+    };
+  }, []);
+
   // 切换 session 后，侧边栏任务计划数量应立即同步刷新
   useEffect(() => {
     if (!serverPort) return;
@@ -416,6 +446,38 @@ function App() {
       useStore.setState({ automationCount: count });
     });
   }, [currentSessionPath, serverPort]);
+
+  const handleUpdateButtonClick = useCallback(async () => {
+    const status = updateDownloadInfo?.status;
+    if (status === 'downloading') return;
+
+    if (status === 'downloaded') {
+      const opened = await window.platform?.openDownloadedUpdateInstaller?.();
+      if (!opened) addToast(t('sidebar.updateDownloadFailed'), 'error', 3000);
+      return;
+    }
+
+    try {
+      const info = await window.platform?.downloadUpdateInstaller?.();
+      if (info?.status) setUpdateDownloadInfo(info);
+    } catch {
+      addToast(t('sidebar.updateDownloadFailed'), 'error', 3000);
+    }
+  }, [addToast, t, updateDownloadInfo?.status]);
+
+  const updateStatus = updateDownloadInfo?.status || updateInfo?.status || '';
+  const updatePercent = Math.max(0, Math.min(100, Math.round(Number(updateDownloadInfo?.percent || updateInfo?.percent || 0))));
+  const showUpdateButton = Boolean(updateInfo?.version || updateStatus === 'downloading' || updateStatus === 'downloaded');
+  const updateButtonLabel = updateStatus === 'downloading'
+    ? `${updatePercent}%`
+    : updateStatus === 'downloaded'
+      ? t('sidebar.updateInstall')
+      : t('sidebar.updateDownload');
+  const updateButtonTitle = updateStatus === 'downloading'
+    ? t('sidebar.updateDownloadingTitle', { percent: updatePercent })
+    : updateStatus === 'downloaded'
+      ? t('sidebar.updateInstallTitle')
+      : t('sidebar.updateDownloadTitle');
 
   return (
     <ErrorBoundary>
@@ -471,6 +533,17 @@ function App() {
               <div className="sidebar-header">
                 <span className="sidebar-title">{t('sidebar.title')}</span>
                 <div className="sidebar-header-actions">
+                  {showUpdateButton && (
+                    <button
+                      className={`sidebar-action-btn sidebar-update-btn ${updateStatus}`}
+                      id="downloadUpdateBtn"
+                      title={updateButtonTitle}
+                      onClick={handleUpdateButtonClick}
+                      disabled={updateStatus === 'downloading'}
+                    >
+                      <span className="sidebar-update-btn-label">{updateButtonLabel}</span>
+                    </button>
+                  )}
                   <button className="sidebar-action-btn" id="newSessionBtn" title={t('sidebar.newChat')} onClick={createNewSession}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="12" y1="5" x2="12" y2="19"></line>

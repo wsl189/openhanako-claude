@@ -72,7 +72,13 @@
     "jian": "Desk",
     "bridge": "Social Platforms",
     "toggle": "Sidebar",
-    "bridgeShort": "Bridge"
+    "bridgeShort": "Bridge",
+    "updateDownload": "Update",
+    "updateInstall": "Install",
+    "updateDownloadTitle": "Download the latest installer",
+    "updateDownloadingTitle": "Downloading update: {percent}%",
+    "updateInstallTitle": "Show installer in folder",
+    "updateDownloadFailed": "Failed to download installer"
   },
   "session": {
     "untitled": "New Chat",
@@ -712,7 +718,7 @@
       "updateAvailable": "New version available: v{version}",
       "updateReady": "Version v{version} is ready",
       "updateDownload": "Download",
-      "updateInstall": "Restart to Install"
+      "updateInstall": "Install"
     },
     "me": {
       "title": "Me",
@@ -1577,7 +1583,7 @@
       "ok": "OK",
       "availableTitle": "Update Available",
       "availableMessage": "Hanako v{version} is available.",
-      "availableDetail": "The update is downloading in the background. Hanako will ask you to restart after it is ready.",
+      "availableDetail": "Use the sidebar update button to download the latest installer.",
       "restartNow": "Restart and Install",
       "later": "Later",
       "readyTitle": "Update Ready",

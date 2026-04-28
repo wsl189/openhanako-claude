@@ -101,10 +101,39 @@ export type SkillViewerOptions =
   | { skillPath: string }
   | { name: string; baseDir: string; filePath?: string; installed?: boolean };
 
+export interface UpdateInfo {
+  status?: string;
+  version?: string;
+  percent?: number;
+  downloaded?: boolean;
+  url?: string;
+  downloadUrl?: string;
+  installerDownloadUrl?: string;
+  installerFileName?: string;
+  installerSize?: number;
+}
+
+export interface UpdateDownloadInfo {
+  status?: 'downloading' | 'downloaded' | 'error' | string;
+  version?: string;
+  percent?: number;
+  filePath?: string;
+  fileName?: string;
+  error?: string;
+}
+
 // ── Platform API 类型声明 ──
 export interface PlatformApi {
   getServerPort(): Promise<string>;
   getServerToken(): Promise<string>;
+  getAppVersion?(): Promise<string>;
+  checkUpdate?(): Promise<UpdateInfo | null>;
+  installUpdate?(): Promise<boolean>;
+  downloadUpdateInstaller?(): Promise<UpdateDownloadInfo>;
+  openDownloadedUpdateInstaller?(): Promise<boolean>;
+  getUpdateDownloadInfo?(): Promise<UpdateDownloadInfo | null>;
+  onUpdateInfo?(callback: (info: UpdateInfo | null) => void): (() => void) | void;
+  onUpdateDownloadInfo?(callback: (info: UpdateDownloadInfo | null) => void): (() => void) | void;
   openSettings(tab?: string): void;
   openBrowserViewer(url?: string, theme?: string): void;
   selectFolder(): Promise<string | null>;
