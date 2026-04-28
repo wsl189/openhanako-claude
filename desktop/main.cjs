@@ -1853,6 +1853,7 @@ let _updateCheckPromise = null;
 let _autoUpdaterReady = false;
 let _updatePromptVersion = null;
 let _updateCheckTimer = null;
+let _installingDownloadedUpdate = false;
 
 function _broadcastUpdateInfo() {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -1922,9 +1923,7 @@ function setupAutoUpdater() {
       detail: mt("update.readyDetail", null, "Restart Hanako to install the update."),
     }).then(({ response }) => {
       if (response !== 0) return;
-      isQuitting = true;
-      isExitingServer = true;
-      setImmediate(() => autoUpdater.quitAndInstall(false, true));
+      installDownloadedUpdate();
     }).catch(() => {});
   });
 
@@ -1979,10 +1978,49 @@ async function checkForUpdates() {
 
 function installDownloadedUpdate() {
   if (_updateInfo?.status !== "downloaded") return false;
+  console.log(`[desktop:update] installing downloaded update: v${_updateInfo.version}`);
+  _installingDownloadedUpdate = true;
   isQuitting = true;
   isExitingServer = true;
-  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  prepareForUpdateInstall().finally(() => {
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  });
   return true;
+}
+
+async function prepareForUpdateInstall() {
+  for (const [sp, view] of _browserViews) {
+    try { view.webContents.close(); } catch {}
+  }
+  _browserViews.clear();
+  _browserWebView = null;
+  _currentBrowserSession = null;
+
+  if (serverProcess && !serverProcess.killed) {
+    try { serverProcess.send({ type: "shutdown" }); } catch {}
+    await new Promise((resolve) => {
+      const timeout = setTimeout(resolve, 1500);
+      serverProcess.once("exit", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+    if (serverProcess && !serverProcess.killed) {
+      try { serverProcess.kill(); } catch {}
+    }
+    serverProcess = null;
+  } else if (reusedServerPid) {
+    try {
+      await fetch(`http://127.0.0.1:${serverPort}/api/shutdown`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${serverToken}` },
+        signal: AbortSignal.timeout(1500),
+      });
+    } catch {
+      killPid(reusedServerPid);
+    }
+    reusedServerPid = null;
+  }
 }
 
 function scheduleUpdateChecks() {
@@ -2730,6 +2768,9 @@ app.on("will-quit", () => {
 app.on("before-quit", async (event) => {
   isQuitting = true;
   isExitingServer = true; // Cmd+Q 走完全退出路径，连 server 一起关
+  if (_installingDownloadedUpdate) {
+    return;
+  }
   // 完全退出：清理浏览器实例（仅在真正退出时执行，避免隐藏路径打断后台浏览器能力）
   for (const [sp, view] of _browserViews) {
     try { view.webContents.close(); } catch {}
