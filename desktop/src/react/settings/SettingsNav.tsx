@@ -16,6 +16,7 @@ const TAB_ITEMS = [
   { id: 'mcp', key: 'settings.tabs.mcp', d: '<path d="M4 7h16"/><path d="M4 17h16"/><circle cx="8" cy="7" r="2"/><circle cx="16" cy="17" r="2"/><path d="M8 9v6"/><path d="M16 9v6"/>' },
   { id: 'bridge', key: 'settings.tabs.bridge', d: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' },
   { id: 'providers', key: 'settings.tabs.providers', d: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>' },
+  { id: 'about', key: 'settings.tabs.about', d: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>' },
 ];
 
 export function SettingsNav() {

@@ -14,6 +14,7 @@ import { SkillsTab } from './tabs/SkillsTab';
 import { BridgeTab } from './tabs/BridgeTab';
 import { ProvidersTab } from './tabs/ProvidersTab';
 import { McpTab } from './tabs/McpTab';
+import { AboutTab } from './tabs/AboutTab';
 import { CropOverlay } from './overlays/CropOverlay';
 import { AgentCreateOverlay } from './overlays/AgentCreateOverlay';
 import { AgentDeleteOverlay } from './overlays/AgentDeleteOverlay';
@@ -34,6 +35,7 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   mcp: McpTab,
   bridge: BridgeTab,
   providers: ProvidersTab,
+  about: AboutTab,
 };
 
 export function SettingsApp() {
