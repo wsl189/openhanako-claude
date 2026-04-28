@@ -72,6 +72,7 @@ const EXTERNAL_CHROME_MODE = String(process.env.HANA_BROWSER_EXTERNAL_CHROME || 
 const EXTERNAL_CHROME_HOST = process.env.HANA_BROWSER_EXTERNAL_CHROME_HOST || "127.0.0.1";
 const EXTERNAL_CHROME_PORT = Number(process.env.HANA_BROWSER_EXTERNAL_CHROME_PORT || 9222);
 const UPDATE_RELEASES_URL = process.env.HANA_UPDATE_RELEASES_URL || "https://github.com/wsl189/myagent-releases/releases/latest";
+const UPDATE_CACHE_DIR_NAME = "hanako-updater";
 
 const _externalChrome = {
   active: false,
@@ -1931,6 +1932,7 @@ function setupAutoUpdater() {
     if (_updateInfo?.status !== "downloaded") _updateInfo = null;
     _broadcastUpdateInfo();
     console.log("[desktop:update] no update available");
+    cleanupUpdateCache("no-update").catch(() => {});
   });
 
   autoUpdater.on("error", (err) => {
@@ -1938,6 +1940,7 @@ function setupAutoUpdater() {
     if (_updateInfo?.status !== "downloaded") {
       _updateInfo = null;
       _broadcastUpdateInfo();
+      cleanupUpdateCache("update-error").catch(() => {});
     }
   });
 }
@@ -2023,8 +2026,38 @@ async function prepareForUpdateInstall() {
   }
 }
 
+function getUpdaterBaseCachePath() {
+  const homeDir = os.homedir();
+  if (process.platform === "win32") {
+    return process.env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local");
+  }
+  if (process.platform === "darwin") {
+    return path.join(homeDir, "Library", "Caches");
+  }
+  return process.env.XDG_CACHE_HOME || path.join(homeDir, ".cache");
+}
+
+function getUpdateCacheDir() {
+  return path.join(getUpdaterBaseCachePath(), UPDATE_CACHE_DIR_NAME);
+}
+
+async function cleanupUpdateCache(reason) {
+  if (_installingDownloadedUpdate || _updateInfo?.status === "downloading" || _updateInfo?.status === "downloaded") {
+    console.log(`[desktop:update] skip cache cleanup while update is active (${reason})`);
+    return;
+  }
+  const cacheDir = getUpdateCacheDir();
+  try {
+    if (!fs.existsSync(cacheDir)) return;
+    await fs.promises.rm(cacheDir, { recursive: true, force: true });
+    console.log(`[desktop:update] cleaned update cache (${reason}): ${cacheDir}`);
+  } catch (err) {
+    console.warn("[desktop:update] failed to clean update cache:", err?.message || err);
+  }
+}
+
 function scheduleUpdateChecks() {
-  checkForUpdates().catch(() => {});
+  cleanupUpdateCache("startup").finally(() => checkForUpdates().catch(() => {}));
   if (_updateCheckTimer) return;
   _updateCheckTimer = setInterval(() => {
     checkForUpdates().catch(() => {});
