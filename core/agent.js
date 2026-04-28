@@ -20,7 +20,6 @@ import { createChannelTool } from "../lib/tools/channel-tool.js";
 import { createAskAgentTool } from "../lib/tools/ask-agent-tool.js";
 import { createBrowserTool } from "../lib/tools/browser-tool.js";
 import { createClaudeInChromeTool, CLAUDE_IN_CHROME_SWITCH } from "../lib/tools/claude-in-chrome-tool.js";
-import { createComputerUseTool } from "../lib/tools/computer-use-tool.js";
 import {
   createMiniMaxMcpSwitchTools,
   MINIMAX_MCP_WEB_SEARCH_SWITCH,
@@ -88,7 +87,6 @@ export class Agent {
     this._artifactTool = null;
     this._channelTool = null;
     this._browserTool = null;
-    this._computerUseTool = null;
     this._minimaxMcpSwitchTools = [];
     this._browserProvider = null;
     this._notifyTool = null;
@@ -255,7 +253,6 @@ export class Agent {
     this._browserTool = this._browserProvider.useEmbeddedBrowser
       ? createBrowserTool()
       : null;
-    this._computerUseTool = createComputerUseTool();
     this._claudeInChromeTool = createClaudeInChromeTool();
     this._minimaxMcpSwitchTools = createMiniMaxMcpSwitchTools();
     this._notifyTool = createNotifyTool({
@@ -425,7 +422,6 @@ export class Agent {
       this._askAgentTool,
       this._browserTool,
       this._claudeInChromeTool,
-      this._computerUseTool,
       ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
@@ -447,7 +443,6 @@ export class Agent {
       this._channelTool,
       this._askAgentTool,
       this._browserTool,
-      this._computerUseTool,
       ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
@@ -641,14 +636,12 @@ export class Agent {
     const enabledCustom = Array.isArray(toolProfile?.tools?.custom_enabled)
       ? toolProfile.tools.custom_enabled.filter((name) => runtimeCustomNames.has(name))
       : [...runtimeCustomNames];
-    const hasComputerUse = enabledCustom.includes("computer_use");
     const hasMiniMaxMcpWebSearch = enabledCustom.includes(MINIMAX_MCP_WEB_SEARCH_SWITCH);
     const hasMiniMaxMcpUnderstandImage = enabledCustom.includes(MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH);
     const hasClaudeInChromeSwitch = enabledCustom.includes(CLAUDE_IN_CHROME_SWITCH);
     const externalMcpTools = browserProvider?.useClaudeInChrome && hasClaudeInChromeSwitch
       ? ["mcp__claude_in_chrome__*"]
       : [];
-    if (hasComputerUse) externalMcpTools.push("mcp__computer_use__*");
     if (hasMiniMaxMcpWebSearch) externalMcpTools.push("mcp__MiniMax__web_search");
     if (hasMiniMaxMcpUnderstandImage) externalMcpTools.push("mcp__MiniMax__understand_image");
     externalMcpTools.push(...resolveExternalMcpServers(this._config, {
@@ -858,11 +851,6 @@ export class Agent {
           : "When the user asks to use their logged-in Chrome (session reuse, OAuth, real tabs), prioritize mcp__claude_in_chrome__* tools. Start each browser automation flow with mcp__claude_in_chrome__tabs_context_mcp.");
       }
 
-      if (hasComputerUse) {
-        parts.push(isZh
-          ? "当用户要求你操作桌面应用（点击、输入、截图、切换窗口）时，使用 mcp__computer_use__*。首次操作前先调用 mcp__computer_use__request_access 申请目标应用权限，然后通过 computer_use 的 screenshot/zoom 观察，再执行鼠标键盘动作；不要直接拿用户上传截图里的坐标去点，也不要为了切换窗口把 Codex/Finder/Hanako 加进授权列表。若 click_text 在自绘/Electron 应用里找不到按钮文字，改用 computer_use 重新 screenshot/zoom 后按视觉中心 left_click，并在点击后再截图确认。"
-          : "When the user asks for desktop app control (click/type/screenshot/window switching), use mcp__computer_use__* tools. Start with mcp__computer_use__request_access for the target app, then observe with a computer_use screenshot/zoom before taking mouse/keyboard actions; do not click coordinates taken directly from a user-uploaded screenshot, and do not add Codex/Finder/Hanako to the allowlist just to switch windows. If click_text cannot find text in a custom-rendered/Electron app, use a fresh screenshot/zoom, left_click the visual center, then screenshot again to verify.");
-      }
       if (hasTool(MINIMAX_MCP_WEB_SEARCH_SWITCH)) {
         parts.push(isZh
           ? "当用户需要联网检索时，优先使用 mcp__MiniMax__web_search 获取最新网页信息。"

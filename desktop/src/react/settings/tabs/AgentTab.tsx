@@ -107,9 +107,6 @@ const BUILTIN_TOOL_DESC_KEYS: Record<string, string> = {
 };
 const CUSTOM_TOOL_HINT_KEYS: Record<string, string> = {
   browser: 'toolDef.browser.label',
-  computer_use: 'toolDef.computerUse.label',
-  minimax_mcp_web_search: 'toolDef.minimaxMcpWebSearch.label',
-  minimax_mcp_understand_image: 'toolDef.minimaxMcpUnderstandImage.label',
   search_memory: 'error.memorySearchLabel',
   pin_memory: 'toolDef.pinnedMemory.pinLabel',
   unpin_memory: 'toolDef.pinnedMemory.unpinLabel',
@@ -127,9 +124,6 @@ const CUSTOM_TOOL_HINT_KEYS: Record<string, string> = {
 };
 const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
   browser: 'toolDef.browser.description',
-  computer_use: 'toolDef.computerUse.description',
-  minimax_mcp_web_search: 'toolDef.minimaxMcpWebSearch.description',
-  minimax_mcp_understand_image: 'toolDef.minimaxMcpUnderstandImage.description',
   search_memory: 'error.memorySearchDesc',
   pin_memory: 'toolDef.pinnedMemory.pinDescription',
   unpin_memory: 'toolDef.pinnedMemory.unpinDescription',
@@ -145,7 +139,14 @@ const CUSTOM_TOOL_DESC_KEYS: Record<string, string> = {
   generate_images: 'toolDef.generateImages.description',
   pdf2md: 'toolDef.pdf2md.description',
 };
-const MANAGED_EXTERNAL_MCP_TOOLS = [
+const MANAGED_EXTERNAL_MCP_TOOLS: Array<{
+  name: string;
+  serverName: string;
+  prefix: string;
+  labelKey: string;
+  descKey: string;
+  label?: string;
+}> = [
   {
     name: 'claude_in_chrome',
     serverName: 'claude_in_chrome',
@@ -154,12 +155,18 @@ const MANAGED_EXTERNAL_MCP_TOOLS = [
     descKey: 'toolDef.claudeInChrome.description',
   },
   {
-    name: 'computer_use',
-    serverName: 'computer_use',
-    prefix: 'mcp__computer_use__*',
-    label: 'Computer Use',
-    labelKey: 'toolDef.computerUse.label',
-    descKey: 'toolDef.computerUse.description',
+    name: 'minimax_mcp_web_search',
+    serverName: 'MiniMax',
+    prefix: 'mcp__MiniMax__web_search',
+    labelKey: 'toolDef.minimaxMcpWebSearch.label',
+    descKey: 'toolDef.minimaxMcpWebSearch.description',
+  },
+  {
+    name: 'minimax_mcp_understand_image',
+    serverName: 'MiniMax',
+    prefix: 'mcp__MiniMax__understand_image',
+    labelKey: 'toolDef.minimaxMcpUnderstandImage.label',
+    descKey: 'toolDef.minimaxMcpUnderstandImage.description',
   },
 ];
 const MANAGED_EXTERNAL_MCP_TOOL_NAMES = new Set(MANAGED_EXTERNAL_MCP_TOOLS.map(tool => tool.name));

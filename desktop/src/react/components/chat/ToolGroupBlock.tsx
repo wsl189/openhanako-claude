@@ -30,6 +30,40 @@ function humanizeToolName(name: string): string {
     .trim();
 }
 
+function splitToolNameTokens(name: string): string[] {
+  return String(name || '')
+    .split(/[^A-Za-z0-9]+/g)
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function stripDuplicateMcpToolPrefix(serverName: string, toolName: string): string {
+  const serverTokens = splitToolNameTokens(serverName);
+  const toolTokens = splitToolNameTokens(toolName);
+  if (serverTokens.length === 0 || toolTokens.length <= serverTokens.length) return toolName;
+  const startsWithServer = serverTokens.every((token, index) => toolTokens[index] === token);
+  if (!startsWithServer) return toolName;
+
+  const prefixPattern = serverTokens
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[._-]+');
+  return toolName
+    .replace(new RegExp(`^${prefixPattern}(?:[._-]+|$)`, 'i'), '')
+    .trim();
+}
+
+function getDisplayToolName(name: string): string {
+  const raw = String(name || '').trim();
+  const mcpMatch = raw.match(/^mcp__([A-Za-z0-9_-]+)__(.+)$/);
+  if (!mcpMatch) return humanizeToolName(raw);
+
+  const serverName = mcpMatch[1];
+  const childName = stripDuplicateMcpToolPrefix(serverName, mcpMatch[2]);
+  const serverLabel = humanizeToolName(serverName);
+  const childLabel = humanizeToolName(childName);
+  return childLabel ? `${serverLabel} ${childLabel}` : serverLabel;
+}
+
 function stripLeadingEmoji(input: string): string {
   return String(input || '')
     .replace(/^[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D\s]+/u, '')
@@ -50,7 +84,7 @@ function getToolLabel(name: string, phase: string, agentName: string, args?: Rec
   const val = t?.(`tool.${name}.${phase}`, vars);
   if (val && val !== `tool.${name}.${phase}`) return val;
 
-  const toolName = humanizeToolName(name) || name;
+  const toolName = getDisplayToolName(name) || name;
   const fallbackNamedKey = `tool._fallback.${phase}Named`;
   const fallbackNamedVal = t?.(fallbackNamedKey, { ...vars, tool: toolName });
   if (fallbackNamedVal && fallbackNamedVal !== fallbackNamedKey) return fallbackNamedVal;
@@ -63,7 +97,7 @@ function getToolLabel(name: string, phase: string, agentName: string, args?: Rec
 }
 
 function buildToolActionLine(name: string, phase: 'running' | 'done' | 'failed', detail: string): string {
-  const toolName = humanizeToolName(name) || name || 'Tool';
+  const toolName = getDisplayToolName(name) || name || 'Tool';
   const t = (window as any).t;
 
   const phaseMap: Record<typeof phase, string> = {

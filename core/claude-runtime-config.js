@@ -2,7 +2,6 @@ import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
 import { createCustomToolsMcpServer } from "../lib/claude/custom-tool-adapter.js";
-import { createComputerUseMcpServer } from "../lib/computer-use/server.js";
 import {
   MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
   MINIMAX_MCP_WEB_SEARCH_SWITCH,
@@ -52,7 +51,6 @@ const MINIMAX_MCP_SERVER_KEY = "MiniMax";
 const RESERVED_MCP_SERVER_KEYS = new Set([
   "hanako",
   "claude_in_chrome",
-  "computer_use",
 ]);
 const MINIMAX_MCP_TOOL_BY_SWITCH = {
   [MINIMAX_MCP_WEB_SEARCH_SWITCH]: "web_search",
@@ -915,7 +913,6 @@ export function buildClaudeRuntimeConfig({
   const useClaudeInChrome = !noTools
     && customEnabled.includes(CLAUDE_IN_CHROME_SWITCH)
     && browserProvider.useClaudeInChrome === true;
-  const useComputerUse = !noTools && customEnabled.includes("computer_use");
   const enabledMiniMaxMcpTools = !noTools
     ? uniq(
       customEnabled
@@ -927,7 +924,6 @@ export function buildClaudeRuntimeConfig({
   const filteredCustomTools = (customTools || [])
     .filter((toolDef) => customEnabled.includes(toolDef?.name))
     .filter((toolDef) => ![
-      "computer_use",
       CLAUDE_IN_CHROME_SWITCH,
       MINIMAX_MCP_WEB_SEARCH_SWITCH,
       MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
@@ -951,9 +947,6 @@ export function buildClaudeRuntimeConfig({
   const claudeInChromeAllowedTools = useClaudeInChrome
     ? [toMcpAllowedPrefix(claudeInChromeServerKey)].filter(Boolean)
     : [];
-  const computerUseAllowedTools = useComputerUse
-    ? [toMcpAllowedPrefix("computer_use")].filter(Boolean)
-    : [];
   const minimaxMcpAllowedTools = useMiniMaxMcp
     ? buildMcpExactAllowedTools(MINIMAX_MCP_SERVER_KEY, enabledMiniMaxMcpTools)
     : [];
@@ -966,7 +959,6 @@ export function buildClaudeRuntimeConfig({
     ...builtinEnabled,
     ...customAllowedTools,
     ...claudeInChromeAllowedTools,
-    ...computerUseAllowedTools,
     ...minimaxMcpAllowedTools,
     ...externalMcp.allowedTools,
   ]);
@@ -995,13 +987,6 @@ export function buildClaudeRuntimeConfig({
   }
   if (useClaudeInChrome && browserProvider.claudeInChromeServer) {
     mcpServers[claudeInChromeServerKey] = browserProvider.claudeInChromeServer;
-  }
-  if (useComputerUse) {
-    mcpServers.computer_use = createComputerUseMcpServer("computer_use", {
-      createContext: createToolContext,
-      onToolStart: emitToolEvent,
-      onToolEnd: emitToolEvent,
-    });
   }
   if (useMiniMaxMcp) {
     const minimaxMcpServer = resolveMiniMaxMcpServer(runtimeEnv, agent);
@@ -1081,13 +1066,11 @@ export function buildClaudeRuntimeConfig({
       mcpServerName,
       customAllowedTools,
       claudeInChromeAllowedTools,
-      computerUseAllowedTools,
       minimaxMcpAllowedTools,
       externalMcpAllowedTools: externalMcp.allowedTools,
       externalMcpServers: Object.keys(externalMcp.servers),
       browserProvider,
       useClaudeInChrome,
-      useComputerUse,
       useMiniMaxMcp,
       enabledMiniMaxMcpTools,
       claudeCodeExecutable: claudeSdkProcessConfig.executable,

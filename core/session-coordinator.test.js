@@ -172,6 +172,29 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     expect(state?.lastTurnProtocolMismatch).toBe(true);
   });
 
+  it("marks lone minimax closing tag text as protocol mismatch", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-markup-minimax-close";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "text",
+          text: "</minimax:tool_call>",
+        }],
+      },
+    }, sessionPath);
+
+    coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: false,
+    }, sessionPath);
+
+    const state = coordinator._streamState.get(sessionPath);
+    expect(state?.lastTurnProtocolMismatch).toBe(true);
+  });
+
   it("does not mark protocol mismatch when structured tool_use exists", () => {
     const coordinator = new SessionCoordinator({});
     const sessionPath = "/tmp/session-structured-tool";
@@ -308,32 +331,32 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     expect(customEnd.some((event) => event.name === "mcp__hanako__browser")).toBe(false);
   });
 
-  it("normalizes computer_use MCP sub-tools and suppresses duplicate start rows", () => {
+  it("normalizes custom MCP sub-tools and suppresses duplicate start rows", () => {
     const coordinator = new SessionCoordinator({});
-    const sessionPath = "/tmp/session-computer-use-mcp-alias";
-    const customToolNames = ["computer_use"];
+    const sessionPath = "/tmp/session-custom-mcp-alias";
+    const customToolNames = ["browser"];
 
     const mcpStart = coordinator._translateClaudeEvent({
       type: "assistant",
       message: {
         content: [{
           type: "tool_use",
-          id: "sdk-tool-cu-1",
-          name: "mcp__computer_use__screenshot",
+          id: "sdk-tool-browser-1",
+          name: "mcp__hanako__browser",
           input: {},
         }],
       },
     }, sessionPath, customToolNames);
     expect(mcpStart).toContainEqual(expect.objectContaining({
       type: "tool_start",
-      name: "screenshot",
-      toolCallId: "sdk-tool-cu-1",
+      name: "browser",
+      toolCallId: "sdk-tool-browser-1",
     }));
 
     const customStart = coordinator._translateClaudeEvent({
       type: "tool_start",
-      name: "screenshot",
-      toolCallId: "custom-cu-1",
+      name: "browser",
+      toolCallId: "custom-browser-1",
       args: {},
     }, sessionPath, customToolNames);
     expect(customStart.some((event) => event.type === "tool_start")).toBe(false);
@@ -343,7 +366,7 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
       message: {
         content: [{
           type: "tool_result",
-          tool_use_id: "sdk-tool-cu-1",
+          tool_use_id: "sdk-tool-browser-1",
           content: [{ type: "text", text: "Captured current display (1920x1080)." }],
         }],
       },
@@ -352,14 +375,14 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
 
     const customEnd = coordinator._translateClaudeEvent({
       type: "tool_end",
-      name: "screenshot",
-      toolCallId: "custom-cu-1",
+      name: "browser",
+      toolCallId: "custom-browser-1",
       success: true,
       content: [{ type: "text", text: "Captured current display (1920x1080)." }],
     }, sessionPath, customToolNames);
     expect(customEnd).toContainEqual(expect.objectContaining({
       type: "tool_end",
-      name: "screenshot",
+      name: "browser",
       success: true,
     }));
   });

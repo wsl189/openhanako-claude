@@ -53,6 +53,7 @@ export function stripStreamToolMarkup(text: string): string {
     .replace(/<assistant\b[^>]*\bto\s*=\s*(?:"[^"]+"|'[^']+'|“[^”]+”|‘[^’]+’|[^\s>]+)[^>]*>[\s\S]*?<\/assistant>\s*/gi, ' ')
     .replace(/<tool_use\b[^>]*\bname\s*=\s*(?:"[^"]+"|'[^']+'|“[^”]+”|‘[^’]+’|[^\s>]+)[^>]*>[\s\S]*?<\/tool_use>\s*/gi, ' ')
     .replace(/<minimax:tool_call\b[^>]*>[\s\S]*?<\/minimax:tool_call>\s*/gi, ' ')
+    .replace(/<\/?minimax:tool_call\b[^>]*>\s*/gi, ' ')
     .replace(/<function_call\b[^>]*>[\s\S]*?<\/function_call>\s*/gi, ' ')
     .replace(/<function_calls\b[^>]*>[\s\S]*?<\/function_calls>\s*/gi, ' ')
     .replace(/(?:^|\n)\s*function_call\s*\n[\s\S]*?<\/function_call>\s*/gi, '\n')

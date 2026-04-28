@@ -1662,10 +1662,6 @@
       "stateDesc": "等待状态（wait 时可选）：domcontentloaded / idle",
       "pressEnterDesc": "输入后按回车（type 时可选）"
     },
-    "computerUse": {
-      "label": "电脑控制",
-      "description": "通过本地桌面自动化能力操作电脑应用（截图、点击、输入、滚动、快捷键）。启用后会暴露 mcp__computer_use__* 工具，适合需要真实 GUI 操作的任务。"
-    },
     "claudeInChrome": {
       "label": "Claude in Chrome",
       "description": "通过已登录的 Chrome 和浏览器扩展操作真实标签页。启用后会暴露 mcp__claude_in_chrome__* 工具。"

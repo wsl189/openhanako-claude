@@ -15,7 +15,13 @@ type ExternalMcpServer = {
   headers?: Record<string, string>;
   disabled?: boolean;
 };
-const MANAGED_EXTERNAL_MCP_TOOLS = [
+const MANAGED_EXTERNAL_MCP_TOOLS: Array<{
+  name: string;
+  serverName: string;
+  prefix: string;
+  labelKey: string;
+  label?: string;
+}> = [
   {
     name: 'claude_in_chrome',
     serverName: 'claude_in_chrome',
@@ -23,11 +29,16 @@ const MANAGED_EXTERNAL_MCP_TOOLS = [
     labelKey: 'toolDef.claudeInChrome.label',
   },
   {
-    name: 'computer_use',
-    serverName: 'computer_use',
-    prefix: 'mcp__computer_use__*',
-    label: 'Computer Use',
-    labelKey: 'toolDef.computerUse.label',
+    name: 'minimax_mcp_web_search',
+    serverName: 'MiniMax',
+    prefix: 'mcp__MiniMax__web_search',
+    labelKey: 'toolDef.minimaxMcpWebSearch.label',
+  },
+  {
+    name: 'minimax_mcp_understand_image',
+    serverName: 'MiniMax',
+    prefix: 'mcp__MiniMax__understand_image',
+    labelKey: 'toolDef.minimaxMcpUnderstandImage.label',
   },
 ];
 

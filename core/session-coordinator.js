@@ -330,7 +330,7 @@ function resolveToolEndSuccess(event) {
 }
 
 const MAX_CACHED_SESSIONS = 20;
-const TEXT_TOOL_MARKUP_RE = /<(?:glob|read|write|edit|bash|grep|function_call|function_calls|minimax:tool_call)\b|<assistant\b[^>]*\bto=|\[TOOL_CALL\]|\bfunction_call\s*\n\s*\{|\btool_call(?:_start|_end)?\s*:/i;
+const TEXT_TOOL_MARKUP_RE = /<\/?(?:glob|read|write|edit|bash|grep|function_call|function_calls|minimax:tool_call)\b|<assistant\b[^>]*\bto=|\[TOOL_CALL\]|\bfunction_call\s*\n\s*\{|\btool_call(?:_start|_end)?\s*:/i;
 
 function hasTextStyleToolMarkup(content = []) {
   if (!Array.isArray(content) || content.length === 0) return false;

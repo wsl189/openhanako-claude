@@ -246,31 +246,6 @@ describe("buildClaudeRuntimeConfig env", () => {
     ]);
   });
 
-  it("attaches computer_use MCP server when custom_enabled includes computer_use", () => {
-    const config = createConfig({
-      toolProfile: {
-        tools: {
-          builtin_enabled: ["Read"],
-          custom_enabled: ["computer_use", "notify"],
-        },
-      },
-      customTools: [
-        { name: "computer_use", parameters: { type: "object", properties: {} } },
-        { name: "notify", parameters: { type: "object", properties: {} } },
-      ],
-    });
-
-    expect(config.options.mcpServers.computer_use).toBeTruthy();
-    expect(config.options.allowedTools).toEqual([
-      "Read",
-      "mcp__hanako__*",
-      "mcp__computer_use__*",
-    ]);
-    expect(config.diagnostics?.customToolsLoaded).toEqual(["notify"]);
-    expect(config.diagnostics?.computerUseAllowedTools).toEqual(["mcp__computer_use__*"]);
-    expect(config.diagnostics?.useComputerUse).toBe(true);
-  });
-
   it("attaches MiniMax MCP server and allows only enabled MiniMax MCP tools", async () => {
     const config = createConfig({
       toolProfile: {
@@ -613,66 +588,6 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.mcpServers.claude_in_chrome).toBeUndefined();
     expect(config.options.allowedTools).toEqual([]);
     expect(config.diagnostics?.useClaudeInChrome).toBe(false);
-  });
-
-  it("does not attach computer_use server in noTools mode", () => {
-    const config = createConfig({
-      noTools: true,
-      toolProfile: {
-        tools: {
-          custom_enabled: ["computer_use"],
-        },
-      },
-    });
-
-    expect(config.options.mcpServers.computer_use).toBeUndefined();
-    expect(config.options.allowedTools).toEqual([]);
-    expect(config.diagnostics?.useComputerUse).toBe(false);
-  });
-
-  it("allows mcp__computer_use__* tools through canUseTool when computer_use is enabled", async () => {
-    const config = createConfig({
-      toolProfile: {
-        tools: {
-          custom_enabled: ["computer_use"],
-        },
-      },
-    });
-
-    const decision = await config.options.canUseTool("mcp__computer_use__left_click", {
-      coordinate: [100, 200],
-    }, {
-      signal: new AbortController().signal,
-      toolUseID: "tool-computer-use-allowed",
-    });
-
-    expect(decision).toMatchObject({
-      behavior: "allow",
-      updatedInput: { coordinate: [100, 200] },
-    });
-  });
-
-  it("denies mcp__computer_use__* tools through canUseTool when computer_use is disabled", async () => {
-    const config = createConfig({
-      toolProfile: {
-        tools: {
-          builtin_enabled: ["Read"],
-          custom_enabled: [],
-        },
-      },
-    });
-
-    const decision = await config.options.canUseTool("mcp__computer_use__left_click", {
-      coordinate: [100, 200],
-    }, {
-      signal: new AbortController().signal,
-      toolUseID: "tool-computer-use-denied",
-    });
-
-    expect(decision).toMatchObject({
-      behavior: "deny",
-    });
-    expect(String(decision.message || "")).toContain("not allowed");
   });
 
   it("installs canUseTool handler by default to avoid permission prompt deadlocks", async () => {

@@ -64,6 +64,11 @@ describe('mergeDelta', () => {
     expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\n结束。');
   });
 
+  it('hides lone minimax XML tool tags from streamed text', () => {
+    const raw = '开始。\n</minimax:tool_call>\n结束。';
+    expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\n结束。');
+  });
+
   it('hides function_calls invoke/parameter markup from streamed text', () => {
     const raw = '开始。\n<function_calls><invoke name="Bash"><parameter name="command">ls -la</parameter></invoke></function_calls>\n结束。';
     expect(stripStreamToolMarkup(raw).trim()).toBe('开始。\n结束。');
