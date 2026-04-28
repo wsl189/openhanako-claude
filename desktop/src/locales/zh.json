@@ -73,7 +73,7 @@
     "bridge": "接入社交平台",
     "toggle": "侧边栏",
     "bridgeShort": "接入",
-    "updateDownload": "下载",
+    "updateDownload": "更新",
     "updateInstall": "安装",
     "updateDownloadTitle": "下载新版本安装包",
     "updateDownloadingTitle": "正在下载新版本：{percent}%",
