@@ -2,7 +2,8 @@ import { buildProviderAuthHeaders } from "../../lib/llm/provider-client.js";
 import { normalizeModelRef } from "../../core/model-ref.js";
 
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
-const TRANSCRIBE_TIMEOUT_MS = 45_000;
+const TRANSCRIBE_ATTEMPT_TIMEOUT_MS = 12_000;
+const TRANSCRIBE_TOTAL_TIMEOUT_MS = 55_000;
 const TEST_AUDIO_DURATION_SEC = 0.45;
 const TEST_AUDIO_SAMPLE_RATE = 16_000;
 const AUDIO_MIME_BY_EXT = {
@@ -241,6 +242,8 @@ async function transcribeViaProvider({
   fileName = "",
   modelHints = [],
 }) {
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + TRANSCRIBE_TOTAL_TIMEOUT_MS;
   const modelCandidates = [...new Set(modelHints.filter(Boolean).map((m) => String(m).trim()).filter(Boolean))];
   const endpointCandidates = buildTranscriptionEndpointCandidates(target.base_url);
   if (!endpointCandidates.length) {
@@ -263,6 +266,12 @@ async function transcribeViaProvider({
 
   for (const endpoint of endpointCandidates) {
     for (const model of modelCandidates) {
+      const remainingMs = deadlineAt - Date.now();
+      if (remainingMs <= 500) {
+        const timeoutMsg = `Voice transcription timed out after ${Math.round((Date.now() - startedAt) / 1000)}s`;
+        const endpointSuffix = lastEndpoint ? ` (endpoint: ${lastEndpoint})` : "";
+        throw new Error(`${timeoutMsg}${endpointSuffix}`);
+      }
       const form = new FormData();
       form.append(
         "file",
@@ -273,12 +282,20 @@ async function transcribeViaProvider({
       if (language) form.append("language", language);
       form.append("response_format", "json");
 
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: authHeaders,
-        body: form,
-        signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT_MS),
-      });
+      let res;
+      try {
+        res = await fetch(endpoint, {
+          method: "POST",
+          headers: authHeaders,
+          body: form,
+          signal: AbortSignal.timeout(Math.min(TRANSCRIBE_ATTEMPT_TIMEOUT_MS, remainingMs)),
+        });
+      } catch (err) {
+        const networkMessage = String(err?.message || err || "Network error while calling transcription API");
+        lastError = networkMessage;
+        lastEndpoint = endpoint;
+        continue;
+      }
 
       const rawText = await res.text();
       let data = null;

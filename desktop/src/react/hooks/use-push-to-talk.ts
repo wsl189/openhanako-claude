@@ -39,7 +39,8 @@ type SpeechRecognitionLike = {
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
 const HOLD_REPEAT_THRESHOLD = 2;
-const TRANSCRIBE_TIMEOUT_MS = 60_000;
+const HOLD_ACTIVATION_DELAY_MS = 220;
+const TRANSCRIBE_TIMEOUT_MS = 75_000;
 
 function isSpaceKey(key: string): boolean {
   return key === ' ' || key === 'Space' || key === 'Spacebar';
@@ -116,6 +117,7 @@ export function usePushToTalk({
     repeatCount: 0,
     activated: false,
   });
+  const holdTimerRef = useRef<number | null>(null);
   const sessionRef = useRef(0);
   const stopRequestedRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -130,6 +132,12 @@ export function usePushToTalk({
   const volumeLevelRef = useRef(0);
 
   const clearError = useCallback(() => setError(null), []);
+
+  const clearHoldActivationTimer = useCallback(() => {
+    if (holdTimerRef.current === null) return;
+    window.clearTimeout(holdTimerRef.current);
+    holdTimerRef.current = null;
+  }, []);
 
   const emitError = useCallback((message: string) => {
     const text = String(message || '').trim();
@@ -435,6 +443,14 @@ export function usePushToTalk({
     }
   }, [cleanupStream, emitError, enabled, onInterimTranscript, startLevelMeter, startSpeechRecognition, stopRecording, supported]);
 
+  const activateHoldToTalk = useCallback(() => {
+    if (!holdRef.current.isDown || holdRef.current.activated) return;
+    holdRef.current.activated = true;
+    if (state === 'idle') setState('warming');
+    onActivate?.();
+    void startRecording();
+  }, [onActivate, startRecording, state]);
+
   const handleKeyDown = useCallback((e: KeyLikeEvent): boolean => {
     if (!enabled || !supported) return false;
     if (!isSpaceKey(e.key)) return false;
@@ -450,6 +466,11 @@ export function usePushToTalk({
       holdRef.current.isDown = true;
       holdRef.current.repeatCount = 0;
       holdRef.current.activated = false;
+      clearHoldActivationTimer();
+      holdTimerRef.current = window.setTimeout(() => {
+        holdTimerRef.current = null;
+        activateHoldToTalk();
+      }, HOLD_ACTIVATION_DELAY_MS);
       // 首次按下允许透传，短按空格可正常输入。
       return false;
     }
@@ -466,20 +487,20 @@ export function usePushToTalk({
       e.stopPropagation?.();
       if (state === 'idle') setState('warming');
       if (!holdRef.current.activated && holdRef.current.repeatCount >= HOLD_REPEAT_THRESHOLD) {
-        holdRef.current.activated = true;
-        onActivate?.();
-        void startRecording();
+        clearHoldActivationTimer();
+        activateHoldToTalk();
       }
       return true;
     }
 
     return false;
-  }, [enabled, onActivate, startRecording, state, supported]);
+  }, [activateHoldToTalk, clearHoldActivationTimer, enabled, state, supported]);
 
   const handleKeyUp = useCallback((e: KeyLikeEvent): boolean => {
     if (!enabled || !supported) return false;
     if (!isSpaceKey(e.key)) return false;
     if (!holdRef.current.isDown) return false;
+    clearHoldActivationTimer();
 
     const hadActivation = holdRef.current.activated;
     holdRef.current.isDown = false;
@@ -516,11 +537,12 @@ export function usePushToTalk({
     }
 
     return true;
-  }, [enabled, state, stopRecording, supported]);
+  }, [clearHoldActivationTimer, enabled, state, stopRecording, supported]);
 
   useEffect(() => {
     return () => {
       sessionRef.current += 1;
+      clearHoldActivationTimer();
       stopSpeechRecognition();
       try {
         recorderRef.current?.stop();
@@ -531,7 +553,7 @@ export function usePushToTalk({
       chunksRef.current = [];
       cleanupStream();
     };
-  }, [cleanupStream, stopSpeechRecognition]);
+  }, [cleanupStream, clearHoldActivationTimer, stopSpeechRecognition]);
 
   return {
     supported,
