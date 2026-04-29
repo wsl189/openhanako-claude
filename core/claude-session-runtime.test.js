@@ -673,4 +673,109 @@ describe("ClaudeSessionRuntime resume recovery", () => {
 
     await runtime.close();
   });
+
+  it("keeps conversation resume id after abort so later prompts continue context", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    let secondEnteredResolve;
+    const secondEntered = new Promise((resolve) => {
+      secondEnteredResolve = resolve;
+    });
+
+    let releaseSecondStream = null;
+    let secondClosed = false;
+
+    queryMock.mockImplementation(({ prompt }) => {
+      const callNo = queryMock.mock.calls.length;
+
+      async function* stream() {
+        if (callNo === 1) {
+          for await (const _input of prompt) {
+            yield {
+              type: "assistant",
+              session_id: "persist-session",
+              message: {
+                id: "persist-first-assistant",
+                content: [{ type: "text", text: "first reply" }],
+              },
+            };
+            yield {
+              type: "result",
+              session_id: "persist-session",
+              is_error: false,
+              usage: {},
+            };
+            return;
+          }
+          return;
+        }
+
+        if (callNo === 2) {
+          for await (const _input of prompt) {
+            secondEnteredResolve?.();
+            await new Promise((resolve) => {
+              releaseSecondStream = resolve;
+            });
+            if (secondClosed) {
+              throw new Error("Query closed before response received");
+            }
+          }
+          return;
+        }
+
+        for await (const _input of prompt) {
+          yield {
+            type: "assistant",
+            session_id: "persist-session",
+            message: {
+              id: "persist-third-assistant",
+              content: [{ type: "text", text: "still same session" }],
+            },
+          };
+          yield {
+            type: "result",
+            session_id: "persist-session",
+            is_error: false,
+            usage: {},
+          };
+          return;
+        }
+      }
+
+      const iterator = stream();
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.interrupt = vi.fn(async () => {});
+      iterator.close = vi.fn(() => {
+        if (callNo === 2) {
+          secondClosed = true;
+          setTimeout(() => releaseSecondStream?.(), 25);
+        }
+      });
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "local-metadata-placeholder",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-abort-resume-preserve.json",
+      options: {},
+    });
+
+    await runtime.prompt("first turn to get real session id");
+
+    const secondPending = runtime.prompt("second turn then abort");
+    await secondEntered;
+    await expect(runtime.abort()).resolves.toBe(true);
+    await expect(secondPending).rejects.toThrow("Request was aborted.");
+
+    const thirdResult = await runtime.prompt("third turn should continue");
+    expect(thirdResult?.type).toBe("result");
+
+    expect(queryMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(queryMock.mock.calls[2]?.[0]?.options?.resume).toBe("persist-session");
+
+    await runtime.close();
+  });
 });

@@ -272,9 +272,14 @@ export class ClaudeSessionRuntime {
 
   _syncSessionId(nextSessionId) {
     const normalized = String(nextSessionId || "").trim();
-    if (!normalized || normalized === this.sessionId) return;
+    if (!normalized) return;
+    const changed = normalized !== this.sessionId;
     this.sessionId = normalized;
-    if (this.sessionPath) {
+    // Keep resume id aligned with the latest confirmed SDK session id.
+    // This is required after abort(), because the next prompt starts a new
+    // query() instance and must resume the same conversation.
+    this.resumeSessionId = normalized;
+    if (changed && this.sessionPath) {
       try {
         patchSessionMetadata(this.sessionPath, { sessionId: normalized });
       } catch {
