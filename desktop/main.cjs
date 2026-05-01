@@ -323,10 +323,11 @@ async function startServer() {
       HANA_HOME: hanakoHome,
     };
     if (process.platform === "win32") {
-      // MinGit-busybox 结构：cmd/git.exe, mingw64/bin/git.exe+sh.exe
+      // MinGit 结构：cmd/git.exe, usr/bin/sh.exe, mingw64/bin/git.exe
       const gitRoot = path.join(process.resourcesPath || "", "git");
       const gitPaths = [
         path.join(gitRoot, "mingw64", "bin"),
+        path.join(gitRoot, "usr", "bin"),
         path.join(gitRoot, "cmd"),
       ].filter(p => fs.existsSync(p));
       if (gitPaths.length) {
@@ -2530,7 +2531,7 @@ ipcMain.handle("open-skill-viewer", (event, data) => {
         if (process.platform === "win32") {
           execFileSync("powershell.exe", [
             "-NoProfile", "-NonInteractive", "-Command",
-            `Expand-Archive -Path '${data.skillPath.replace(/'/g, "''")}' -DestinationPath '${tmpDir.replace(/'/g, "''")}' -Force`,
+            `Expand-Archive -LiteralPath '${data.skillPath.replace(/'/g, "''")}' -DestinationPath '${tmpDir.replace(/'/g, "''")}' -Force`,
           ], { stdio: "ignore", windowsHide: true });
         } else {
           execFileSync("unzip", ["-o", "-q", data.skillPath, "-d", tmpDir]);

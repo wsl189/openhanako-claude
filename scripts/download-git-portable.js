@@ -15,23 +15,39 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const VENDOR_DIR = path.join(ROOT, "vendor", "git-portable");
 
-// MinGit-busybox 版本和下载 URL（busybox 变体自带 sh.exe，不需要用户额外装 Git）
+// MinGit 版本和下载 URL（完整 MinGit 自带 usr/bin/sh.exe，不需要用户额外装 Git）
 const MINGIT_VERSION = "2.47.1";
-const MINGIT_URL = `https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}.windows.1/MinGit-${MINGIT_VERSION}-busybox-64-bit.zip`;
+const MINGIT_URL = `https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}.windows.1/MinGit-${MINGIT_VERSION}-64-bit.zip`;
 const ZIP_PATH = path.join(ROOT, "vendor", `mingit-${MINGIT_VERSION}.zip`);
+
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function hasUsablePortableGit() {
+  return fs.existsSync(path.join(VENDOR_DIR, "cmd", "git.exe")) &&
+    (
+      fs.existsSync(path.join(VENDOR_DIR, "usr", "bin", "sh.exe")) ||
+      fs.existsSync(path.join(VENDOR_DIR, "mingw64", "bin", "ash.exe"))
+    );
+}
 
 async function main() {
   // 已存在则跳过
-  if (fs.existsSync(path.join(VENDOR_DIR, "cmd", "git.exe"))) {
+  if (hasUsablePortableGit()) {
     console.log(`[download-git-portable] MinGit ${MINGIT_VERSION} already present, skipping.`);
     return;
   }
 
   fs.mkdirSync(path.join(ROOT, "vendor"), { recursive: true });
+  if (fs.existsSync(VENDOR_DIR)) {
+    console.log("[download-git-portable] Existing MinGit is incomplete, replacing it.");
+    fs.rmSync(VENDOR_DIR, { recursive: true, force: true });
+  }
 
   // 下载
   console.log(`[download-git-portable] Downloading MinGit ${MINGIT_VERSION}...`);
-  execFileSync("curl", ["-L", "-o", ZIP_PATH, MINGIT_URL], { stdio: "inherit" });
+  execFileSync("curl", ["--fail", "-L", "-o", ZIP_PATH, MINGIT_URL], { stdio: "inherit" });
 
   // 解压
   console.log("[download-git-portable] Extracting...");
@@ -40,10 +56,14 @@ async function main() {
   if (process.platform === "win32") {
     execFileSync("powershell.exe", [
       "-NoProfile", "-NonInteractive", "-Command",
-      `Expand-Archive -Path '${ZIP_PATH}' -DestinationPath '${VENDOR_DIR}' -Force`,
+      `Expand-Archive -LiteralPath ${psQuote(ZIP_PATH)} -DestinationPath ${psQuote(VENDOR_DIR)} -Force`,
     ], { stdio: "inherit", windowsHide: true });
   } else {
     execFileSync("unzip", ["-o", "-q", ZIP_PATH, "-d", VENDOR_DIR], { stdio: "inherit" });
+  }
+
+  if (!hasUsablePortableGit()) {
+    throw new Error("Downloaded MinGit is missing cmd/git.exe or a bundled POSIX shell");
   }
 
   // 清理 zip
