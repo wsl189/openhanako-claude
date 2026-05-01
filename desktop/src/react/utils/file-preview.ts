@@ -68,6 +68,7 @@ export async function openFilePreviewWithOptions(
         type: 'markdown',
         title: name,
         content: body,
+        filePath,
       };
       upsertArtifact(artifact);
       openPreview(artifact, { replaceRightSidebar: opts.replaceRightSidebar === true });
@@ -144,6 +145,7 @@ export async function openSkillPreview(skillName: string, skillFilePath: string)
       type: 'markdown',
       title: skillName,
       content: body,
+      filePath: skillFilePath,
     };
     upsertArtifact(artifact);
     openPreview(artifact);
