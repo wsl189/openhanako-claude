@@ -70,7 +70,7 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     expect(queryMock.mock.calls[0]?.[0]?.options?.persistSession).toBe(true);
   });
 
-  it("re-applies configured mcpServers via setMcpServers on start", async () => {
+  it("does not re-apply configured mcpServers by default", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();
     const setMcpServers = vi.fn(async () => {});
@@ -112,11 +112,63 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     await runtime.prompt("hello");
     await runtime.close();
 
-    expect(setMcpServers).toHaveBeenCalledTimes(1);
-    expect(setMcpServers).toHaveBeenCalledWith(mcpServers);
+    expect(setMcpServers).not.toHaveBeenCalled();
   });
 
-  it("does not hang prompt when setMcpServers stalls", async () => {
+  it("re-applies configured mcpServers when compatibility flag is enabled", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+    const setMcpServers = vi.fn(async () => {});
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          yield {
+            type: "result",
+            is_error: false,
+          };
+          return;
+        }
+      }
+      const iterator = stream();
+      iterator.close = vi.fn();
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.setMcpServers = setMcpServers;
+      return iterator;
+    });
+
+    const mcpServers = {
+      hanako: {
+        type: "sdk",
+        name: "hanako-tools",
+        instance: {},
+      },
+    };
+    const prevReapply = process.env.HANAKO_REAPPLY_MCP_SERVERS;
+    process.env.HANAKO_REAPPLY_MCP_SERVERS = "1";
+
+    try {
+      const runtime = new ClaudeSessionRuntime({
+        sessionId: "s1",
+        resumeSessionId: null,
+        cwd: process.cwd(),
+        sessionPath: "/tmp/hanako-runtime-test-mcp.json",
+        options: {
+          mcpServers,
+        },
+      });
+
+      await runtime.prompt("hello");
+      await runtime.close();
+
+      expect(setMcpServers).toHaveBeenCalledTimes(1);
+      expect(setMcpServers).toHaveBeenCalledWith(mcpServers);
+    } finally {
+      if (prevReapply == null) delete process.env.HANAKO_REAPPLY_MCP_SERVERS;
+      else process.env.HANAKO_REAPPLY_MCP_SERVERS = prevReapply;
+    }
+  });
+
+  it("does not hang prompt when setMcpServers stalls and compatibility flag is enabled", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();
 
@@ -146,7 +198,9 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     });
 
     const prevTimeout = process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS;
+    const prevReapply = process.env.HANAKO_REAPPLY_MCP_SERVERS;
     process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS = "1";
+    process.env.HANAKO_REAPPLY_MCP_SERVERS = "1";
 
     try {
       const runtime = new ClaudeSessionRuntime({
@@ -171,6 +225,8 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     } finally {
       if (prevTimeout == null) delete process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS;
       else process.env.HANAKO_MCP_ATTACH_TIMEOUT_MS = prevTimeout;
+      if (prevReapply == null) delete process.env.HANAKO_REAPPLY_MCP_SERVERS;
+      else process.env.HANAKO_REAPPLY_MCP_SERVERS = prevReapply;
     }
   });
 

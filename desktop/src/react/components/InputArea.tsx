@@ -754,7 +754,7 @@ function InputAreaInner() {
 
   return (
     <>
-      <TodoDisplay todos={sessionTodos} />
+      <TodoDisplay todos={sessionTodos} isStreaming={isStreaming} />
 
       {attachedFiles.length > 0 && (
         <AttachedFilesBar
@@ -868,12 +868,42 @@ function InputAreaInner() {
 
 // ── Todo Display ──
 
-function TodoDisplay({ todos }: { todos: Array<{ text: string; done: boolean }> }) {
+type TodoDisplayItem = {
+  text?: string;
+  content?: string;
+  status?: string;
+  done?: boolean;
+};
+
+function TodoDisplay({ todos, isStreaming }: { todos: TodoDisplayItem[]; isStreaming: boolean }) {
   const [open, setOpen] = useState(false);
+  const visibleTodos = useMemo(() => (
+    (todos || [])
+      .map((td) => {
+        const text = String(td.text || td.content || '').trim();
+        const status = String(td.status || '').trim();
+        return {
+          ...td,
+          text,
+          status,
+          done: td.done === true || status === 'completed',
+        };
+      })
+      .filter(td => td.text)
+  ), [todos]);
+  const done = visibleTodos.filter(td => td.done).length;
+  const allDone = visibleTodos.length > 0 && done === visibleTodos.length;
+  const shouldHide = visibleTodos.length === 0 || (allDone && !isStreaming);
 
-  if (!todos || todos.length === 0) return null;
+  useEffect(() => {
+    if (shouldHide) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+  }, [shouldHide, visibleTodos.length, done, isStreaming]);
 
-  const done = todos.filter(td => td.done).length;
+  if (shouldHide) return null;
 
   return (
     <div className="input-top-bar">
@@ -885,11 +915,20 @@ function TodoDisplay({ todos }: { todos: Array<{ text: string; done: boolean }> 
         </button>
         {open && (
           <div className="todo-list">
-            {todos.map((td, i) => (
-              <div key={i} className={'todo-item' + (td.done ? ' done' : '')}>
-                <span className="todo-check">{td.done ? '✓' : '○'}</span> {td.text}
-              </div>
-            ))}
+            {visibleTodos.map((td, i) => {
+              const running = !td.done && td.status === 'in_progress';
+              return (
+                <div
+                  key={i}
+                  className={'todo-item' + (td.done ? ' done' : '') + (running ? ' running' : '')}
+                >
+                  <span className="todo-check">
+                    {running ? <span className="todo-spinner" /> : (td.done ? '✓' : '○')}
+                  </span>
+                  <span className="todo-text">{td.text}</span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

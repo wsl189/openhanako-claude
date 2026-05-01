@@ -127,6 +127,10 @@ function getMcpAttachTimeoutMs() {
   return 8_000;
 }
 
+function shouldReapplyMcpServers() {
+  return process.env.HANAKO_REAPPLY_MCP_SERVERS === "1";
+}
+
 function toContextUsageSnapshot(usage, fallbackUsage = null) {
   if (!usage && !fallbackUsage) return null;
   const fallbackTokens = fallbackUsage
@@ -324,9 +328,12 @@ export class ClaudeSessionRuntime {
       },
     });
     // Some SDK/CLI combinations can miss in-process MCP registration from the
-    // initial query() options path. Re-apply explicitly to guarantee custom
-    // tool servers are attached before turns start.
+    // initial query() options path. Keep the fallback behind an explicit flag:
+    // newer SDKs attach from query() options and a second setMcpServers call
+    // starts duplicate stdio MCP servers.
     if (
+      shouldReapplyMcpServers()
+      &&
       this.options?.mcpServers
       && Object.keys(this.options.mcpServers).length > 0
       && typeof this._query?.setMcpServers === "function"
