@@ -9,7 +9,11 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { debugLog } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
-import { applyRuntimeModelOverrides, resolveClaudeSdkModelId } from "./model-runtime-overrides.js";
+import {
+  applyClaudeMaxOutputTokensEnv,
+  applyRuntimeModelOverrides,
+  resolveClaudeSdkModelId,
+} from "./model-runtime-overrides.js";
 import {
   buildClaudeRuntimeConfig,
   CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
@@ -231,14 +235,15 @@ export class BridgeSessionManager {
     for (const [key, value] of Object.entries(process.env)) {
       if (!key.startsWith("ANTHROPIC_")) cleanEnv[key] = value;
     }
+    const env = applyClaudeMaxOutputTokensEnv({
+      ...cleanEnv,
+      ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrlForSdk(resolved.base_url) || undefined,
+      ANTHROPIC_API_KEY: resolved.api_key || undefined,
+      ANTHROPIC_AUTH_TOKEN: resolved.auth_token || undefined,
+    }, modelRef);
     return {
       model: resolveClaudeSdkModelId(resolved.model, modelRef),
-      env: {
-        ...cleanEnv,
-        ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrlForSdk(resolved.base_url) || undefined,
-        ANTHROPIC_API_KEY: resolved.api_key || undefined,
-        ANTHROPIC_AUTH_TOKEN: resolved.auth_token || undefined,
-      },
+      env,
     };
   }
 

@@ -224,6 +224,8 @@ export const OUTPUT_PRESETS = [
   { label: '16K', value: 16384 },
   { label: '32K', value: 32768 },
   { label: '64K', value: 65536 },
+  { label: '128K', value: 131072 },
+  { label: '256K', value: 262144 },
 ];
 
 export const VALID_THEMES = ['warm-paper', 'midnight', 'auto', 'high-contrast', 'grass-aroma', 'contemplation'];

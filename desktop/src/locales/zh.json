@@ -1224,6 +1224,7 @@
     "agentSkills": "Agent技能",
     "agentSkillsDesc": "一个 Agent 的所有会话与工作区共享这套技能",
     "agentSkillsEmpty": "当前 Agent 还没有启用技能",
+    "installedSkills": "已安装",
     "noAvailableSkills": "没有可添加的技能",
     "doubleClickAdd": "双击可添加到当前 Agent",
     "removeFromAgent": "移除",

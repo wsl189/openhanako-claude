@@ -1224,6 +1224,7 @@
     "agentSkills": "Agent Skills",
     "agentSkillsDesc": "All sessions and workspaces under one agent share this skill set",
     "agentSkillsEmpty": "No skills enabled for this agent",
+    "installedSkills": "Installed",
     "noAvailableSkills": "No available skills to add",
     "doubleClickAdd": "Double-click to add to current agent",
     "removeFromAgent": "Remove",

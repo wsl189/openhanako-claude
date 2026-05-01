@@ -121,6 +121,7 @@ describe("ConfigCoordinator model overrides", () => {
       provider: "deepseek",
       contextWindow: 1048576,
       maxTokens: 32768,
+      maxOutputTokensOverride: 32768,
     });
     expect(models.currentModel.contextWindow).toBe(1048576);
     expect(models.defaultModel.maxTokens).toBe(32768);

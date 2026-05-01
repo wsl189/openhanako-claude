@@ -4,6 +4,8 @@
  * 运行时模型字段 contextWindow/maxTokens。
  */
 
+export const CLAUDE_MAX_OUTPUT_TOKENS_ENV = "CLAUDE_CODE_MAX_OUTPUT_TOKENS";
+
 function toPositiveInt(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -32,12 +34,27 @@ export function applyRuntimeModelOverrides(model, overrides) {
     patched = { ...patched, contextWindow: nextContextWindow };
   }
 
-  if (nextMaxTokens && nextMaxTokens !== model.maxTokens) {
+  if (nextMaxTokens && (
+    nextMaxTokens !== model.maxTokens
+    || nextMaxTokens !== model.maxOutputTokensOverride
+  )) {
     patched = patched === model ? { ...patched } : patched;
     patched.maxTokens = nextMaxTokens;
+    patched.maxOutputTokensOverride = nextMaxTokens;
   }
 
   return patched;
+}
+
+export function applyClaudeMaxOutputTokensEnv(env = {}, model = null) {
+  const nextEnv = { ...(env || {}) };
+  const maxOutput = toPositiveInt(model?.maxOutputTokensOverride);
+  if (maxOutput) {
+    nextEnv[CLAUDE_MAX_OUTPUT_TOKENS_ENV] = String(maxOutput);
+  } else {
+    delete nextEnv[CLAUDE_MAX_OUTPUT_TOKENS_ENV];
+  }
+  return nextEnv;
 }
 
 function hasOneMillionContext(model) {

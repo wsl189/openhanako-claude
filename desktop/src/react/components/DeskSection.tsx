@@ -969,7 +969,11 @@ function DeskAgentSkillsPanel() {
           </div>
         )}
 
-        {pickerOpen && <div className="desk-cwd-divider" />}
+        {pickerOpen && (
+          <div className="desk-cwd-divider">
+            <span>{t('desk.installedSkills')}</span>
+          </div>
+        )}
 
         {enabledSkills.length === 0 ? (
           <p className="desk-cwd-empty">{t('desk.agentSkillsEmpty')}</p>

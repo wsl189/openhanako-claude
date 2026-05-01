@@ -1,4 +1,8 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  applyClaudeMaxOutputTokensEnv,
+  resolveClaudeSdkModelId,
+} from "./model-runtime-overrides.js";
 import { normalizeContentBlocks } from "./claude-transcript.js";
 import { patchSessionMetadata } from "./claude-session-store.js";
 
@@ -687,22 +691,29 @@ export class ClaudeSessionRuntime {
   }
 
   async setModel(model) {
-    const nextModel = typeof model === "string" ? model : model?.id;
-    if (!nextModel) {
+    const nextRuntimeModel = typeof model === "string"
+      ? { id: model, name: model }
+      : model;
+    const nextModelId = String(nextRuntimeModel?.id || "").trim();
+    if (!nextModelId) {
       throw new Error("model id is required");
     }
-    if (String(this.options?.model || "").trim() === nextModel) {
-      this.model = typeof model === "string"
-        ? { id: nextModel, name: nextModel }
-        : model;
+    const nextSdkModel = typeof model === "string"
+      ? nextModelId
+      : resolveClaudeSdkModelId(nextModelId, nextRuntimeModel);
+    const nextEnv = applyClaudeMaxOutputTokensEnv(this.options?.env || {}, nextRuntimeModel);
+    const modelChanged = String(this.options?.model || "").trim() !== nextSdkModel;
+    const maxOutputChanged = String(this.options?.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS || "")
+      !== String(nextEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS || "");
+
+    this.model = nextRuntimeModel;
+    if (!modelChanged && !maxOutputChanged) {
       return;
     }
-    this.model = typeof model === "string"
-      ? { id: nextModel, name: nextModel }
-      : model;
     this.options = {
       ...this.options,
-      model: nextModel,
+      model: nextSdkModel,
+      env: nextEnv,
     };
     // 切换模型时避免沿用旧会话 resume，兼容部分中转服务不支持跨模型恢复。
     await this._restartQuery({ resume: false });

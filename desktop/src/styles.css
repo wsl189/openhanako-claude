@@ -6535,9 +6535,28 @@ body.resizing .jian-sidebar-inner {
 }
 
 .desk-cwd-divider {
-    height: 1px;
-    background: var(--overlay-light);
-    margin: 0.1rem 0 0.45rem;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0.18rem 0 0.46rem;
+    color: var(--text-muted);
+    font-size: 0.62rem;
+    font-weight: 700;
+    line-height: 1;
+    opacity: 0.72;
+}
+
+.desk-cwd-divider::before,
+.desk-cwd-divider::after {
+    content: "";
+    flex: 1;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--overlay-strong, var(--overlay-light));
+}
+
+.desk-cwd-divider span {
+    flex: 0 0 auto;
 }
 
 .desk-cwd-group-label {

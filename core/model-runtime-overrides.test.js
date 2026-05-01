@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { applyRuntimeModelOverrides, resolveClaudeSdkModelId } from "./model-runtime-overrides.js";
+import {
+  applyClaudeMaxOutputTokensEnv,
+  applyRuntimeModelOverrides,
+  resolveClaudeSdkModelId,
+} from "./model-runtime-overrides.js";
 
 describe("applyRuntimeModelOverrides", () => {
   it("returns original model when no override exists", () => {
@@ -17,6 +21,7 @@ describe("applyRuntimeModelOverrides", () => {
     expect(out).not.toBe(model);
     expect(out.contextWindow).toBe(1048576);
     expect(out.maxTokens).toBe(200000);
+    expect(out.maxOutputTokensOverride).toBe(200000);
   });
 
   it("ignores invalid override values", () => {
@@ -26,6 +31,27 @@ describe("applyRuntimeModelOverrides", () => {
     };
     const out = applyRuntimeModelOverrides(model, overrides);
     expect(out).toBe(model);
+  });
+});
+
+describe("applyClaudeMaxOutputTokensEnv", () => {
+  it("maps explicit runtime max output override to Claude Code env", () => {
+    expect(applyClaudeMaxOutputTokensEnv(
+      { OTHER: "ok" },
+      { id: "gpt-5.4", maxOutputTokensOverride: 131072 },
+    )).toEqual({
+      OTHER: "ok",
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "131072",
+    });
+  });
+
+  it("clears stale Claude Code max output env without an explicit override", () => {
+    expect(applyClaudeMaxOutputTokensEnv(
+      { OTHER: "ok", CLAUDE_CODE_MAX_OUTPUT_TOKENS: "65536" },
+      { id: "gpt-5.4", maxTokens: 128000 },
+    )).toEqual({
+      OTHER: "ok",
+    });
   });
 });
 

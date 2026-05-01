@@ -101,6 +101,47 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     expect(queryMock.mock.calls[0]?.[0]?.options?.persistSession).toBe(true);
   });
 
+  it("restarts the SDK query when max output env changes for the same model", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+    queryMock.mockImplementation(() => {
+      async function* stream() {}
+      const iterator = stream();
+      iterator.close = vi.fn();
+      iterator.getContextUsage = vi.fn(async () => null);
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "s1",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-max-output-env.json",
+      options: {
+        model: "deepseek-v4-pro",
+        env: {
+          OTHER: "ok",
+        },
+      },
+    });
+
+    await runtime.setModel({
+      id: "deepseek-v4-pro",
+      name: "DeepSeek V4 Pro",
+      maxOutputTokensOverride: 131072,
+    });
+    await runtime.close();
+
+    expect(runtime.options.model).toBe("deepseek-v4-pro");
+    expect(runtime.options.env).toMatchObject({
+      OTHER: "ok",
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "131072",
+    });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0]?.[0]?.options?.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS)
+      .toBe("131072");
+  });
+
   it("does not re-apply configured mcpServers by default", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();

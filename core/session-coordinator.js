@@ -23,7 +23,11 @@ import { buildClaudeRuntimeConfig, CLAUDE_BUILTIN_TOOL_NAMES } from "./claude-ru
 import { readSessionMessagesFromLog } from "./session-message-log.js";
 import { normalizeWorkspacePath } from "./path-utils.js";
 import { normalizeModelRef } from "./model-ref.js";
-import { applyRuntimeModelOverrides, resolveClaudeSdkModelId } from "./model-runtime-overrides.js";
+import {
+  applyClaudeMaxOutputTokensEnv,
+  applyRuntimeModelOverrides,
+  resolveClaudeSdkModelId,
+} from "./model-runtime-overrides.js";
 
 const log = createModuleLogger("session");
 const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]/i;
@@ -783,6 +787,7 @@ export class SessionCoordinator {
       maxTokens: resolved?.maxTokens || null,
     }, agent?.config?.models?.overrides);
     const sdkModel = resolveClaudeSdkModelId(model, runtimeModel);
+    const runtimeEnv = applyClaudeMaxOutputTokensEnv(env, runtimeModel);
     const resolvedModelRef = modelToRef(runtimeModel) || modelRef;
 
     log.log(
@@ -817,7 +822,7 @@ export class SessionCoordinator {
       noMemory,
       systemAppend,
       model: sdkModel,
-      env,
+      env: runtimeEnv,
       confirmStore: this._d.getConfirmStore?.() || null,
       sessionPath,
       createToolContext: () => ({
