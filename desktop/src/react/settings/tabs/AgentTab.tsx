@@ -244,7 +244,6 @@ export function AgentTab() {
   const [builtinEnabled, setBuiltinEnabled] = useState<string[]>([...REQUIRED_BUILTINS, ...OPTIONAL_BUILTINS]);
   const [customEnabled, setCustomEnabled] = useState<string[]>([]);
   const [builtinExpanded, setBuiltinExpanded] = useState(false);
-  const [customExpanded, setCustomExpanded] = useState(false);
   const [externalMcpExpanded, setExternalMcpExpanded] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [expCategories, setExpCategories] = useState<ExpCategory[]>([]);
@@ -280,6 +279,9 @@ export function AgentTab() {
       ? settingsConfig.mcp.disabled_servers.map((name: string) => String(name || '').trim()).filter(Boolean)
       : [],
   );
+  const mergedBuiltinToolCount = toolCatalog.builtinRequired.length
+    + toolCatalog.builtinOptional.length
+    + visibleCustomTools.length;
 
   useEffect(() => {
     if (settingsConfig) {
@@ -411,26 +413,27 @@ export function AgentTab() {
     await autoSaveConfig({ tools: { builtin_enabled: next } }, { silent: true });
   };
 
-  const setAllBuiltinEnabledAndSave = async (enabled: boolean) => {
-    const next = enabled
+  const setAllMergedBuiltinEnabledAndSave = async (enabled: boolean) => {
+    const nextBuiltin = enabled
       ? Array.from(new Set([...toolCatalog.builtinRequired, ...toolCatalog.builtinOptional]))
       : [...toolCatalog.builtinRequired];
-    setBuiltinEnabled(next);
-    await autoSaveConfig({ tools: { builtin_enabled: next } }, { silent: true });
+    const nextCustom = enabled
+      ? Array.from(new Set([...customEnabled, ...visibleCustomTools]))
+      : customEnabled.filter(name => !visibleCustomTools.includes(name));
+    setBuiltinEnabled(nextBuiltin);
+    setCustomEnabled(nextCustom);
+    await autoSaveConfig({
+      tools: {
+        builtin_enabled: nextBuiltin,
+        custom_enabled: nextCustom,
+      },
+    }, { silent: true });
   };
 
   const setCustomEnabledAndSave = async (name: string, enabled: boolean) => {
     const next = enabled
       ? Array.from(new Set([...customEnabled, name]))
       : customEnabled.filter(n => n !== name);
-    setCustomEnabled(next);
-    await autoSaveConfig({ tools: { custom_enabled: next } }, { silent: true });
-  };
-
-  const setAllCustomEnabledAndSave = async (enabled: boolean) => {
-    const next = enabled
-      ? Array.from(new Set([...customEnabled, ...visibleCustomTools]))
-      : customEnabled.filter(name => !visibleCustomTools.includes(name));
     setCustomEnabled(next);
     await autoSaveConfig({ tools: { custom_enabled: next } }, { silent: true });
   };
@@ -640,7 +643,7 @@ export function AgentTab() {
   };
 
   const allBuiltinEnabled = toolCatalog.builtinOptional.every((name: string) => builtinEnabled.includes(name));
-  const allCustomEnabled = visibleCustomTools.length > 0
+  const allMergedBuiltinEnabled = allBuiltinEnabled
     && visibleCustomTools.every((name: string) => customEnabled.includes(name));
   const allExternalMcpEnabled = managedExternalMcpEntries.length + externalMcpEntries.length > 0
     && managedExternalMcpEntries.every((tool) => customEnabled.includes(tool.name))
@@ -855,7 +858,7 @@ export function AgentTab() {
               <span className="agent-tool-collapse-meta">
                 {builtinExpanded ? t('settings.agent.toolsCollapse') : t('settings.agent.toolsExpand')}
                 {' · '}
-                {[...toolCatalog.builtinRequired, ...toolCatalog.builtinOptional].length}
+                {mergedBuiltinToolCount}
               </span>
             </button>
             {builtinExpanded && (
@@ -863,8 +866,8 @@ export function AgentTab() {
                 <div className="agent-tool-bulk-row">
                   <span className="agent-tool-bulk-label">{t('settings.agent.toolsSelectAll')}</span>
                   <button
-                    className={`hana-toggle mini${allBuiltinEnabled ? ' on' : ''}`}
-                    onClick={() => setAllBuiltinEnabledAndSave(!allBuiltinEnabled)}
+                    className={`hana-toggle mini${allMergedBuiltinEnabled ? ' on' : ''}`}
+                    onClick={() => setAllMergedBuiltinEnabledAndSave(!allMergedBuiltinEnabled)}
                     title={t('settings.agent.toolsSelectAll')}
                   />
                 </div>
@@ -896,63 +899,30 @@ export function AgentTab() {
                     </div>
                   );
                 })}
-              </div>
-            )}
-          </div>
-          <div className="agent-tool-block">
-            <button
-              className="agent-tool-collapse"
-              onClick={() => {
-                setCustomExpanded(v => !v);
-              }}
-            >
-              <span className="settings-field-label">{t('settings.agent.customTools')}</span>
-              <span className="agent-tool-collapse-meta">
-                {customExpanded ? t('settings.agent.toolsCollapse') : t('settings.agent.toolsExpand')}
-                {' · '}
-                {visibleCustomTools.length}
-              </span>
-            </button>
-            {customExpanded && (
-              <div className="agent-tool-list">
-                {visibleCustomTools.length === 0 ? (
-                  <div className="pin-empty">{t('settings.agent.customToolsEmpty')}</div>
-                ) : (
-                  <>
-                    <div className="agent-tool-bulk-row">
-                      <span className="agent-tool-bulk-label">{t('settings.agent.toolsSelectAll')}</span>
-                      <button
-                        className={`hana-toggle mini${allCustomEnabled ? ' on' : ''}`}
-                        onClick={() => setAllCustomEnabledAndSave(!allCustomEnabled)}
-                        title={t('settings.agent.toolsSelectAll')}
-                      />
-                    </div>
-                    {visibleCustomTools.map((name: string) => {
-                      const enabled = customEnabled.includes(name);
-                      return (
+                {visibleCustomTools.map((name: string) => {
+                  const enabled = customEnabled.includes(name);
+                  return (
+                    <div
+                      className="agent-tool-item"
+                      key={`custom:${name}`}
+                    >
+                      <div className="agent-tool-row">
+                        <code>{name}</code>
                         <div
-                          className="agent-tool-item"
-                          key={name}
+                          className="agent-tool-toggle-wrap"
                         >
-                          <div className="agent-tool-row">
-                            <code>{name}</code>
-                            <div
-                              className="agent-tool-toggle-wrap"
-                            >
-                              <button
-                                className={`hana-toggle mini${enabled ? ' on' : ''}`}
-                                onClick={() => setCustomEnabledAndSave(name, !enabled)}
-                              />
-                              <div className="agent-tool-tooltip">
-                                {getToolHint(name, 'custom')}
-                              </div>
-                            </div>
+                          <button
+                            className={`hana-toggle mini${enabled ? ' on' : ''}`}
+                            onClick={() => setCustomEnabledAndSave(name, !enabled)}
+                          />
+                          <div className="agent-tool-tooltip">
+                            {getToolHint(name, 'custom')}
                           </div>
                         </div>
-                      );
-                    })}
-                  </>
-                )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
