@@ -77,7 +77,7 @@
     "updateInstall": "Install",
     "updateDownloadTitle": "Download the latest installer",
     "updateDownloadingTitle": "Downloading update: {percent}%",
-    "updateInstallTitle": "Show installer in folder",
+    "updateInstallTitle": "Open installer and quit Hanako",
     "updateDownloadFailed": "Failed to download installer"
   },
   "session": {

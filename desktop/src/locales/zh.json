@@ -77,7 +77,7 @@
     "updateInstall": "安装",
     "updateDownloadTitle": "下载新版本安装包",
     "updateDownloadingTitle": "正在下载新版本：{percent}%",
-    "updateInstallTitle": "打开安装包所在位置",
+    "updateInstallTitle": "打开安装包并退出 Hanako",
     "updateDownloadFailed": "下载安装包失败"
   },
   "session": {

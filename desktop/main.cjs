@@ -2105,10 +2105,24 @@ async function _downloadUpdateInstaller() {
   }
 }
 
-function openDownloadedUpdateInstaller() {
+async function openDownloadedUpdateInstaller() {
   const filePath = _manualUpdateDownloadInfo?.filePath;
   if (!filePath || !fs.existsSync(filePath)) return false;
-  shell.showItemInFolder(filePath);
+  console.log(`[desktop:update] opening downloaded installer and quitting: ${filePath}`);
+  const openError = await shell.openPath(filePath);
+  if (openError) {
+    console.warn("[desktop:update] failed to open downloaded installer:", openError);
+    return false;
+  }
+  _installingDownloadedUpdate = true;
+  isQuitting = true;
+  isExitingServer = true;
+  forceQuitApp = true;
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { win.close(); } catch {}
+  }
+  await prepareForUpdateInstall();
+  app.quit();
   return true;
 }
 
