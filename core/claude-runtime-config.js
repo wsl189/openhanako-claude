@@ -942,6 +942,7 @@ export function buildClaudeRuntimeConfig({
   env = {},
   confirmStore = null,
   sessionPath = null,
+  includePartialMessages = false,
 } = {}) {
   const explicitClaudeConfigDir = String(env?.CLAUDE_CONFIG_DIR || "").trim();
   let runtimeEnv = {
@@ -1106,7 +1107,7 @@ export function buildClaudeRuntimeConfig({
     allowDangerouslySkipPermissions: !strictSandbox,
     ...(canUseTool ? { canUseTool } : {}),
     settingSources,
-    includePartialMessages: false,
+    includePartialMessages: includePartialMessages === true,
     persistSession: true,
   };
 

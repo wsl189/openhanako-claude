@@ -12,13 +12,11 @@ import { SettingsConfirmCard } from './SettingsConfirmCard';
 import type { ChatMessage, ContentBlock } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
-import { useSmoothStream } from '../../hooks/use-smooth-stream';
 import { useI18n } from '../../hooks/use-i18n';
 import { openFilePreview, openSkillPreview, readFileForPreview } from '../../utils/file-preview';
 import { openPreview } from '../../stores/artifact-actions';
 import { normalizeAgentDisplayName } from '../../utils/agent-helpers';
 import { cronToHuman } from '../../utils/format';
-import { renderMarkdown } from '../../utils/markdown';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -90,8 +88,6 @@ const TOOL_TO_INTERMEDIATE_TEXT_REVEAL_PAUSE_MS = 460;
 const THINK_TO_FINAL_REPLY_REVEAL_PAUSE_MS = 820;
 const TOOL_TO_FINAL_REPLY_REVEAL_PAUSE_MS = 680;
 const FRESH_CHAIN_REVEAL_WINDOW_MS = 20_000;
-const FINAL_TEXT_SETTLE_MIN_MS = 420;
-const FINAL_TEXT_SETTLE_MAX_MS = 2200;
 
 function getBlockRevealDelayMs(params: {
   prevBlock?: ContentBlock;
@@ -361,66 +357,21 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
     ? visibleBlocks[finalTextIndex]
     : null;
   const finalTextHtml = finalTextBlock?.html || '';
-  const finalTextRaw = finalTextBlock?.raw || '';
-  const [replayFinalText, setReplayFinalText] = useState(
-    () => isLiveStreamMessage && !isStreaming && !!finalTextRaw,
-  );
-  const prevFinalRawRef = useRef(finalTextRaw);
-
-  useEffect(() => {
-    const prev = prevFinalRawRef.current;
-    prevFinalRawRef.current = finalTextRaw;
-    if (!isLiveStreamMessage || !finalTextRaw) {
-      setReplayFinalText(false);
-      return;
-    }
-    if (isStreaming) {
-      setReplayFinalText(false);
-      return;
-    }
-    if (finalTextRaw !== prev) {
-      setReplayFinalText(true);
-    }
-  }, [finalTextRaw, isLiveStreamMessage, isStreaming]);
-
-  useEffect(() => {
-    if (!replayFinalText) return;
-    const duration = Math.min(
-      FINAL_TEXT_SETTLE_MAX_MS,
-      Math.max(FINAL_TEXT_SETTLE_MIN_MS, Math.ceil(finalTextRaw.length * 12)),
-    );
-    const timer = window.setTimeout(() => setReplayFinalText(false), duration);
-    return () => window.clearTimeout(timer);
-  }, [replayFinalText, finalTextRaw.length]);
-
-  const canSmoothFinalText = finalTextRaw.length > 0 && finalTextRaw.length <= 8_000;
-  const smoothFinalTextStreaming = canSmoothFinalText && (isStreaming || replayFinalText);
-  const { displayedContent: smoothedFinalTextRaw } = useSmoothStream({
-    content: finalTextRaw,
-    isStreaming: smoothFinalTextStreaming,
-    minDelay: 24,
-    startFromEmptyWhenStreaming: smoothFinalTextStreaming,
-  });
-  const finalDisplayHtml = useMemo(() => {
-    if (!finalTextRaw || !canSmoothFinalText) return finalTextHtml;
-    if (!smoothFinalTextStreaming) return finalTextHtml;
-    return renderMarkdown(smoothedFinalTextRaw);
-  }, [finalTextRaw, finalTextHtml, canSmoothFinalText, smoothFinalTextStreaming, smoothedFinalTextRaw]);
 
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    if (!finalDisplayHtml) return;
+    if (!finalTextHtml) return;
     const tmp = document.createElement('div');
-    tmp.innerHTML = finalDisplayHtml;
+    tmp.innerHTML = finalTextHtml;
     const text = tmp.innerText.trim();
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     }).catch(() => {});
-  }, [finalDisplayHtml]);
+  }, [finalTextHtml]);
 
   if (visibleBlocks.length === 0 && !showChainSummary) return null;
 
@@ -496,10 +447,11 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
           const isFinalTextBlock = block.type === 'text' && i === finalTextIndex;
           if (isFinalTextBlock) {
             return (
-              <div key={i} className={`assistant-final-reply${(isStreaming || replayFinalText) ? ' streaming' : ''}`}>
+              <div key={i} className={`assistant-final-reply${isStreaming ? ' streaming' : ''}`}>
                 <MarkdownContent
-                  html={finalDisplayHtml || block.html}
-                  className={(isStreaming || replayFinalText) ? 'md-content stream-live' : 'md-content'}
+                  html={finalTextHtml || block.html}
+                  className="md-content"
+                  animateNewText={isStreaming}
                 />
                 <button
                   className={`msg-copy-btn${copied ? ' copied' : ''}`}
@@ -556,7 +508,7 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan
     case 'tool_group':
       return <ToolGroupBlock tools={block.tools} agentName={agentName} dimmed={!!dimmed} animate={!!animate} />;
     case 'text':
-      return <MarkdownContent html={block.html} />;
+      return <MarkdownContent html={block.html} animateNewText={!!animate} />;
     case 'xing':
       return <XingCard title={block.title} content={block.content} sealed={block.sealed} agentName={agentName} />;
     case 'file_output':

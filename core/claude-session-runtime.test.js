@@ -64,7 +64,7 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     await runtime.close();
   });
 
-  it("forces includePartialMessages=false for SDK query", async () => {
+  it("respects explicit includePartialMessages=true for SDK query", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();
     queryMock.mockImplementation(({ prompt }) => {
@@ -97,7 +97,7 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     await runtime.close();
 
     expect(queryMock.mock.calls.length).toBeGreaterThan(0);
-    expect(queryMock.mock.calls[0]?.[0]?.options?.includePartialMessages).toBe(false);
+    expect(queryMock.mock.calls[0]?.[0]?.options?.includePartialMessages).toBe(true);
     expect(queryMock.mock.calls[0]?.[0]?.options?.persistSession).toBe(true);
   });
 

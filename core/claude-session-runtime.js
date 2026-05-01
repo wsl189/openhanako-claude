@@ -256,7 +256,7 @@ export class ClaudeSessionRuntime {
     this.options = {
       ...options,
       cwd,
-      includePartialMessages: false,
+      includePartialMessages: options?.includePartialMessages === true,
       persistSession: true,
     };
     this.model = null;

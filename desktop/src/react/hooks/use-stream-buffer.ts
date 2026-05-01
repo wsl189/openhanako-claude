@@ -15,8 +15,8 @@ import { applyChatStreamLiveEvent, upsertCronConfirmation } from '../utils/chat-
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// 更高刷新频率，让前端流式文字更接近连续输出观感
-const FLUSH_INTERVAL = 56;
+// 按 SDK chunk 分段批量落到 React，避免逐字动画和高频重排导致窗口抖动。
+const FLUSH_INTERVAL = 96;
 const NAMED_TOOL_TAGS = [
   'glob',
   'read',

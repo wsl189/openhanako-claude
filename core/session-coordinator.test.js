@@ -50,6 +50,29 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     });
   });
 
+  it("keeps partial assistant snapshots off the discrete sdk_message path", () => {
+    const coordinator = new SessionCoordinator({});
+    const content = [
+      { type: "thinking", thinking: "plan" },
+      { type: "text", text: "hello" },
+      { type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "README.md" } },
+    ];
+
+    const translated = coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: { id: "assistant-message-1", content },
+    }, "/tmp/session-partial-assistant", [], { suppressAssistantSdkMessage: true });
+
+    expect(translated.some((evt) => evt.type === "sdk_message" && evt.message?.role === "assistant")).toBe(false);
+    expect(translated).toContainEqual({ type: "assistant_snapshot", content });
+    expect(translated).toContainEqual({
+      type: "tool_start",
+      name: "Read",
+      toolCallId: "tool-1",
+      args: { file_path: "README.md" },
+    });
+  });
+
   it("emits sdk_message for user tool_result blocks", () => {
     const coordinator = new SessionCoordinator({});
 

@@ -448,7 +448,7 @@ export class SessionCoordinator {
     return state;
   }
 
-  _translateClaudeEvent(event, sessionPath, customToolNames = []) {
+  _translateClaudeEvent(event, sessionPath, customToolNames = [], opts = {}) {
     const state = this._getStreamState(sessionPath, customToolNames);
     const translated = [];
 
@@ -540,10 +540,12 @@ export class SessionCoordinator {
       if (assistantUuid) {
         sdkAssistantMessage.uuid = assistantUuid;
       }
-      translated.push({
-        type: "sdk_message",
-        message: sdkAssistantMessage,
-      });
+      if (opts.suppressAssistantSdkMessage !== true) {
+        translated.push({
+          type: "sdk_message",
+          message: sdkAssistantMessage,
+        });
+      }
       const structuredToolUses = extractToolUsesFromAssistantContent(content);
       if (structuredToolUses.length > 0) {
         state.turnSawStructuredToolUse = true;
@@ -766,6 +768,7 @@ export class SessionCoordinator {
     systemAppend = "",
     noTools = false,
     noMemory = false,
+    includePartialMessages = false,
   }) {
     const normalizedCwd = normalizeWorkspacePath(cwd, process.cwd());
     const models = this._d.getModels();
@@ -821,6 +824,7 @@ export class SessionCoordinator {
       noTools,
       noMemory,
       systemAppend,
+      includePartialMessages,
       model: sdkModel,
       env: runtimeEnv,
       confirmStore: this._d.getConfirmStore?.() || null,
@@ -889,7 +893,13 @@ export class SessionCoordinator {
           + `mcpTools=${JSON.stringify(mcpTools)}`,
         );
       }
-      for (const translatedEvent of this._translateClaudeEvent(event, sessionPath, customToolNames)) {
+      const translateOpts = {
+        // includePartialMessages makes assistant messages cumulative snapshots.
+        // Keep those on the snapshot path; the sdk_message path represents
+        // discrete assistant messages and would duplicate streamed thinking.
+        suppressAssistantSdkMessage: session.options?.includePartialMessages === true,
+      };
+      for (const translatedEvent of this._translateClaudeEvent(event, sessionPath, customToolNames, translateOpts)) {
         this._emitRuntimeEvent(translatedEvent, sessionPath);
       }
     });
@@ -945,6 +955,7 @@ export class SessionCoordinator {
       cwd: effectiveCwd,
       memoryEnabled,
       resumeExisting: false,
+      includePartialMessages: true,
     });
 
     this._session = runtime;
@@ -996,6 +1007,7 @@ export class SessionCoordinator {
       cwd: metadata.cwd,
       memoryEnabled,
       resumeExisting: true,
+      includePartialMessages: true,
     });
     this._session = runtime;
     this._sessionStarted = wasStarted;
@@ -1050,6 +1062,7 @@ export class SessionCoordinator {
       cwd: metadata.cwd,
       memoryEnabled,
       resumeExisting: true,
+      includePartialMessages: true,
     });
     this._session = runtime;
     this._sessionStarted = false;

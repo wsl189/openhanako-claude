@@ -109,7 +109,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.pathToClaudeCodeExecutable).toBe("/tmp/custom-cli.js");
   });
 
-  it("uses non-partial streaming and bypass permission mode", () => {
+  it("uses non-partial streaming by default and bypass permission mode", () => {
     const config = createConfig();
     expect(config.options.includePartialMessages).toBe(false);
     expect(config.options.permissionMode).toBe("bypassPermissions");
@@ -117,6 +117,11 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.settings).toEqual({
       skipWebFetchPreflight: true,
     });
+  });
+
+  it("can enable partial SDK messages for chat sessions", () => {
+    const config = createConfig({ includePartialMessages: true });
+    expect(config.options.includePartialMessages).toBe(true);
   });
 
   it("disables sandbox even when legacy sandbox modes/path rules are provided", () => {
