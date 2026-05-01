@@ -252,23 +252,22 @@ function extractTitleSourceText(content) {
     .trim();
 }
 
-function clipSnapshotText(text, maxLen = 12000) {
-  const value = String(text || "");
-  if (value.length <= maxLen) return value;
-  return value.slice(0, maxLen);
+function normalizeSnapshotText(text) {
+  // Snapshot text is the live assistant reply, so keep it intact; history already stores it fully.
+  return String(text || "");
 }
 
-function compactAssistantSnapshotContent(content) {
+export function compactAssistantSnapshotContent(content) {
   if (!Array.isArray(content)) return [];
   const out = [];
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
     if (block.type === "text" && typeof block.text === "string") {
-      out.push({ type: "text", text: clipSnapshotText(block.text) });
+      out.push({ type: "text", text: normalizeSnapshotText(block.text) });
       continue;
     }
     if (block.type === "thinking" && typeof block.thinking === "string") {
-      out.push({ type: "thinking", thinking: clipSnapshotText(block.thinking) });
+      out.push({ type: "thinking", thinking: normalizeSnapshotText(block.thinking) });
       continue;
     }
     if (block.type === "tool_use" && block.id) {
@@ -285,13 +284,13 @@ function compactAssistantSnapshotContent(content) {
       && /(reason|think|analysis|commentary|summary)/i.test(block.type)
       && typeof block.text === "string"
     ) {
-      out.push({ type: block.type, text: clipSnapshotText(block.text) });
+      out.push({ type: block.type, text: normalizeSnapshotText(block.text) });
     }
   }
   return out;
 }
 
-function compactSdkMessage(message) {
+export function compactSdkMessage(message) {
   if (!message || typeof message !== "object") return null;
   const role = String(message.role || "").trim();
   const content = Array.isArray(message.content) ? message.content : [];
