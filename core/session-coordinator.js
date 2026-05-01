@@ -23,6 +23,7 @@ import { buildClaudeRuntimeConfig, CLAUDE_BUILTIN_TOOL_NAMES } from "./claude-ru
 import { readSessionMessagesFromLog } from "./session-message-log.js";
 import { normalizeWorkspacePath } from "./path-utils.js";
 import { normalizeModelRef } from "./model-ref.js";
+import { applyRuntimeModelOverrides, resolveClaudeSdkModelId } from "./model-runtime-overrides.js";
 
 const log = createModuleLogger("session");
 const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]/i;
@@ -774,7 +775,15 @@ export class SessionCoordinator {
       throw new Error(t("error.noAvailableModel"));
     }
     const { model, env, resolved } = this._buildSessionEnv(models, agent?.config, modelRef);
-    const resolvedModelRef = modelToRef(model) || modelRef;
+    const runtimeModel = applyRuntimeModelOverrides({
+      id: resolved?.id || resolved?.model || model,
+      name: resolved?.name || resolved?.id || resolved?.model || model,
+      provider: resolved?.provider || "",
+      contextWindow: resolved?.contextWindow || null,
+      maxTokens: resolved?.maxTokens || null,
+    }, agent?.config?.models?.overrides);
+    const sdkModel = resolveClaudeSdkModelId(model, runtimeModel);
+    const resolvedModelRef = modelToRef(runtimeModel) || modelRef;
 
     log.log(
       `[runtime-route] claude-sdk-runtime `
@@ -807,7 +816,7 @@ export class SessionCoordinator {
       noTools,
       noMemory,
       systemAppend,
-      model,
+      model: sdkModel,
       env,
       confirmStore: this._d.getConfirmStore?.() || null,
       sessionPath,
@@ -839,7 +848,7 @@ export class SessionCoordinator {
       options: runtimeConfig.options,
       initialContextUsage: metadata?.contextUsage || null,
     });
-    runtime.model = model;
+    runtime.model = runtimeModel;
     if (sessionPath && resolvedModelRef && resolvedModelRef !== metadata?.model) {
       try {
         patchSessionMetadata(sessionPath, { model: resolvedModelRef });

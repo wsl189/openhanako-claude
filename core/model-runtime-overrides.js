@@ -39,3 +39,22 @@ export function applyRuntimeModelOverrides(model, overrides) {
 
   return patched;
 }
+
+function hasOneMillionContext(model) {
+  const contextWindow = toPositiveInt(model?.contextWindow ?? model?.context);
+  return contextWindow != null && contextWindow >= 1_000_000;
+}
+
+/**
+ * Claude Agent SDK uses the model id to decide its context-window policy.
+ * Some Anthropic-compatible providers expose a 1M variant through the "[1m]"
+ * model suffix. Hanako keeps the user's configured model id unchanged for
+ * display/metadata and only applies the suffix at the SDK boundary.
+ */
+export function resolveClaudeSdkModelId(modelId, runtimeModel = null) {
+  const raw = String(modelId || "").trim();
+  if (!raw) return raw;
+  if (/\[1m\]$/i.test(raw)) return raw;
+  if (!hasOneMillionContext(runtimeModel)) return raw;
+  return `${raw}[1m]`;
+}

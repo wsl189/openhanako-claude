@@ -9,7 +9,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { debugLog } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
-import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
+import { applyRuntimeModelOverrides, resolveClaudeSdkModelId } from "./model-runtime-overrides.js";
 import {
   buildClaudeRuntimeConfig,
   CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
@@ -232,7 +232,7 @@ export class BridgeSessionManager {
       if (!key.startsWith("ANTHROPIC_")) cleanEnv[key] = value;
     }
     return {
-      model: resolved.model,
+      model: resolveClaudeSdkModelId(resolved.model, modelRef),
       env: {
         ...cleanEnv,
         ANTHROPIC_BASE_URL: normalizeAnthropicBaseUrlForSdk(resolved.base_url) || undefined,

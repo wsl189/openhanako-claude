@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
+import { applyRuntimeModelOverrides, resolveClaudeSdkModelId } from "./model-runtime-overrides.js";
 
 describe("applyRuntimeModelOverrides", () => {
   it("returns original model when no override exists", () => {
@@ -29,3 +29,28 @@ describe("applyRuntimeModelOverrides", () => {
   });
 });
 
+describe("resolveClaudeSdkModelId", () => {
+  it("adds the 1M suffix when runtime context is one million", () => {
+    expect(resolveClaudeSdkModelId("deepseek-v4-pro", { contextWindow: 1_048_576 }))
+      .toBe("deepseek-v4-pro[1m]");
+    expect(resolveClaudeSdkModelId("custom-model", { contextWindow: 1_000_000 }))
+      .toBe("custom-model[1m]");
+  });
+
+  it("does not add the suffix below one million context", () => {
+    expect(resolveClaudeSdkModelId("deepseek-v4-pro", { contextWindow: 200_000 }))
+      .toBe("deepseek-v4-pro");
+  });
+
+  it("does not duplicate the suffix", () => {
+    expect(resolveClaudeSdkModelId("deepseek-v4-pro[1m]", { contextWindow: 1_048_576 }))
+      .toBe("deepseek-v4-pro[1m]");
+  });
+
+  it("applies the suffix to any 1M model id", () => {
+    expect(resolveClaudeSdkModelId("deepseek-chat", { contextWindow: 1_000_000 }))
+      .toBe("deepseek-chat[1m]");
+    expect(resolveClaudeSdkModelId("claude-sonnet-4-6", { contextWindow: 1_000_000 }))
+      .toBe("claude-sonnet-4-6[1m]");
+  });
+});

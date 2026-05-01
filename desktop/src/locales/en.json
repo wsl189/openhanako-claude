@@ -164,7 +164,7 @@
       "xhigh": "full reasoning"
     },
     "currentModel": "Model {name}",
-    "contextWindow": "Context {windowK}k",
+    "contextWindow": "Context {window}",
     "tokensUsed": "Used {tokensK}k ({pct}%)"
   },
   "slash": {

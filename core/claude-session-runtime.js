@@ -131,14 +131,23 @@ function shouldReapplyMcpServers() {
   return process.env.HANAKO_REAPPLY_MCP_SERVERS === "1";
 }
 
-function toContextUsageSnapshot(usage, fallbackUsage = null) {
+function toPositiveInt(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
+function toContextUsageSnapshot(usage, fallbackUsage = null, model = null) {
   if (!usage && !fallbackUsage) return null;
   const fallbackTokens = fallbackUsage
     ? ((fallbackUsage.input_tokens || 0) + (fallbackUsage.output_tokens || 0))
     : null;
   const tokens = usage?.totalTokens ?? fallbackTokens;
-  const contextWindow = usage?.maxTokens ?? usage?.rawMaxTokens ?? null;
-  const percent = usage?.percentage != null
+  const modelContextWindow = toPositiveInt(model?.contextWindow ?? model?.context);
+  const sdkContextWindow = toPositiveInt(usage?.maxTokens ?? usage?.rawMaxTokens);
+  const contextWindow = modelContextWindow ?? sdkContextWindow ?? null;
+  const shouldTrustSdkPercentage = !modelContextWindow || modelContextWindow === sdkContextWindow;
+  const percent = usage?.percentage != null && shouldTrustSdkPercentage
     ? Math.round(usage.percentage)
     : (
       tokens != null && contextWindow
@@ -165,6 +174,20 @@ function normalizeContextUsageSnapshot(raw) {
     );
   if (tokens == null && contextWindow == null && percent == null) return null;
   return { tokens, contextWindow, percent };
+}
+
+function applyModelToContextUsageSnapshot(raw, model = null) {
+  const snapshot = normalizeContextUsageSnapshot(raw);
+  const modelContextWindow = toPositiveInt(model?.contextWindow ?? model?.context);
+  if (!snapshot || !modelContextWindow || snapshot.contextWindow === modelContextWindow) return snapshot;
+  const percent = snapshot.tokens != null
+    ? Math.min(100, Math.round((snapshot.tokens / modelContextWindow) * 100))
+    : snapshot.percent;
+  return {
+    tokens: snapshot.tokens,
+    contextWindow: modelContextWindow,
+    percent,
+  };
 }
 
 function shouldLogContextUsage() {
@@ -693,15 +716,15 @@ export class ClaudeSessionRuntime {
   async refreshContextUsage(fallbackUsage = null) {
     if (!this._query?.getContextUsage) {
       if (fallbackUsage) {
-        this._lastContextUsage = toContextUsageSnapshot(null, fallbackUsage);
+        this._lastContextUsage = toContextUsageSnapshot(null, fallbackUsage, this.model);
         this._persistContextUsageSnapshot(this._lastContextUsage);
       }
-      return this._lastContextUsage;
+      return applyModelToContextUsageSnapshot(this._lastContextUsage, this.model);
     }
 
     try {
       const usage = await this._query.getContextUsage();
-      const nextContextUsage = toContextUsageSnapshot(usage, fallbackUsage || this._lastUsage);
+      const nextContextUsage = toContextUsageSnapshot(usage, fallbackUsage || this._lastUsage, this.model);
       if (nextContextUsage) {
         this._lastContextUsage = nextContextUsage;
         this._persistContextUsageSnapshot(this._lastContextUsage);
@@ -722,15 +745,18 @@ export class ClaudeSessionRuntime {
       return this._lastContextUsage;
     } catch {
       if (!this._lastContextUsage && fallbackUsage) {
-        this._lastContextUsage = toContextUsageSnapshot(null, fallbackUsage);
+        this._lastContextUsage = toContextUsageSnapshot(null, fallbackUsage, this.model);
         this._persistContextUsageSnapshot(this._lastContextUsage);
       }
-      return this._lastContextUsage;
+      return applyModelToContextUsageSnapshot(this._lastContextUsage, this.model);
     }
   }
 
   getContextUsage() {
-    return this._lastContextUsage || toContextUsageSnapshot(null, this._lastUsage);
+    return applyModelToContextUsageSnapshot(
+      this._lastContextUsage || toContextUsageSnapshot(null, this._lastUsage, this.model),
+      this.model,
+    );
   }
 
   async compact() {

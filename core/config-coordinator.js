@@ -420,6 +420,11 @@ export class ConfigCoordinator {
       && partial.models !== null
       && typeof partial.models === "object"
       && Object.prototype.hasOwnProperty.call(partial.models, "chat");
+    const modelOverridesChanged =
+      partial?.models !== undefined
+      && partial.models !== null
+      && typeof partial.models === "object"
+      && Object.prototype.hasOwnProperty.call(partial.models, "overrides");
     const shouldRefreshSessionTools =
       partial.sandbox !== undefined
       || partial.tools !== undefined
@@ -448,6 +453,21 @@ export class ConfigCoordinator {
           session.setThinkingLevel(
             models.resolveThinkingLevel(this.getThinkingLevel())
           );
+        }
+      }
+    }
+
+    if (modelOverridesChanged && !partial.models?.chat) {
+      const session = this._d.getSession();
+      const currentModel = session?.model || models.currentModel;
+      if (currentModel) {
+        const patchedModel = applyRuntimeModelOverrides(currentModel, agent?.config?.models?.overrides);
+        models.currentModel = patchedModel;
+        if (models.defaultModel?.id === patchedModel.id) {
+          models.defaultModel = patchedModel;
+        }
+        if (session) {
+          await session.setModel(patchedModel);
         }
       }
     }

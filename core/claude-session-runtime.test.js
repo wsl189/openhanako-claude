@@ -33,6 +33,37 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     expect(queryMock).not.toHaveBeenCalled();
   });
 
+  it("uses the runtime model context window for SDK context usage", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+    const iterator = (async function* stream() {})();
+    iterator.close = vi.fn();
+    iterator.getContextUsage = vi.fn(async () => ({
+      totalTokens: 100000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 50,
+    }));
+    queryMock.mockReturnValue(iterator);
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "s1",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-model-context.json",
+      options: {},
+    });
+    runtime.model = { id: "deepseek-v4-pro", contextWindow: 1048576 };
+    await runtime.start();
+
+    await expect(runtime.refreshContextUsage()).resolves.toEqual({
+      tokens: 100000,
+      contextWindow: 1048576,
+      percent: 10,
+    });
+    await runtime.close();
+  });
+
   it("forces includePartialMessages=false for SDK query", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();

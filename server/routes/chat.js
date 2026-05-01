@@ -371,6 +371,7 @@ export default async function chatRoute(app, { engine, hub }) {
   const DISCONNECT_ABORT_GRACE_MS = 15_000;
   const sessionState = new Map(); // sessionPath -> shared stream state
   const autoCompactionBeforeTokens = new Map(); // sessionPath -> tokens before auto-compaction
+  const contextUsagePushState = new Map(); // sessionPath -> { lastAt, lastSig, inFlight }
 
   function cancelDisconnectAbort() {
     if (disconnectAbortTimer) {
@@ -443,6 +444,43 @@ export default async function chatRoute(app, { engine, hub }) {
     if (!session) return null;
     await session.refreshContextUsage?.(fallbackUsage);
     return session.getContextUsage?.() || null;
+  }
+
+  function scheduleContextUsagePush(sessionPath, { force = false } = {}) {
+    if (!sessionPath) return;
+    const now = Date.now();
+    const state = contextUsagePushState.get(sessionPath) || {
+      lastAt: 0,
+      lastSig: "",
+      inFlight: false,
+    };
+    if (!force) {
+      if (state.inFlight) return;
+      if (now - state.lastAt < 1500) return;
+    }
+    state.lastAt = now;
+    state.inFlight = true;
+    contextUsagePushState.set(sessionPath, state);
+
+    refreshUsageBySessionPath(sessionPath)
+      .then((usage) => {
+        const hasNumbers = usage?.tokens != null && usage?.contextWindow != null;
+        if (!hasNumbers) return;
+        const sig = `${usage.tokens}|${usage.contextWindow}|${usage.percent ?? ""}`;
+        if (!force && sig === state.lastSig) return;
+        state.lastSig = sig;
+        broadcast({
+          type: "context_usage",
+          sessionPath,
+          tokens: usage.tokens,
+          contextWindow: usage.contextWindow,
+          percent: usage.percent ?? null,
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        state.inFlight = false;
+      });
   }
 
   async function getUsageWithRetry(sessionPath, beforeTokens = null) {
@@ -554,6 +592,7 @@ export default async function chatRoute(app, { engine, hub }) {
       preserveAbortingStreamId: true,
     });
     broadcast({ type: "status", isStreaming: false, sessionPath });
+    scheduleContextUsagePush(sessionPath, { force: true });
     return true;
   }
 
@@ -612,6 +651,7 @@ export default async function chatRoute(app, { engine, hub }) {
       });
     } else if (event.type === "assistant_snapshot") {
       if (!ss) return;
+      scheduleContextUsagePush(sessionPath);
       ss.lastAssistantContent = event.content || null;
       ss.structuredStream = true;
       // 某些 provider 只发 assistant_snapshot，不发 text_delta。
@@ -630,6 +670,7 @@ export default async function chatRoute(app, { engine, hub }) {
       }
     } else if (event.type === "text_delta" || event.type === "thinking_start" || event.type === "thinking_delta" || event.type === "thinking_end") {
       if (!ss) return;
+      scheduleContextUsagePush(sessionPath);
       if (ss.structuredStream) {
         if (event.type === "text_delta") {
           const chunk = stripSdkDiagnosticLines(typeof event.delta === "string" ? event.delta : "");
@@ -740,6 +781,7 @@ export default async function chatRoute(app, { engine, hub }) {
       }
     } else if (event.type === "tool_start") {
       if (!ss) return;
+      scheduleContextUsagePush(sessionPath, { force: true });
       ss.hasToolCall = true;
       if (ss.isThinking) {
         ss.isThinking = false;
@@ -755,6 +797,7 @@ export default async function chatRoute(app, { engine, hub }) {
       });
     } else if (event.type === "tool_end") {
       if (!ss) return;
+      scheduleContextUsagePush(sessionPath, { force: true });
       const details = event.details;
       const args = compactToolArgs(event.args);
       const resultText = extractToolResultText(event.content, details);
@@ -1047,6 +1090,7 @@ export default async function chatRoute(app, { engine, hub }) {
 
       emitStreamEvent(sessionPath, ss, { type: "turn_end" });
       finishSessionStream(ss);
+      scheduleContextUsagePush(sessionPath, { force: true });
       if (sessionPath) {
         engine.clearSessionPendingImages(sessionPath);
       }

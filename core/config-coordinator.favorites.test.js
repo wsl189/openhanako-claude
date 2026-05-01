@@ -65,3 +65,64 @@ describe("ConfigCoordinator favorites normalization", () => {
   });
 });
 
+describe("ConfigCoordinator model overrides", () => {
+  it("reapplies runtime model overrides to the active session", async () => {
+    const session = {
+      model: { id: "deepseek-v4-pro", provider: "deepseek", contextWindow: 200000, maxTokens: 8192 },
+      setModel: vi.fn(async () => {}),
+    };
+    const models = {
+      currentModel: session.model,
+      defaultModel: session.model,
+      availableModels: [session.model],
+    };
+    const agent = {
+      config: {
+        models: {
+          chat: "deepseek/deepseek-v4-pro",
+          overrides: {},
+        },
+      },
+      updateConfig: vi.fn((partial) => {
+        agent.config = {
+          ...agent.config,
+          ...partial,
+          models: {
+            ...(agent.config.models || {}),
+            ...(partial.models || {}),
+          },
+        };
+      }),
+    };
+    const coord = new ConfigCoordinator({
+      getPrefs: () => ({ getPreferences: () => ({}), savePreferences: vi.fn() }),
+      getAgent: () => agent,
+      getAgents: () => new Map(),
+      getModels: () => models,
+      getSkills: () => ({}),
+      getSession: () => session,
+      getHub: () => null,
+      emitEvent: () => {},
+      emitDevLog: () => {},
+      getCurrentModel: () => null,
+      refreshCurrentSessionTools: async () => ({ reloaded: false }),
+    });
+
+    await coord.updateConfig({
+      models: {
+        overrides: {
+          "deepseek-v4-pro": { context: 1048576, maxOutput: 32768 },
+        },
+      },
+    });
+
+    expect(session.setModel).toHaveBeenCalledWith({
+      id: "deepseek-v4-pro",
+      provider: "deepseek",
+      contextWindow: 1048576,
+      maxTokens: 32768,
+    });
+    expect(models.currentModel.contextWindow).toBe(1048576);
+    expect(models.defaultModel.maxTokens).toBe(32768);
+  });
+});

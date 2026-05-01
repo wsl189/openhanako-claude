@@ -164,7 +164,7 @@
       "xhigh": "最强推理"
     },
     "currentModel": "模型 {name}",
-    "contextWindow": "上下文 {windowK}k",
+    "contextWindow": "上下文 {window}",
     "tokensUsed": "已用 {tokensK}k ({pct}%)"
   },
   "slash": {

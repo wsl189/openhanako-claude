@@ -18,7 +18,6 @@ import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { usePushToTalk } from '../hooks/use-push-to-talk';
 import { SVG_ICONS } from '../utils/icons';
 import type { AttachedFile } from '../stores/input-slice';
-import { loadModels } from '../utils/ui-helpers';
 
 // ── Toast 通知 ──
 
@@ -1312,6 +1311,15 @@ function DocContextButton({ active, disabled, onToggle }: {
 
 // ── Context Usage Ring ──
 
+function formatTokenWindow(value: number | null): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return '0k';
+  if (value >= 1_000_000) {
+    const m = value / 1_000_000;
+    return `${Number.isInteger(m) ? m : +m.toFixed(1)}M`;
+  }
+  return `${Math.round(value / 1000)}k`;
+}
+
 function ContextRing() {
   const { t } = useI18n();
   const agentYuan = useStore(s => s.agentYuan);
@@ -1370,7 +1378,7 @@ function ContextRing() {
 
   // token 数量格式化
   const tokensK = safeTokens != null ? Math.round(safeTokens / 1000) : 0;
-  const windowK = safeContextWindow != null ? Math.round(safeContextWindow / 1000) : 0;
+  const windowLabel = formatTokenWindow(safeContextWindow);
   const pctText = Math.round(pct);
 
   return (
@@ -1404,7 +1412,7 @@ function ContextRing() {
           {currentModelName && (
             <div className="context-ring-tooltip-row">{t('input.currentModel', { name: currentModelName })}</div>
           )}
-          <div className="context-ring-tooltip-row">{t('input.contextWindow', { windowK })}</div>
+          <div className="context-ring-tooltip-row">{t('input.contextWindow', { window: windowLabel, windowK: windowLabel })}</div>
           <div className="context-ring-tooltip-row">{t('input.tokensUsed', { tokensK, pct: pctText })}</div>
         </div>
       )}
@@ -1431,6 +1439,7 @@ function ModelSelector({
   const setModels = useStore(s => s.setModels);
   const setCurrentModel = useStore(s => s.setCurrentModel);
   const isDraftSession = pendingNewSession && !currentSessionPath;
+  const canSelectModel = isDraftSession && !disabled;
   const currentModel = useStore(s => s.currentModel);
   const selectedModelId = useMemo(
     () => String(
@@ -1449,8 +1458,8 @@ function ModelSelector({
   }, [models, selectedModelId]);
 
   useEffect(() => {
-    if (disabled && open) setOpen(false);
-  }, [disabled, open]);
+    if (!canSelectModel && open) setOpen(false);
+  }, [canSelectModel, open]);
 
   // Close on outside click
   useEffect(() => {
@@ -1463,33 +1472,13 @@ function ModelSelector({
   }, [open]);
 
   const switchModel = useCallback(async (modelId: string) => {
-    if (disabled) return;
-    if (isDraftSession) {
-      setPendingSessionModel(modelId);
-      // 新建会话草稿阶段本地高亮选择；真正会话创建后由 ensureSession 落盘到该 session。
-      setModels(models.map((m) => ({ ...m, isCurrent: m.id === modelId })));
-      setCurrentModel(modelId);
-      setOpen(false);
-      return;
-    }
-    const previousModels = models.map((m) => ({ ...m }));
-    // 先做本地乐观更新，避免 UI 卡在 unknown/旧模型。
+    if (!canSelectModel) return;
+    setPendingSessionModel(modelId);
+    // 新建会话草稿阶段本地高亮选择；真正会话创建后由 ensureSession 落盘到该 session。
     setModels(models.map((m) => ({ ...m, isCurrent: m.id === modelId })));
     setCurrentModel(modelId);
-    try {
-      await hanaFetch('/api/models/set', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelId }),
-      });
-      await loadModels(null);
-    } catch (err: any) {
-      setModels(previousModels);
-      console.error('[model] switch failed:', err);
-      showToast(extractFetchErrorMessage(err, t('model.switchFailed')), 'error');
-    }
     setOpen(false);
-  }, [disabled, isDraftSession, setPendingSessionModel, setModels, setCurrentModel, models, t]);
+  }, [canSelectModel, setPendingSessionModel, setModels, setCurrentModel, models]);
 
   // 按 provider 分组
   const grouped = useMemo(() => {
@@ -1512,18 +1501,18 @@ function ModelSelector({
   const hasMultipleProviders = groupKeys.length > 1 || (groupKeys.length === 1 && groupKeys[0] !== '');
 
   return (
-    <div className={'model-selector' + (open ? ' open' : '')} ref={ref}>
+    <div className={'model-selector' + (open ? ' open' : '') + (!canSelectModel ? ' locked' : '')} ref={ref}>
       <button
         className="model-pill"
-        disabled={disabled}
+        disabled={!canSelectModel}
         onClick={(e) => {
           e.stopPropagation();
-          if (disabled) return;
+          if (!canSelectModel) return;
           setOpen(!open);
         }}
       >
         <span>{current?.name || t('model.unknown') || '...'}</span>
-        <span className="model-arrow">▾</span>
+        {canSelectModel && <span className="model-arrow">▾</span>}
       </button>
       {open && (
         <div className="model-dropdown">
