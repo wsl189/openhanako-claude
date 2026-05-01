@@ -87,7 +87,13 @@ const THINK_TO_INTERMEDIATE_TEXT_REVEAL_PAUSE_MS = 560;
 const TOOL_TO_INTERMEDIATE_TEXT_REVEAL_PAUSE_MS = 460;
 const THINK_TO_FINAL_REPLY_REVEAL_PAUSE_MS = 820;
 const TOOL_TO_FINAL_REPLY_REVEAL_PAUSE_MS = 680;
+const RUNNING_TOOL_REVEAL_DELAY_MS = 64;
+const THINK_TO_RUNNING_TOOL_REVEAL_PAUSE_MS = 260;
 const FRESH_CHAIN_REVEAL_WINDOW_MS = 20_000;
+
+function hasRunningTool(block?: ContentBlock): boolean {
+  return block?.type === 'tool_group' && block.tools.some((tool) => !tool.done);
+}
 
 function getBlockRevealDelayMs(params: {
   prevBlock?: ContentBlock;
@@ -98,6 +104,12 @@ function getBlockRevealDelayMs(params: {
   // 运行中的 thinking 块优先尽快出现，先给用户“思考中”状态反馈。
   if (nextBlock?.type === 'thinking' && nextBlock.sealed === false) {
     return 24;
+  }
+  // 运行中的工具必须尽快露出，否则短工具会在展示前就完成，只剩“完成”态。
+  if (hasRunningTool(nextBlock)) {
+    return prevBlock?.type === 'thinking'
+      ? THINK_TO_RUNNING_TOOL_REVEAL_PAUSE_MS
+      : RUNNING_TOOL_REVEAL_DELAY_MS;
   }
 
   let delay = BLOCK_REVEAL_BASE_DELAY_MS + Math.min(4, Math.max(0, remaining)) * 24;
@@ -451,7 +463,6 @@ export const AssistantMessage = memo(function AssistantMessage({ message, showAv
                 <MarkdownContent
                   html={finalTextHtml || block.html}
                   className="md-content"
-                  animateNewText={isStreaming}
                 />
                 <button
                   className={`msg-copy-btn${copied ? ' copied' : ''}`}
@@ -508,7 +519,7 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, yuan
     case 'tool_group':
       return <ToolGroupBlock tools={block.tools} agentName={agentName} dimmed={!!dimmed} animate={!!animate} />;
     case 'text':
-      return <MarkdownContent html={block.html} animateNewText={!!animate} />;
+      return <MarkdownContent html={block.html} />;
     case 'xing':
       return <XingCard title={block.title} content={block.content} sealed={block.sealed} agentName={agentName} />;
     case 'file_output':

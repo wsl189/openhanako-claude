@@ -355,7 +355,7 @@
   "tool": {
     "_line": {
       "running": "Running",
-      "done": "Completed",
+      "done": "Done",
       "failed": "Failed"
     },
     "web_search": {

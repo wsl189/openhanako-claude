@@ -82,9 +82,13 @@ export function parseUserAttachments(content: string): ParsedAttachments {
 
 // ── 工具详情提取 ──
 
+const TOOL_DETAIL_PATH_MAX = 72;
+const TOOL_DETAIL_COMMAND_MAX = 120;
+const TOOL_DETAIL_TEXT_MAX = 96;
+
 export function truncatePath(p: string): string {
-  if (!p || p.length <= 35) return p;
-  return '…' + p.slice(-34);
+  if (!p || p.length <= TOOL_DETAIL_PATH_MAX) return p;
+  return '…' + p.slice(-(TOOL_DETAIL_PATH_MAX - 1));
 }
 
 export function extractHostname(u: string): string {
@@ -113,31 +117,42 @@ function firstArrayField(value: unknown, field: string): string {
   return '';
 }
 
+function summarizeStringArray(value: unknown): string {
+  if (!Array.isArray(value)) return '';
+  const items = value
+    .map((item) => asText(item))
+    .filter(Boolean)
+    .slice(0, 3);
+  if (items.length === 0) return '';
+  const suffix = value.length > items.length ? ` +${value.length - items.length}` : '';
+  return `${items.join(', ')}${suffix}`;
+}
+
 function extractStructuredDetail(args: Record<string, unknown>): string {
   const searchQ = firstArrayField(args.search_query, 'q');
-  if (searchQ) return truncateHead(searchQ, 40);
+  if (searchQ) return truncateHead(searchQ, TOOL_DETAIL_TEXT_MAX);
 
   const imageQ = firstArrayField(args.image_query, 'q');
-  if (imageQ) return truncateHead(imageQ, 40);
+  if (imageQ) return truncateHead(imageQ, TOOL_DETAIL_TEXT_MAX);
 
   const weatherLocation = firstArrayField(args.weather, 'location');
-  if (weatherLocation) return truncateHead(weatherLocation, 40);
+  if (weatherLocation) return truncateHead(weatherLocation, TOOL_DETAIL_TEXT_MAX);
 
   const financeTicker = firstArrayField(args.finance, 'ticker');
-  if (financeTicker) return truncateHead(financeTicker, 40);
+  if (financeTicker) return truncateHead(financeTicker, TOOL_DETAIL_TEXT_MAX);
 
   const sportsTeam = firstArrayField(args.sports, 'team');
-  if (sportsTeam) return truncateHead(sportsTeam, 40);
+  if (sportsTeam) return truncateHead(sportsTeam, TOOL_DETAIL_TEXT_MAX);
 
   const openRef = firstArrayField(args.open, 'ref_id');
-  if (openRef) return truncateHead(openRef, 40);
+  if (openRef) return truncateHead(openRef, TOOL_DETAIL_TEXT_MAX);
 
   const findPattern = firstArrayField(args.find, 'pattern');
-  if (findPattern) return truncateHead(findPattern, 40);
+  if (findPattern) return truncateHead(findPattern, TOOL_DETAIL_TEXT_MAX);
 
   const clickRef = firstArrayField(args.click, 'ref_id');
   const clickId = firstArrayField(args.click, 'id');
-  if (clickRef || clickId) return truncateHead([clickRef, clickId].filter(Boolean).join(' #'), 40);
+  if (clickRef || clickId) return truncateHead([clickRef, clickId].filter(Boolean).join(' #'), TOOL_DETAIL_TEXT_MAX);
 
   return '';
 }
@@ -150,13 +165,13 @@ function extractGenericDetail(args: Record<string, unknown>): string {
   const skillLike = scalar('skill')
     || scalar('skill_name')
     || scalar('skillName');
-  if (skillLike) return truncateHead(skillLike, 40);
+  if (skillLike) return truncateHead(skillLike, TOOL_DETAIL_TEXT_MAX);
 
   const skillPathLike = scalar('skill_path') || scalar('skillPath');
   if (skillPathLike) {
     const cleaned = skillPathLike.replace(/\\/g, '/').replace(/\/+$/, '');
     const lastSeg = cleaned.split('/').filter(Boolean).pop() || cleaned;
-    if (lastSeg) return truncateHead(lastSeg, 40);
+    if (lastSeg) return truncateHead(lastSeg, TOOL_DETAIL_TEXT_MAX);
   }
 
   const githubUrlLike = scalar('github_url') || scalar('githubUrl');
@@ -164,10 +179,10 @@ function extractGenericDetail(args: Record<string, unknown>): string {
     try {
       const u = new URL(githubUrlLike);
       const segs = u.pathname.split('/').filter(Boolean);
-      if (segs.length >= 2) return truncateHead(`${segs[0]}/${segs[1].replace(/\.git$/i, '')}`, 40);
-      if (segs.length === 1) return truncateHead(segs[0].replace(/\.git$/i, ''), 40);
+      if (segs.length >= 2) return truncateHead(`${segs[0]}/${segs[1].replace(/\.git$/i, '')}`, TOOL_DETAIL_TEXT_MAX);
+      if (segs.length === 1) return truncateHead(segs[0].replace(/\.git$/i, ''), TOOL_DETAIL_TEXT_MAX);
     } catch {
-      return truncateHead(githubUrlLike, 40);
+      return truncateHead(githubUrlLike, TOOL_DETAIL_TEXT_MAX);
     }
   }
 
@@ -175,25 +190,47 @@ function extractGenericDetail(args: Record<string, unknown>): string {
   if (pathLike) return truncatePath(pathLike);
 
   const cmdLike = scalar('cmd') || scalar('command');
-  if (cmdLike) return truncateHead(cmdLike, 48);
+  if (cmdLike) return truncateHead(cmdLike, TOOL_DETAIL_COMMAND_MAX);
 
   const taskLike = scalar('task') || scalar('prompt');
-  if (taskLike) return truncateHead(taskLike, 48);
+  if (taskLike) return truncateHead(taskLike, TOOL_DETAIL_TEXT_MAX);
 
   const queryLike = scalar('query') || scalar('q') || scalar('pattern');
-  if (queryLike) return truncateHead(queryLike, 40);
+  if (queryLike) return truncateHead(queryLike, TOOL_DETAIL_TEXT_MAX);
 
   const urlLike = scalar('url');
-  if (urlLike) return truncateHead(extractHostname(urlLike), 40);
+  if (urlLike) return truncateHead(extractHostname(urlLike), TOOL_DETAIL_TEXT_MAX);
+
+  const channelLike = scalar('channel') || scalar('channel_id') || scalar('channelId');
+  if (channelLike) return truncateHead(channelLike, TOOL_DETAIL_TEXT_MAX);
+
+  const agentLike = scalar('agent')
+    || scalar('to')
+    || scalar('target_agent')
+    || scalar('targetAgent')
+    || summarizeStringArray(args.agents);
+  if (agentLike) return truncateHead(agentLike, TOOL_DETAIL_TEXT_MAX);
+
+  const titleLike = scalar('title') || scalar('label') || scalar('name');
+  if (titleLike) return truncateHead(titleLike, TOOL_DETAIL_TEXT_MAX);
+
+  const idLike = scalar('id') || scalar('job_id') || scalar('jobId') || scalar('shortcut_id') || scalar('shortcutId');
+  if (idLike) return truncateHead(idLike, TOOL_DETAIL_TEXT_MAX);
+
+  const keyLike = scalar('key') || scalar('settingKey');
+  if (keyLike) return truncateHead(keyLike, TOOL_DETAIL_TEXT_MAX);
 
   const targetLike = scalar('target') || scalar('ref_id');
-  if (targetLike) return truncateHead(targetLike, 40);
+  if (targetLike) return truncateHead(targetLike, TOOL_DETAIL_TEXT_MAX);
 
   const locationLike = scalar('location') || scalar('ticker');
-  if (locationLike) return truncateHead(locationLike, 40);
+  if (locationLike) return truncateHead(locationLike, TOOL_DETAIL_TEXT_MAX);
 
-  const actionLike = scalar('action');
-  if (actionLike) return truncateHead(actionLike, 40);
+  const textLike = scalar('message') || scalar('body') || scalar('content') || scalar('text') || scalar('value');
+  if (textLike) return truncateHead(textLike, TOOL_DETAIL_TEXT_MAX);
+
+  const actionLike = scalar('action') || scalar('mode');
+  if (actionLike) return truncateHead(actionLike, TOOL_DETAIL_TEXT_MAX);
 
   return '';
 }
@@ -230,21 +267,21 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
     }
     case 'bash':
     case 'exec_command':
-      return truncateHead(((args.command || args.cmd || '') as string), 40);
+      return truncateHead(((args.command || args.cmd || '') as string), TOOL_DETAIL_COMMAND_MAX);
     case 'glob':
     case 'find':
       return (args.pattern || '') as string;
     case 'grep':
-      return truncateHead((args.pattern || '') as string, 30) +
+      return truncateHead((args.pattern || '') as string, TOOL_DETAIL_TEXT_MAX) +
         (args.path ? ` in ${truncatePath(args.path as string)}` : '');
     case 'ls':
       return truncatePath((args.path || '') as string);
     case 'browser':
-      return extractHostname((args.url || '') as string) || truncateHead((args.action || '') as string, 40);
+      return extractHostname((args.url || '') as string) || truncateHead((args.action || '') as string, TOOL_DETAIL_TEXT_MAX);
     case 'search_memory':
-      return truncateHead((args.query || '') as string, 40);
+      return truncateHead((args.query || '') as string, TOOL_DETAIL_TEXT_MAX);
     case 'generate_images':
-      return truncateHead((args.prompt || '') as string, 40);
+      return truncateHead((args.prompt || '') as string, TOOL_DETAIL_TEXT_MAX);
     default:
       return extractGenericDetail(args);
   }

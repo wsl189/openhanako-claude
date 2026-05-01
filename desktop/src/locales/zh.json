@@ -354,9 +354,9 @@
   },
   "tool": {
     "_line": {
-      "running": "执行",
-      "done": "已执行",
-      "failed": "执行失败"
+      "running": "运行",
+      "done": "完成",
+      "failed": "失败"
     },
     "web_search": {
       "running": "🌐 正在搜索网络",

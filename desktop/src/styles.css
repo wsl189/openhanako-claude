@@ -2272,29 +2272,6 @@ html[data-platform="linux"] .tb-toggle-right {
     padding-right: 2rem;
 }
 
-.stream-text-tail {
-    animation: stream-text-tail-appear 0.36s ease-out;
-    will-change: opacity, filter;
-}
-
-@keyframes stream-text-tail-appear {
-    from {
-        opacity: 0.18;
-        filter: blur(1.4px);
-    }
-    to {
-        opacity: 1;
-        filter: blur(0);
-    }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .stream-text-tail {
-        animation: none;
-        filter: none;
-    }
-}
-
 .assistant-final-reply .msg-copy-btn {
     top: 0;
     right: 0;
@@ -4805,7 +4782,11 @@ html[data-platform="darwin"] .sv-topbar-title {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
     font-size: 0.72rem;
     color: color-mix(in oklab, var(--text-muted) 84%, var(--text) 16%);
 }
@@ -5156,33 +5137,6 @@ html[data-platform="darwin"] .sv-topbar-title {
     transform: translateY(10px);
     animation: thinking-block-enter 0.58s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
-
-.thinking-block-summary {
-    display: flex;
-    align-items: center;
-    flex-wrap: nowrap;
-    gap: 0.42rem;
-    padding: 0.05rem 0;
-    color: var(--text-muted);
-    user-select: none;
-}
-
-.thinking-block-summary .thinking-dots {
-    display: inline-flex;
-    gap: 2px;
-    margin-left: 1px;
-}
-
-.thinking-block-summary .thinking-dots span {
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background: currentColor;
-    animation: dot-pulse 1.2s infinite;
-}
-
-.thinking-block-summary .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
-.thinking-block-summary .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
 
 .thinking-block-title {
     font-size: 0.74rem;

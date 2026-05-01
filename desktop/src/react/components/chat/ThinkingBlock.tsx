@@ -13,7 +13,6 @@ interface Props {
 }
 
 const THINKING_COLLAPSE_LINE_THRESHOLD = 4;
-const THINKING_TAIL_ANIMATION_MS = 360;
 
 export const ThinkingBlock = memo(function ThinkingBlock({
   content,
@@ -25,47 +24,9 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   void runningMs;
   const [expanded, setExpanded] = useState(false);
   const [shouldCollapse, setShouldCollapse] = useState(false);
-  const [tailStart, setTailStart] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const previousContentRef = useRef<string | null>(null);
-  const tailTimerRef = useRef<number | null>(null);
   const bodyContent = content || '';
-  const shouldAnimateTail = (!sealed || streamLike) && !!bodyContent;
-
-  useEffect(() => {
-    const previous = previousContentRef.current;
-    previousContentRef.current = bodyContent;
-
-    if (tailTimerRef.current != null) {
-      window.clearTimeout(tailTimerRef.current);
-      tailTimerRef.current = null;
-    }
-
-    if (!shouldAnimateTail || !bodyContent) {
-      setTailStart(null);
-      return;
-    }
-    if (previous == null) {
-      setTailStart(0);
-    } else if (bodyContent.length > previous.length && bodyContent.startsWith(previous)) {
-      setTailStart(previous.length);
-    } else {
-      setTailStart(null);
-      return;
-    }
-
-    tailTimerRef.current = window.setTimeout(() => {
-      setTailStart(null);
-      tailTimerRef.current = null;
-    }, THINKING_TAIL_ANIMATION_MS);
-
-    return () => {
-      if (tailTimerRef.current != null) {
-        window.clearTimeout(tailTimerRef.current);
-        tailTimerRef.current = null;
-      }
-    };
-  }, [bodyContent, shouldAnimateTail]);
+  void streamLike;
 
   useEffect(() => {
     const el = contentRef.current;
@@ -77,21 +38,13 @@ export const ThinkingBlock = memo(function ThinkingBlock({
 
   return (
     <div className={`thinking-block proma-like${dimmed ? ' dimmed' : ''}${sealed ? ' sealed' : ' running'}`}>
-      <div className="thinking-block-summary">
-        {!sealed && <span className="thinking-dots"><span /><span /><span /></span>}
-      </div>
       {!!bodyContent && (
         <div className={`thinking-block-panel${shouldCollapse && !expanded ? ' collapsed' : ''}`}>
           <div
             ref={contentRef}
             className={`thinking-block-body${shouldCollapse && !expanded ? ' clamp' : ''}`}
           >
-            {tailStart != null && tailStart < bodyContent.length ? (
-              <>
-                {bodyContent.slice(0, tailStart)}
-                <span className="stream-text-tail">{bodyContent.slice(tailStart)}</span>
-              </>
-            ) : bodyContent}
+            {bodyContent}
           </div>
           {shouldCollapse && !!content && (
             <button
