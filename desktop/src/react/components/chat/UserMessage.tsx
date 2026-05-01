@@ -19,10 +19,23 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar }: Pr
   const t = window.t ?? ((p: string) => p);
   const userName = useStore(s => s.userName) || t('common.me');
   const [avatarFailed, setAvatarFailed] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setAvatarFailed(false);
   }, [userAvatarUrl]);
+
+  const handleCopy = useCallback(() => {
+    if (!message.textHtml) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = message.textHtml;
+    const text = tmp.innerText.trim();
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  }, [message.textHtml]);
 
   return (
     <div className="message-group user">
@@ -52,6 +65,26 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar }: Pr
       )}
       <div className="message user">
         {message.textHtml && <MarkdownContent html={message.textHtml} className="md-content user-msg-text" />}
+        {message.textHtml && (
+          <button
+            className={`user-msg-copy-btn${copied ? ' copied' : ''}`}
+            onClick={handleCopy}
+            title={copied ? t('common.copied') : t('common.copyText')}
+            aria-label={copied ? t('common.copied') : t('common.copyText')}
+            type="button"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              {copied
+                ? <polyline points="20 6 9 17 4 12" />
+                : (
+                  <>
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </>
+                )}
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );

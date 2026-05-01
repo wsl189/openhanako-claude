@@ -111,6 +111,20 @@ describe("buildSessionMessagesFromTranscriptEntries", () => {
         },
       },
       {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "[Request interrupted by user for tool use]" }],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "[Request interrupted by user]" }],
+        },
+      },
+      {
         type: "assistant",
         message: {
           role: "assistant",

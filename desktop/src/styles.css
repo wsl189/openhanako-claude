@@ -2098,10 +2098,78 @@ html[data-platform="linux"] .tb-toggle-right {
     font-family: var(--font-serif);
     font-size: 0.95rem;
     word-break: break-word;
+    position: relative;
+}
+
+.message.user::before {
+    content: "";
+    position: absolute;
+    left: -34px;
+    top: -6px;
+    bottom: -6px;
+    width: 34px;
 }
 
 .message.user .user-text p:last-child {
     margin-bottom: 0;
+}
+
+.user-msg-copy-btn,
+.assistant-final-reply .msg-copy-btn {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--overlay-medium);
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    padding: 0;
+    line-height: 1;
+    transform: translateY(-50%);
+    transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+    z-index: 2;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.user-msg-copy-btn {
+    left: -30px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.message.user:hover .user-msg-copy-btn,
+.message.user:focus-within .user-msg-copy-btn {
+    opacity: 0.9;
+    pointer-events: auto;
+}
+
+.user-msg-copy-btn:hover,
+.assistant-final-reply .msg-copy-btn:hover {
+    opacity: 1 !important;
+    color: var(--text);
+    border-color: var(--accent);
+}
+
+.user-msg-copy-btn:hover {
+    transform: translateY(calc(-50% - 1px));
+}
+
+.assistant-final-reply .msg-copy-btn:hover {
+    transform: translateY(-1px);
+}
+
+.assistant-final-reply .msg-copy-btn.copied,
+.user-msg-copy-btn.copied {
+    opacity: 1 !important;
+    pointer-events: auto;
+    color: var(--accent);
+    border-color: var(--accent);
 }
 
 /* 用户附件网格 */
@@ -2245,33 +2313,15 @@ html[data-platform="linux"] .tb-toggle-right {
 }
 
 .assistant-final-reply .msg-copy-btn {
-    position: absolute;
-    top: 3px;
-    right: 3px;
-    width: 24px;
-    height: 24px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--hana-bg);
-    border: 1px solid var(--hana-border);
-    border-radius: 4px;
-    padding: 0;
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.15s;
-    color: var(--hana-text-muted);
-    line-height: 1;
+    top: 0;
+    right: 0;
     z-index: 6;
 }
 .assistant-final-reply:hover .msg-copy-btn,
 .assistant-final-reply:focus-within .msg-copy-btn {
-    opacity: 0.6;
+    opacity: 0.9;
     pointer-events: auto;
 }
-.msg-copy-btn:hover { opacity: 1 !important; color: var(--hana-text); }
-.msg-copy-btn.copied { opacity: 1 !important; color: var(--hana-accent, #4a9); }
 
 /* ========================================
    Markdown 渲染内容

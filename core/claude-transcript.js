@@ -54,6 +54,7 @@ const INTERNAL_USER_TEXT_PATTERNS = [
   /^<local-command-caveat>/i,
   /^<command-name>\/compact<\/command-name>/i,
   /^<local-command-stdout>Compacted\b/i,
+  /^\[Request interrupted by user(?: for tool use)?\]$/i,
 ];
 
 function extractPlainTextFromBlocks(blocks = []) {
