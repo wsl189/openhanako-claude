@@ -75,13 +75,10 @@ function findToolLocation(
     toolCallId?: string | null;
     name?: string | null;
     onlyPending?: boolean;
-    allowNameFallback?: boolean;
   },
 ): { blockIndex: number; toolIndex: number } | null {
   const toolCallId = String(params.toolCallId || '').trim();
-  const toolName = String(params.name || '').trim();
   const onlyPending = params.onlyPending !== false;
-  const allowNameFallback = params.allowNameFallback !== false;
 
   if (toolCallId) {
     for (let i = blocks.length - 1; i >= 0; i -= 1) {
@@ -92,17 +89,6 @@ function findToolLocation(
       ));
       if (toolIndex >= 0) return { blockIndex: i, toolIndex };
     }
-  }
-
-  if (!allowNameFallback) return null;
-  if (!toolName) return null;
-  for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    const block = blocks[i];
-    if (block.type !== 'tool_group') continue;
-    const toolIndex = block.tools.findIndex((tool) => (
-      tool.name === toolName && (!onlyPending || !tool.done)
-    ));
-    if (toolIndex >= 0) return { blockIndex: i, toolIndex };
   }
 
   return null;
@@ -218,11 +204,11 @@ export function applyChatStreamLiveEvent(
   switch (msg.type) {
     case 'tool_start': {
       const toolCallId = String(msg.toolCallId || '').trim() || undefined;
+      if (!toolCallId) return blocks;
       const existing = findToolLocation(next, {
         toolCallId,
         name: msg.name,
         onlyPending: false,
-        allowNameFallback: !toolCallId,
       });
 
       if (existing) {

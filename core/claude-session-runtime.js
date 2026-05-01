@@ -279,6 +279,7 @@ export class ClaudeSessionRuntime {
     this._query = null;
     this._pumpPromise = null;
     this._pumpActive = false;
+    this._abortController = null;
     this._lastAssistantResponseId = null;
     this._activeCompactionTrigger = null;
     this._allowSessionNotFoundRetry = false;
@@ -353,6 +354,7 @@ export class ClaudeSessionRuntime {
       prompt: this._queue,
       options: {
         ...this.options,
+        abortController: (this._abortController = new AbortController()),
         ...(this.resumeSessionId ? { resume: this.resumeSessionId } : {}),
       },
     });
@@ -653,14 +655,19 @@ export class ClaudeSessionRuntime {
     const activeQuery = this._query;
     const activePump = this._pumpPromise;
     const activeQueue = this._queue;
+    const activeAbortController = this._abortController;
     // 立即切断旧流引用：后续 prompt 必须走新 query/new queue，
     // 不允许再把消息写进已被 abort 的旧队列。
     this._query = null;
     this._pumpPromise = null;
     this._pumpActive = false;
+    this._abortController = null;
     this._queue = new AsyncMessageQueue();
     try {
       activeQueue?.close?.();
+    } catch {}
+    try {
+      activeAbortController?.abort?.(abortError);
     } catch {}
     if (!activeQuery) {
       activePump?.catch(() => {});
@@ -669,10 +676,12 @@ export class ClaudeSessionRuntime {
     const hasInterrupt = typeof activeQuery.interrupt === "function";
     try {
       if (hasInterrupt) {
-        await activeQuery.interrupt();
+        Promise.resolve().then(() => activeQuery.interrupt()).catch((error) => {
+          if (!isAbortError(error)) {
+            this._emit({ type: "runtime_error", error });
+          }
+        });
       }
-    } catch (error) {
-      if (!isAbortError(error)) throw error;
     } finally {
       try {
         activeQuery?.close?.();
@@ -684,6 +693,8 @@ export class ClaudeSessionRuntime {
 
   async close() {
     this._queue.close();
+    this._abortController?.abort?.(new Error("Claude session closed"));
+    this._abortController = null;
     this._query?.close?.();
     this._pendingCompaction?.reject?.(new Error("Claude session closed"));
     this._pendingCompaction = null;

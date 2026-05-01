@@ -721,6 +721,62 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     await runtime.close();
   });
 
+  it("closes the active query even when interrupt never resolves", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    let enteredTurnResolve;
+    const enteredTurn = new Promise((resolve) => {
+      enteredTurnResolve = resolve;
+    });
+
+    let unblockStream = null;
+    let closed = false;
+    const close = vi.fn(() => {
+      closed = true;
+      unblockStream?.();
+    });
+    const interrupt = vi.fn(() => new Promise(() => {}));
+
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          enteredTurnResolve?.();
+          await new Promise((resolve) => {
+            unblockStream = resolve;
+          });
+          if (closed) {
+            throw new Error("Query closed before response received");
+          }
+        }
+      }
+      const iterator = stream();
+      iterator.close = close;
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.interrupt = interrupt;
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "abort-hanging-interrupt-session",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-abort-hanging-interrupt.json",
+      options: {},
+    });
+
+    const pending = runtime.prompt("stop even if interrupt hangs");
+    await enteredTurn;
+
+    await expect(runtime.abort()).resolves.toBe(true);
+    await expect(pending).rejects.toThrow("Request was aborted.");
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0]?.[0]?.options?.abortController?.signal?.aborted).toBe(true);
+
+    await runtime.close();
+  });
+
   it("ignores late messages from an aborted query", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();

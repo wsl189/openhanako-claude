@@ -52,6 +52,66 @@ describe('applyChatStreamLiveEvent', () => {
     });
   });
 
+  it('does not let an id-less same-name tool_start overwrite a pending tool', () => {
+    let blocks: ContentBlock[] = [];
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'Bash',
+      toolCallId: 'tool-1',
+      args: { command: 'search first query' },
+    });
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'Bash',
+      args: { command: 'search second query' },
+    });
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'Bash',
+      toolCallId: 'tool-2',
+      args: { command: 'search second query' },
+    });
+
+    const group = blocks[0] as Extract<ContentBlock, { type: 'tool_group' }>;
+    expect(group.tools).toHaveLength(2);
+    expect(group.tools[0]).toMatchObject({
+      toolUseId: 'tool-1',
+      args: { command: 'search first query' },
+      done: false,
+    });
+    expect(group.tools[1]).toMatchObject({
+      toolUseId: 'tool-2',
+      args: { command: 'search second query' },
+      done: false,
+    });
+  });
+
+  it('does not complete a same-name pending tool without toolCallId', () => {
+    let blocks: ContentBlock[] = [];
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'Bash',
+      toolCallId: 'tool-1',
+      args: { command: 'search first query' },
+    });
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'Bash',
+      toolCallId: 'tool-2',
+      args: { command: 'search second query' },
+    });
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_end',
+      name: 'Bash',
+      success: true,
+    });
+
+    const group = blocks[0] as Extract<ContentBlock, { type: 'tool_group' }>;
+    expect(group.tools).toHaveLength(2);
+    expect(group.tools[0]).toMatchObject({ toolUseId: 'tool-1', done: false });
+    expect(group.tools[1]).toMatchObject({ toolUseId: 'tool-2', done: false });
+  });
+
   it('stores tool result text and details on tool_end', () => {
     let blocks: ContentBlock[] = [];
     blocks = applyChatStreamLiveEvent(blocks, {

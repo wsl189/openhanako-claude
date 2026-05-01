@@ -861,8 +861,12 @@ const ToolIndicator = memo(function ToolIndicator({
   const t = (window as any).t;
   const doneText = stripLeadingEmoji(t?.('tool._line.done') || '完成');
   const failedText = stripLeadingEmoji(t?.('tool._line.failed') || '失败');
+  const inputText = useMemo(() => getInputText(tool.name, tool.args), [tool.name, tool.args]);
+  const structuredInput = useMemo(() => buildStructuredToolInput(tool.name, tool.args), [tool.name, tool.args]);
   const outputText = useMemo(() => getOutputText(tool), [tool.resultText, tool.details]);
-  const canExpand = !!outputText;
+  const detailsText = useMemo(() => getDetailsText(tool), [tool.details]);
+  const hasStructuredInput = structuredInput.kind !== 'none';
+  const canExpand = hasStructuredInput || !!inputText || !!outputText || !!detailsText;
 
   // 如果 args 里有 tag 类型信息（如 agent 名）
   const tag = tool.args?.agentId as string | undefined;
@@ -905,7 +909,26 @@ const ToolIndicator = memo(function ToolIndicator({
         >
           <div className="tool-panel-collapse-inner">
             <div className="tool-panel">
-              <pre className="tool-panel-pre">{outputText}</pre>
+              {(hasStructuredInput || inputText) && (
+                <div className="tool-panel-row">
+                  <div className="tool-panel-label">Input</div>
+                  {hasStructuredInput
+                    ? <StructuredInputPanel input={structuredInput} />
+                    : <pre className="tool-panel-pre">{inputText}</pre>}
+                </div>
+              )}
+              {outputText && (
+                <div className="tool-panel-row">
+                  <div className="tool-panel-label">Output</div>
+                  <pre className="tool-panel-pre">{outputText}</pre>
+                </div>
+              )}
+              {detailsText && (
+                <div className="tool-panel-row">
+                  <div className="tool-panel-label">Details</div>
+                  <pre className="tool-panel-pre">{detailsText}</pre>
+                </div>
+              )}
             </div>
           </div>
         </div>
