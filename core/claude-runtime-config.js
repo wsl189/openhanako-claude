@@ -98,6 +98,21 @@ const CLAUDE_CURLRC = [
   'noproxy = "localhost,127.0.0.1,::1"',
   "",
 ].join("\n");
+const IMAGE_FILE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".svg",
+  ".ico",
+  ".tif",
+  ".tiff",
+  ".heic",
+  ".heif",
+  ".avif",
+]);
 
 function uniq(list = []) {
   return [...new Set((list || []).filter(Boolean))];
@@ -546,6 +561,18 @@ function resolveToolTargetPath(toolName, input = {}, cwd = process.cwd()) {
   return path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(cwd, rawPath);
 }
 
+function resolveReadTargetPath(input = {}, cwd = process.cwd()) {
+  const payload = (input && typeof input === "object") ? input : {};
+  const rawPath = String(payload.file_path || payload.path || "").trim();
+  if (!rawPath) return "";
+  return path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(cwd, rawPath);
+}
+
+function isImagePath(filePath = "") {
+  const ext = path.extname(String(filePath || "")).toLowerCase();
+  return IMAGE_FILE_EXTENSIONS.has(ext);
+}
+
 function isAgentProjectMemoryPath(targetPath, agentDir) {
   const base = normalizeAbsolutePath(agentDir);
   const target = normalizeAbsolutePath(targetPath);
@@ -753,6 +780,16 @@ function buildCanUseToolHandler(permissionStrategy, opts = {}) {
         behavior: "deny",
         message: `Tool "${String(toolName || "").trim()}" is not allowed by current session policy.`,
       };
+    }
+
+    if (toolName === "Read") {
+      const readTargetPath = resolveReadTargetPath(payload, cwd);
+      if (readTargetPath && isImagePath(readTargetPath)) {
+        return {
+          behavior: "deny",
+          message: `Tool "Read" denied for image file (${readTargetPath}). Use an available image-understanding tool instead of reading image bytes as text.`,
+        };
+      }
     }
 
     const targetPath = resolveToolTargetPath(toolName, payload, cwd);

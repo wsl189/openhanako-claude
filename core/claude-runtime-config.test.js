@@ -917,6 +917,29 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(deniedRead).toMatchObject({ behavior: "deny" });
   });
 
+  it("denies using Read on image files and suggests image understanding tools", async () => {
+    const config = createConfig({
+      workspace: "/tmp/workspace",
+    });
+
+    const deniedPng = await config.options.canUseTool("Read", {
+      file_path: "/tmp/workspace/screenshot.png",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-read-image-png",
+    });
+    expect(deniedPng).toMatchObject({ behavior: "deny" });
+    expect(String(deniedPng.message || "")).toContain("image-understanding tool");
+
+    const deniedJpeg = await config.options.canUseTool("Read", {
+      file_path: "/tmp/workspace/photo.jpeg",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-read-image-jpeg",
+    });
+    expect(deniedJpeg).toMatchObject({ behavior: "deny" });
+  });
+
   it("ignores legacy balanced mode and keeps outside path inspection allowed", async () => {
     const config = createConfig({
       workspace: "/tmp/workspace",
