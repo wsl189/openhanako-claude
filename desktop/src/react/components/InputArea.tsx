@@ -112,6 +112,7 @@ function InputAreaInner() {
 
   // Zustand state
   const isStreaming = useStore(s => s.isStreaming);
+  const streamingSessions = useStore(s => s.streamingSessions);
   const connected = useStore(s => s.connected);
   const pendingNewSession = useStore(s => s.pendingNewSession);
   const pendingSessionModel = useStore(s => s.pendingSessionModel);
@@ -298,6 +299,10 @@ function InputAreaInner() {
   );
   const activeInputPrompt = pendingInputPrompts[0] || null;
   const prevInputSessionKeyRef = useRef(inputSessionKey);
+  const currentSessionIsStreaming = currentSessionPath
+    ? streamingSessions.includes(currentSessionPath)
+    : isStreaming;
+  const inputIsStreaming = isStreaming || currentSessionIsStreaming;
 
   // Focus trigger from store
   const inputFocusTrigger = useStore(s => s.inputFocusTrigger);
@@ -375,7 +380,11 @@ function InputAreaInner() {
   const sendAsUser = useCallback(async (text: string, displayText?: string): Promise<boolean> => {
     const ws = getWebSocket();
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    if (useStore.getState().isStreaming) return false;
+    const live = useStore.getState();
+    const liveStreamingSessions = Array.isArray(live.streamingSessions) ? live.streamingSessions : [];
+    if (live.isStreaming || (live.currentSessionPath && liveStreamingSessions.includes(live.currentSessionPath))) {
+      return false;
+    }
     const draftModelIdBeforeEnsure = pendingNewSession ? resolveSelectedModelId() : '';
 
     if (pendingNewSession) {
@@ -480,7 +489,7 @@ function InputAreaInner() {
 
   // Can send?
   const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || docContextAttached;
-  const canSend = hasContent && connected && !isStreaming;
+  const canSend = hasContent && connected && !inputIsStreaming;
 
   // ── Auto resize ──
   useEffect(() => {
@@ -571,7 +580,7 @@ function InputAreaInner() {
     const safeAttachedFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path));
     const hasFiles = safeAttachedFiles.length > 0;
     if ((!text && !hasFiles && !docContextAttached) || !connected) return;
-    if (isStreaming) return; // streaming 时由 handleSteer 处理
+    if (inputIsStreaming) return; // streaming 时由 handleSteer 处理
     if (sending) return;
     setSending(true);
 
@@ -680,12 +689,12 @@ function InputAreaInner() {
     } finally {
       setSending(false);
     }
-  }, [inputText, attachedFiles, docContextAttached, connected, isStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, setDocContextAttached, slashMenuOpen, filteredCommands, slashSelected, beginOptimisticStreamingTurn, resolveSelectedModelId]);
+  }, [inputText, attachedFiles, docContextAttached, connected, inputIsStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, setDocContextAttached, slashMenuOpen, filteredCommands, slashSelected, beginOptimisticStreamingTurn, resolveSelectedModelId]);
 
   // ── Steer (插话) ──
   const handleSteer = useCallback(async () => {
     const text = inputText.trim();
-    if (!text || !isStreaming) return;
+    if (!text || !inputIsStreaming) return;
     const ws = getWebSocket();
     if (!ws) return;
 
@@ -701,14 +710,14 @@ function InputAreaInner() {
 
     setInputText('');
     ws.send(JSON.stringify({ type: 'steer', text, sessionPath: useStore.getState().currentSessionPath }));
-  }, [inputText, isStreaming]);
+  }, [inputText, inputIsStreaming]);
 
   // ── Stop generation ──
   const handleStop = useCallback(() => {
     const ws = getWebSocket();
-    if (!isStreaming || !ws) return;
+    if (!inputIsStreaming || !ws) return;
     ws.send(JSON.stringify({ type: 'abort', sessionPath: useStore.getState().currentSessionPath }));
-  }, [isStreaming]);
+  }, [inputIsStreaming]);
 
   // ── Key handler ──
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -740,13 +749,13 @@ function InputAreaInner() {
     }
     if (e.key === 'Enter' && !e.shiftKey && !isComposing.current) {
       e.preventDefault();
-      if (isStreaming && inputText.trim()) {
+      if (inputIsStreaming && inputText.trim()) {
         handleSteer();
       } else {
         handleSend();
       }
     }
-  }, [handleSend, handleSteer, isStreaming, inputText, slashMenuOpen, filteredCommands, slashSelected, handleVoiceKeyDown]);
+  }, [handleSend, handleSteer, inputIsStreaming, inputText, slashMenuOpen, filteredCommands, slashSelected, handleVoiceKeyDown]);
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     handleVoiceKeyUp(e);
@@ -754,7 +763,7 @@ function InputAreaInner() {
 
   return (
     <>
-      <TodoDisplay todos={sessionTodos} isStreaming={isStreaming} />
+      <TodoDisplay todos={sessionTodos} isStreaming={inputIsStreaming} />
 
       {attachedFiles.length > 0 && (
         <AttachedFilesBar
@@ -852,9 +861,9 @@ function InputAreaInner() {
               disabled={sending}
             />
             <SendButton
-              isStreaming={isStreaming}
+              isStreaming={inputIsStreaming}
               hasInput={!!inputText.trim()}
-              disabled={isStreaming ? false : !canSend}
+              disabled={inputIsStreaming ? false : !canSend}
               onSend={handleSend}
               onSteer={handleSteer}
               onStop={handleStop}

@@ -730,6 +730,100 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     await runtime.close();
   });
 
+  it("keeps the turn pending across a steer interruption result", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    let firstAssistantResolve;
+    const firstAssistantEmitted = new Promise((resolve) => {
+      firstAssistantResolve = resolve;
+    });
+    let steerCalledResolve;
+    const steerCalled = new Promise((resolve) => {
+      steerCalledResolve = resolve;
+    });
+    let intermediateResultResolve;
+    const intermediateResultSeen = new Promise((resolve) => {
+      intermediateResultResolve = resolve;
+    });
+
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        let index = 0;
+        for await (const input of prompt) {
+          index += 1;
+          if (index === 1) {
+            yield {
+              type: "assistant",
+              message: {
+                id: "before-steer",
+                content: [{ type: "text", text: "before steer" }],
+              },
+            };
+            firstAssistantResolve?.();
+            await steerCalled;
+            yield {
+              type: "result",
+              session_id: "steer-session",
+              is_error: false,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            };
+            intermediateResultResolve?.();
+            continue;
+          }
+
+          expect(input.message.content[0].text).toContain("interrupt me");
+          yield {
+            type: "assistant",
+            message: {
+              id: "after-steer",
+              content: [{ type: "text", text: "after steer" }],
+            },
+          };
+          yield {
+            type: "result",
+            session_id: "steer-session",
+            is_error: false,
+            usage: { input_tokens: 2, output_tokens: 2 },
+          };
+          return;
+        }
+      }
+      const iterator = stream();
+      iterator.close = vi.fn();
+      iterator.getContextUsage = vi.fn(async () => null);
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "steer-session",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-steer.json",
+      options: {},
+    });
+    const events = [];
+    runtime.subscribe((event) => events.push(event));
+
+    const pending = runtime.prompt("first prompt");
+    await firstAssistantEmitted;
+    expect(runtime.steer("interrupt me")).toBe(true);
+    steerCalledResolve?.();
+    await intermediateResultSeen;
+    expect(runtime.isStreaming).toBe(true);
+
+    const result = await pending;
+    expect(result?.type).toBe("result");
+    expect(runtime.isStreaming).toBe(false);
+    expect(events.filter((event) => event.type === "result")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "assistant").map((event) => event.message.id)).toEqual([
+      "before-steer",
+      "after-steer",
+    ]);
+
+    await runtime.close();
+  });
+
   it("keeps conversation resume id after abort so later prompts continue context", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();

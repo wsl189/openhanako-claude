@@ -256,6 +256,7 @@ export class ClaudeSessionRuntime {
     this._activeCompactionTrigger = null;
     this._allowSessionNotFoundRetry = false;
     this._abortRequested = false;
+    this._pendingSteerInterrupts = 0;
     this._lastContextUsageLogKey = "";
   }
 
@@ -320,6 +321,7 @@ export class ClaudeSessionRuntime {
       this._pumpPromise = null;
     }
     this._abortRequested = false;
+    this._pendingSteerInterrupts = 0;
     this._query = query({
       prompt: this._queue,
       options: {
@@ -461,6 +463,13 @@ export class ClaudeSessionRuntime {
             continue;
           }
           const manualCompactionResult = Boolean(this._pendingCompaction);
+          const steerInterruptedTurn = this._pendingSteerInterrupts > 0 && !!this._pendingTurn;
+          if (steerInterruptedTurn) {
+            this._pendingSteerInterrupts -= 1;
+            this._lastUsage = message.usage || this._lastUsage;
+            this.refreshContextUsage(message.usage).catch(() => {});
+            continue;
+          }
           this._lastUsage = message.usage || null;
           this.isStreaming = false;
           if (this._activeCompactionTrigger) {
@@ -529,6 +538,7 @@ export class ClaudeSessionRuntime {
       }
       this._pumpActive = false;
       this._abortRequested = false;
+      this._pendingSteerInterrupts = 0;
     }
   }
 
@@ -576,6 +586,7 @@ export class ClaudeSessionRuntime {
 
   steer(text) {
     if (!this.isStreaming) return false;
+    this._pendingSteerInterrupts += 1;
     this._queue.push({
       type: "user",
       message: {
@@ -598,6 +609,7 @@ export class ClaudeSessionRuntime {
     this._pendingTurn = null;
     turn?.reject(abortError);
     this.isStreaming = false;
+    this._pendingSteerInterrupts = 0;
 
     if (this._activeCompactionTrigger) {
       this._emit({ type: "compaction_end", trigger: this._activeCompactionTrigger });

@@ -86,6 +86,30 @@ export function requestStreamResume(sessionPath?: string, opts: any = {}): void 
   }));
 }
 
+function syncStreamingStatusForSession(sessionPath: string | null | undefined, isStreaming: boolean): void {
+  if (!sessionPath) return;
+  useStore.setState((prev: any) => {
+    const list: string[] = Array.isArray(prev.streamingSessions) ? prev.streamingSessions : [];
+    const sinceMap: Record<string, number> = (prev.streamingSinceByPath || {}) as Record<string, number>;
+
+    if (isStreaming) {
+      return {
+        streamingSessions: list.includes(sessionPath) ? list : [...list, sessionPath],
+        streamingSinceByPath: {
+          ...sinceMap,
+          [sessionPath]: sinceMap[sessionPath] ?? Date.now(),
+        },
+      };
+    }
+
+    const { [sessionPath]: _removed, ...restSince } = sinceMap;
+    return {
+      streamingSessions: list.filter((path: string) => path !== sessionPath),
+      streamingSinceByPath: restSince,
+    };
+  });
+}
+
 // ── 流恢复 / 重建 ──
 
 async function rebuildCurrentSessionFromResume(msg: any): Promise<void> {
@@ -121,6 +145,7 @@ async function rebuildCurrentSessionFromResume(msg: any): Promise<void> {
       });
     }
 
+    syncStreamingStatusForSession(sessionPath, !!msg.isStreaming);
     _applyStreamingStatus?.(msg.isStreaming);
 
     const ws = getWebSocket();
@@ -166,5 +191,6 @@ export function replayStreamResume(msg: any): void {
     });
   }
 
+  syncStreamingStatusForSession(sessionPath, !!msg.isStreaming);
   _applyStreamingStatus?.(msg.isStreaming);
 }
