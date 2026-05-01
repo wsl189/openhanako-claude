@@ -111,6 +111,13 @@ describe("buildSessionMessagesFromTranscriptEntries", () => {
         },
       },
       {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "助手回复" }],
+        },
+      },
+      {
         type: "user",
         message: {
           role: "user",
@@ -128,7 +135,21 @@ describe("buildSessionMessagesFromTranscriptEntries", () => {
         type: "assistant",
         message: {
           role: "assistant",
-          content: [{ type: "text", text: "助手回复" }],
+          content: [{ type: "text", text: "停止后不应复活的完整回复" }],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "下一条真实输入" }],
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "下一条回复" }],
         },
       },
     ];
@@ -142,6 +163,14 @@ describe("buildSessionMessagesFromTranscriptEntries", () => {
       {
         role: "assistant",
         content: [{ type: "text", text: "助手回复" }],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "下一条真实输入" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "下一条回复" }],
       },
     ]);
   });

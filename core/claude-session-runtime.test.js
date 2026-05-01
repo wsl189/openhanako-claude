@@ -680,6 +680,76 @@ describe("ClaudeSessionRuntime resume recovery", () => {
     await runtime.close();
   });
 
+  it("ignores late messages from an aborted query", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+
+    let enteredTurnResolve;
+    const enteredTurn = new Promise((resolve) => {
+      enteredTurnResolve = resolve;
+    });
+    let releaseLateMessages = null;
+
+    queryMock.mockImplementation(({ prompt }) => {
+      async function* stream() {
+        for await (const _input of prompt) {
+          enteredTurnResolve?.();
+          await new Promise((resolve) => {
+            releaseLateMessages = resolve;
+          });
+          yield {
+            type: "assistant",
+            message: {
+              id: "late-after-abort",
+              content: [{ type: "text", text: "this should not be recorded" }],
+            },
+          };
+          yield {
+            type: "result",
+            session_id: "late-after-abort-session",
+            is_error: false,
+            usage: {},
+          };
+          return;
+        }
+      }
+      const iterator = stream();
+      iterator.close = vi.fn(() => {
+        releaseLateMessages?.();
+      });
+      iterator.getContextUsage = vi.fn(async () => null);
+      iterator.interrupt = vi.fn(async () => {});
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "abort-late-message-session",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-abort-late-message.json",
+      options: {},
+    });
+    const events = [];
+    runtime.subscribe((event) => events.push(event));
+
+    const pending = runtime.prompt("stop before late output");
+    await enteredTurn;
+    await expect(runtime.abort()).resolves.toBe(true);
+    await expect(pending).rejects.toThrow("Request was aborted.");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(runtime.messages).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "stop before late output" }],
+      },
+    ]);
+    expect(events.some((event) => event?.message?.id === "late-after-abort")).toBe(false);
+    expect(events.some((event) => event?.type === "result")).toBe(false);
+
+    await runtime.close();
+  });
+
   it("can start a new prompt immediately after abort without reusing old queue", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();

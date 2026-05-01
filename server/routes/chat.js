@@ -18,6 +18,7 @@ import {
   appendSessionStreamEvent,
   resumeSessionStream,
 } from "../session-stream-store.js";
+import { appendSessionContextReset } from "../../core/session-message-log.js";
 
 /** tool_start/tool_end 仅广播前端展示所需字段；文本参数会按长度裁剪（同步维护前端 extractToolDetail） */
 const TOOL_ARG_SUMMARY_KEYS = [
@@ -585,6 +586,13 @@ export default async function chatRoute(app, { engine, hub }) {
     finishSessionStream(ss);
     if (sessionPath) {
       engine.clearSessionPendingImages(sessionPath);
+      try {
+        const session = engine.getSessionByPath(sessionPath);
+        const messages = Array.isArray(session?.messages) ? session.messages : [];
+        appendSessionContextReset(sessionPath, messages);
+      } catch (err) {
+        debugLog()?.warn("ws", `failed to persist aborted session boundary: ${err?.message || err}`);
+      }
     }
     ss.abortingStreamId = abortedStreamId;
     resetTurnState(ss, {

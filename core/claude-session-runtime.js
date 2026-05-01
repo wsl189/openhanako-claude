@@ -436,6 +436,9 @@ export class ClaudeSessionRuntime {
     const activeQuery = this._query;
     try {
       for await (const message of activeQuery) {
+        if (this._query !== activeQuery) {
+          break;
+        }
         if (message?.session_id) {
           this._syncSessionId(message.session_id);
         }

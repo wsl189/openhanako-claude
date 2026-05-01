@@ -308,11 +308,6 @@ async function loadSessionHistoryMessages(engine, explicitPath) {
   const sessionPath = explicitPath || engine.currentSessionPath;
   if (!sessionPath) return Array.isArray(engine.messages) ? engine.messages : [];
 
-  const activeSession = engine.getSessionByPath(sessionPath);
-  if (Array.isArray(activeSession?.messages) && activeSession.messages.length > 0) {
-    return activeSession.messages;
-  }
-
   try {
     if (hasSessionMessageLog(sessionPath)) {
       const messages = readSessionMessagesFromLog(sessionPath);
@@ -320,6 +315,11 @@ async function loadSessionHistoryMessages(engine, explicitPath) {
     }
   } catch {
     // 回退到 transcript / 内存态
+  }
+
+  const activeSession = engine.getSessionByPath(sessionPath);
+  if (Array.isArray(activeSession?.messages) && activeSession.messages.length > 0) {
+    return activeSession.messages;
   }
 
   try {

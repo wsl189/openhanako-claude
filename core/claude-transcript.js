@@ -56,6 +56,7 @@ const INTERNAL_USER_TEXT_PATTERNS = [
   /^<local-command-stdout>Compacted\b/i,
   /^\[Request interrupted by user(?: for tool use)?\]$/i,
 ];
+const INTERRUPTED_USER_TEXT_PATTERN = /^\[Request interrupted by user(?: for tool use)?\]$/i;
 
 function extractPlainTextFromBlocks(blocks = []) {
   return (Array.isArray(blocks) ? blocks : [])
@@ -72,6 +73,13 @@ function isInternalUserTranscriptEntry(entry, blocks = []) {
   const text = extractPlainTextFromBlocks(blocks).trim();
   if (!text) return false;
   return INTERNAL_USER_TEXT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isInterruptedUserTranscriptEntry(entry, blocks = []) {
+  if (!entry || typeof entry !== "object") return false;
+  if (entry?.message?.role !== "user") return false;
+  const text = extractPlainTextFromBlocks(blocks).trim();
+  return INTERRUPTED_USER_TEXT_PATTERN.test(text);
 }
 
 function extractToolResultPayload(rawContent) {
@@ -262,10 +270,12 @@ export function readClaudeTranscriptEntries({ sessionId, cwd, limit = null } = {
 export function buildSessionMessagesFromTranscriptEntries(entries = []) {
   const out = [];
   const toolUses = new Map();
+  let skipInterruptedTail = false;
 
   for (const entry of entries) {
     const role = entry?.message?.role;
     if (entry?.type === "assistant" && role === "assistant") {
+      if (skipInterruptedTail) continue;
       const assistant = buildAssistantEntry(entry);
       const last = out[out.length - 1];
       if (last?.role === "assistant" && last._mergeKey === assistant._mergeKey) {
@@ -284,10 +294,15 @@ export function buildSessionMessagesFromTranscriptEntries(entries = []) {
     if (entry?.type === "user" && role === "user") {
       const blocks = normalizeContentBlocks(entry?.message?.content);
       if (isInternalUserTranscriptEntry(entry, blocks)) {
+        if (isInterruptedUserTranscriptEntry(entry, blocks)) {
+          skipInterruptedTail = true;
+          toolUses.clear();
+        }
         continue;
       }
       const toolResultBlocks = blocks.filter((block) => block?.type === "tool_result");
       if (toolResultBlocks.length && toolResultBlocks.length === blocks.length) {
+        if (skipInterruptedTail) continue;
         for (const block of toolResultBlocks) {
           const toolMeta = toolUses.get(block.tool_use_id) || {};
           const payload = extractToolResultPayload(block.content);
@@ -300,6 +315,7 @@ export function buildSessionMessagesFromTranscriptEntries(entries = []) {
           }));
         }
       } else {
+        skipInterruptedTail = false;
         out.push(buildUserEntry(entry));
       }
     }
