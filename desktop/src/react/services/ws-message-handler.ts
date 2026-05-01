@@ -46,6 +46,11 @@ function resolvePromptSessionKey(sessionPath: string | null | undefined): string
   );
 }
 
+function isTodoToolName(name: unknown): boolean {
+  const normalized = String(name || '').trim().toLowerCase();
+  return normalized === 'todo' || normalized === 'todowrite';
+}
+
 function notifyBrowserSessionsChanged(): void {
   window.dispatchEvent(new Event('hana-browser-sessions-changed'));
 }
@@ -203,8 +208,8 @@ export function handleServerMessage(msg: any): void {
       loadSessionsAction();
       requestContextUsage(msg.sessionPath || useStore.getState().currentSessionPath);
     }
-    // tool_end 后更新 todo
-    if (msg.type === 'tool_end' && msg.name === 'todo' && msg.details?.todos) {
+    // tool_end 后更新 todo。兼容旧 Hanako custom tool 名 todo 与 Claude builtin TodoWrite。
+    if (msg.type === 'tool_end' && isTodoToolName(msg.name) && msg.details?.todos) {
       useStore.setState({ sessionTodos: msg.details.todos });
     }
     // compaction_end 后更新 token

@@ -29,6 +29,7 @@ import { compileToday, assemble } from "../lib/memory/compile.js";
 import { callProviderText } from "../lib/llm/provider-client.js";
 import { scrubPII } from "../lib/pii-guard.js";
 import { runAgentSession } from "./agent-executor.js";
+import { CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES } from "../core/claude-runtime-config.js";
 import { debugLog } from "../lib/debug-log.js";
 import { getLocale } from "../server/i18n.js";
 
@@ -577,6 +578,7 @@ export class ChannelRouter {
           "禁止输出延后承诺：不要说“我现在去查/稍等/马上回来/待会给你结果”等未来时态。",
           "如果消息要求你检索（如搜/查/search/look up），必须在本轮内直接调用工具完成检索并给出结果。",
           memoryToolHint,
+          "如果需要用户补充信息，直接在当前可见回复中询问。",
           "若确实无法完成检索，也要在本轮明确说明阻碍原因和所需补充信息，不要给空承诺。",
         ].filter(Boolean).join("\n")
       : [
@@ -587,6 +589,7 @@ export class ChannelRouter {
           "No deferred promises: do not say things like \"I'll search now\", \"wait\", \"I'll come back with results\".",
           "If the message asks you to search/look up, you must do the search in this same round and provide results.",
           memoryToolHint,
+          "If you need more information from the user, ask directly in the visible reply.",
           "If you truly cannot complete the search, explicitly state the blocker and what information is needed, without future-tense promises.",
         ].filter(Boolean).join("\n"));
     const text = await runAgentSession(
@@ -611,6 +614,7 @@ export class ChannelRouter {
         engine: this._engine,
         signal,
         noMemory: !channelMemoryEnabled,
+        disabledBuiltinTools: CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
         sessionSuffix: "channel-temp",
         extractInlineImages: true,
         systemAppend: sessionRoleAppend,
@@ -649,6 +653,7 @@ export class ChannelRouter {
             engine: this._engine,
             signal,
             noMemory: !channelMemoryEnabled,
+            disabledBuiltinTools: CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
             sessionSuffix: "channel-temp",
             extractInlineImages: true,
             systemAppend: sessionRoleAppend,

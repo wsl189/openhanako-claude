@@ -91,6 +91,71 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     }));
   });
 
+  it("normalizes Claude TodoWrite results into todo details for the UI", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-todowrite";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "todo-1",
+          name: "TodoWrite",
+          input: {
+            todos: [
+              { content: "verify TodoWrite event", status: "in_progress", activeForm: "verifying TodoWrite event" },
+              { content: "report result", status: "pending", activeForm: "reporting result" },
+            ],
+          },
+        }],
+      },
+    }, sessionPath);
+
+    const translated = coordinator._translateClaudeEvent({
+      type: "user",
+      tool_use_result: {
+        oldTodos: [],
+        newTodos: [
+          { content: "verify TodoWrite event", status: "completed", activeForm: "verifying TodoWrite event" },
+          { content: "report result", status: "pending", activeForm: "reporting result" },
+        ],
+        verificationNudgeNeeded: false,
+      },
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "todo-1",
+          content: "Todos have been modified successfully.",
+        }],
+      },
+    }, sessionPath);
+
+    expect(translated).toContainEqual(expect.objectContaining({
+      type: "tool_end",
+      name: "TodoWrite",
+      toolCallId: "todo-1",
+      details: {
+        todos: [
+          {
+            content: "verify TodoWrite event",
+            text: "verify TodoWrite event",
+            status: "completed",
+            activeForm: "verifying TodoWrite event",
+            done: true,
+          },
+          {
+            content: "report result",
+            text: "report result",
+            status: "pending",
+            activeForm: "reporting result",
+            done: false,
+          },
+        ],
+      },
+    }));
+  });
+
   it("does not parse text tool markup fallback in assistant content", () => {
     const coordinator = new SessionCoordinator({});
     const content = [{

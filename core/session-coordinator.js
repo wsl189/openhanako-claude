@@ -235,6 +235,42 @@ function extractToolResultPayload(rawContent) {
   };
 }
 
+function isTodoWriteToolName(name = "") {
+  const normalized = String(name || "").trim().toLowerCase();
+  return normalized === "todo" || normalized === "todowrite";
+}
+
+function normalizeTodoWriteItems(rawTodos) {
+  if (!Array.isArray(rawTodos)) return null;
+  return rawTodos
+    .filter((todo) => todo && typeof todo === "object")
+    .map((todo) => {
+      const status = String(todo.status || "").trim();
+      const content = String(todo.content || todo.text || "").trim();
+      return {
+        ...todo,
+        text: content,
+        done: todo.done === true || status === "completed",
+        ...(content ? { content } : {}),
+        ...(status ? { status } : {}),
+      };
+    })
+    .filter((todo) => todo.text);
+}
+
+function mergeTodoWriteDetails(toolName, existingDetails, toolUseResult) {
+  if (!isTodoWriteToolName(toolName)) return existingDetails;
+  const result = toolUseResult && typeof toolUseResult === "object" ? toolUseResult : {};
+  const todos = normalizeTodoWriteItems(
+    result.newTodos || result.todos || existingDetails?.todos,
+  );
+  if (!todos) return existingDetails;
+  return {
+    ...(existingDetails && typeof existingDetails === "object" ? existingDetails : {}),
+    todos,
+  };
+}
+
 function parseToolInputFromJsonDelta(rawInput = "") {
   const text = String(rawInput || "").trim();
   if (!text) return null;
@@ -581,6 +617,11 @@ export class SessionCoordinator {
         // 自定义 MCP 工具由 onToolEnd 注入详细事件，避免重复落 tool_end。
         if (resolvedToolMeta.custom) continue;
         const payload = extractToolResultPayload(block.content);
+        const details = mergeTodoWriteDetails(
+          resolvedToolMeta.name || "",
+          payload.details,
+          event.tool_use_result,
+        );
         translated.push({
           type: "tool_end",
           name: resolvedToolMeta.name || "",
@@ -588,7 +629,7 @@ export class SessionCoordinator {
           args: resolvedToolMeta.args,
           success: block.is_error !== true,
           content: payload.content,
-          details: payload.details,
+          details,
         });
         if (matchedToolUseId) {
           state.toolCalls.delete(matchedToolUseId);

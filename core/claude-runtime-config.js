@@ -47,6 +47,12 @@ export const HANAKO_TO_CLAUDE_BUILTIN = {
   skill: "Skill",
 };
 
+export const CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES = [
+  "AskUserQuestion",
+  "EnterPlanMode",
+  "ExitPlanMode",
+];
+
 const MINIMAX_MCP_SERVER_KEY = "MiniMax";
 const RESERVED_MCP_SERVER_KEYS = new Set([
   "hanako",
@@ -202,6 +208,20 @@ function resolveClaudeBuiltinTools(enabledBuiltin = []) {
       .map((name) => normalizeBuiltinToolName(name))
       .filter(Boolean),
   );
+}
+
+function filterDisabledBuiltinTools(enabledBuiltin = [], disabledBuiltinTools = []) {
+  const disabled = new Set(resolveClaudeBuiltinTools(disabledBuiltinTools));
+  if (disabled.size === 0) return enabledBuiltin;
+  return enabledBuiltin.filter((name) => !disabled.has(name));
+}
+
+function resolveRuntimeBuiltinTools(rawEnabledBuiltin = [], disabledBuiltinTools = []) {
+  const disabled = resolveClaudeBuiltinTools(disabledBuiltinTools);
+  const source = Array.isArray(rawEnabledBuiltin) && rawEnabledBuiltin.length > 0
+    ? rawEnabledBuiltin
+    : (disabled.length > 0 ? CLAUDE_BUILTIN_TOOL_NAMES : []);
+  return filterDisabledBuiltinTools(resolveClaudeBuiltinTools(source), disabled);
 }
 
 function normalizeAbsolutePath(rawPath) {
@@ -912,6 +932,7 @@ export function buildClaudeRuntimeConfig({
   customTools = [],
   builtinEnabledOverride = null,
   customEnabledOverride = null,
+  disabledBuiltinTools = [],
   createToolContext,
   emitToolEvent,
   systemAppend,
@@ -942,7 +963,10 @@ export function buildClaudeRuntimeConfig({
   const settingSources = resolveSettingSources(agent, runtimeEnv);
   const builtinEnabled = noTools
     ? []
-    : resolveClaudeBuiltinTools(builtinEnabledOverride || toolProfile?.tools?.builtin_enabled || []);
+    : resolveRuntimeBuiltinTools(
+      builtinEnabledOverride || toolProfile?.tools?.builtin_enabled || [],
+      disabledBuiltinTools,
+    );
   const customEnabled = noTools
     ? []
     : uniq(customEnabledOverride || toolProfile?.tools?.custom_enabled || []);

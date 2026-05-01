@@ -174,6 +174,34 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.tools).toEqual(["Skill", "Read"]);
   });
 
+  it("filters disabled builtin tools from allowed tool lists", () => {
+    const config = createConfig({
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode"],
+        },
+      },
+      disabledBuiltinTools: ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"],
+    });
+
+    expect(config.options.allowedTools).toEqual(["Read"]);
+    expect(config.options.tools).toEqual(["Read"]);
+    expect(config.diagnostics?.builtinEnabled).toEqual(["Read"]);
+  });
+
+  it("forces a filtered builtin allowlist when only disabled builtin tools are provided", () => {
+    const config = createConfig({
+      disabledBuiltinTools: ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"],
+    });
+
+    expect(config.options.allowedTools).toContain("Read");
+    expect(config.options.allowedTools).toContain("Bash");
+    expect(config.options.allowedTools).not.toContain("AskUserQuestion");
+    expect(config.options.allowedTools).not.toContain("EnterPlanMode");
+    expect(config.options.allowedTools).not.toContain("ExitPlanMode");
+    expect(config.options.tools).toEqual(config.options.allowedTools);
+  });
+
   it("supports settingSources override via env", () => {
     const config = createConfig({
       env: {

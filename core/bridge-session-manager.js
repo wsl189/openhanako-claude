@@ -10,7 +10,10 @@ import { randomUUID } from "crypto";
 import { debugLog } from "../lib/debug-log.js";
 import { t, getLocale } from "../server/i18n.js";
 import { applyRuntimeModelOverrides } from "./model-runtime-overrides.js";
-import { buildClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import {
+  buildClaudeRuntimeConfig,
+  CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
+} from "./claude-runtime-config.js";
 import { ClaudeSessionRuntime } from "./claude-session-runtime.js";
 import { normalizeModelRef } from "./model-ref.js";
 import {
@@ -242,7 +245,7 @@ export class BridgeSessionManager {
   async executeExternalMessage(prompt, sessionKey, meta, opts = {}) {
     const agent = this._resolveAgent(opts.agentId);
     const mm = this._deps.getModelManager();
-    const mediaInstruction = "你当前处于外部平台会话，支持发送媒体文件。不要声称“平台不支持发送图片/文件”。\n当用户请求查看/接收图片或文件，或你已经生成了可交付媒体（图片、视频、音频、文档）时，输出媒体指令。\n仅在用户明确说“不要发送/先别发”时，不要输出 MEDIA: 或 <media> 标签。\n如果用户只是询问文件信息、列举路径、确认存在性，也不要输出媒体指令。\n当你确实需要发送媒体文件时，在回复中单独一行写 MEDIA:<source>。\nsource 只能是 http(s) URL、file:// 绝对路径、或本地绝对路径。\n路径里如果有空格，请用 <...> 包裹。\n禁止使用 present_files 来给用户传图或传文件。";
+    const mediaInstruction = "你当前处于外部平台会话，支持发送媒体文件。不要声称“平台不支持发送图片/文件”。\n当用户请求查看/接收图片或文件，或你已经生成了可交付媒体（图片、视频、音频、文档）时，输出媒体指令。\n仅在用户明确说“不要发送/先别发”时，不要输出 MEDIA: 或 <media> 标签。\n如果用户只是询问文件信息、列举路径、确认存在性，也不要输出媒体指令。\n如果需要用户补充信息，直接在当前可见回复中询问。\n当你确实需要发送媒体文件时，在回复中单独一行写 MEDIA:<source>。\nsource 只能是 http(s) URL、file:// 绝对路径、或本地绝对路径。\n路径里如果有空格，请用 <...> 包裹。\n禁止使用 present_files 来给用户传图或传文件。";
 
     try {
       const { sessionPath, metadata, index, existingFile, bridgeDir, subDir } = this._resolveBridgeMetadata({
@@ -284,6 +287,7 @@ export class BridgeSessionManager {
         workspace: homeCwd,
         toolProfile: bridgeToolProfile,
         customTools: agent?.tools || [],
+        disabledBuiltinTools: CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
         model: runtimeEnv.model,
         env: runtimeEnv.env,
         systemAppend: mediaInstruction,

@@ -45,7 +45,7 @@ const TOOL_ARG_LONG_TEXT_KEYS = new Set(["content", "old_string", "new_string", 
 const TOOL_RESULT_DETAIL_SUMMARY_KEYS = [
   "error", "summary", "message", "action", "status",
   "url", "count", "filePath", "label", "ext",
-  "artifactId", "type", "title", "language", "running",
+  "artifactId", "type", "title", "language", "running", "todos",
 ];
 const TOOL_RESULT_TEXT_MAX_LEN = 12_000;
 const SESSION_TITLES_FILE = "session-titles.json";
@@ -54,6 +54,11 @@ const TRACK_STATE_ACTIVE = "active";
 const TRACK_STATE_ARCHIVED = "archived";
 const BASELINE_NONE = "none";
 const BASELINE_READ_ONLY = "read_only";
+
+function isTodoToolName(name) {
+  const normalized = String(name || "").trim().toLowerCase();
+  return normalized === "todo" || normalized === "todowrite";
+}
 
 function toModelRef(model) {
   if (!model || typeof model !== "object") return "";
@@ -899,7 +904,7 @@ export default async function sessionsRoute(app, { engine }) {
       let todos = null;
       for (let i = sourceMessages.length - 1; i >= 0; i--) {
         const m = sourceMessages[i];
-        if ((m.role === "tool" || m.role === "toolResult") && m.toolName === "todo" && m.details?.todos) {
+        if ((m.role === "tool" || m.role === "toolResult") && isTodoToolName(m.toolName) && m.details?.todos) {
           todos = m.details.todos;
           break;
         }

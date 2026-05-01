@@ -172,6 +172,7 @@ export async function runAgentSession(agentId, rounds, {
   keepSession = false,
   noMemory = false,
   noTools = false,
+  disabledBuiltinTools = [],
   extractInlineImages = false,
 } = {}) {
   const agent = engine.getAgent(agentId);
@@ -238,6 +239,7 @@ export async function runAgentSession(agentId, rounds, {
     customTools: agent.tools,
     noTools,
     noMemory,
+    disabledBuiltinTools,
     systemAppend: mergedSystemAppend,
     model: model?.id || model?.name,
     env: runtimeEnv,
