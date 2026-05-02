@@ -2093,8 +2093,6 @@ html[data-platform="linux"] .tb-toggle-right {
 .message.user {
     background: rgba(var(--accent-rgb), 0.10);
     padding: var(--space-sm) var(--space-md);
-    min-height: 44px;
-    box-sizing: border-box;
     border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md);
     color: var(--text);
     font-family: var(--font-serif);
@@ -13850,8 +13848,6 @@ a.about-link:hover {
 .channel-msg-self .channel-msg-text {
     background: rgba(var(--accent-rgb), 0.1);
     padding: 8px 12px;
-    min-height: 44px;
-    box-sizing: border-box;
     border-radius: 14px 14px 2px 14px;
     display: block;
     max-width: none;
