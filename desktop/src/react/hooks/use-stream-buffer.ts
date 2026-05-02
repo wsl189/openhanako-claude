@@ -82,6 +82,8 @@ interface Buffer {
   sessionPath: string;
   textAcc: string;
   textAnchorIndex: number | null;
+  textAccSource: 'none' | 'snapshot' | 'stream';
+  assistantTextUsesStream: boolean;
   thinkingAcc: string;
   hadThinking: boolean;
   sawThinkingStreamEvent: boolean;
@@ -229,6 +231,8 @@ function createBuffer(sessionPath: string): Buffer {
     sessionPath,
     textAcc: '',
     textAnchorIndex: null,
+    textAccSource: 'none',
+    assistantTextUsesStream: false,
     thinkingAcc: '',
     hadThinking: false,
     sawThinkingStreamEvent: false,
@@ -379,12 +383,14 @@ function appendSealedThinkingBlock(buf: Buffer, rawThinking: string): void {
 function finalizeBufferedTextSegment(buf: Buffer): void {
   if (!buf.textAcc) {
     buf.textAnchorIndex = null;
+    buf.textAccSource = 'none';
     return;
   }
   const rawText = buf.textAcc;
   const anchor = buf.textAnchorIndex;
   buf.textAcc = '';
   buf.textAnchorIndex = null;
+  buf.textAccSource = 'none';
 
   const block = buildTextBlockFromBufferedText(rawText);
   if (!block) return;
@@ -509,6 +515,8 @@ function isRenderableBlock(block: ContentBlock): boolean {
 function resetBufferTurnState(buf: Buffer): void {
   buf.textAcc = '';
   buf.textAnchorIndex = null;
+  buf.textAccSource = 'none';
+  buf.assistantTextUsesStream = false;
   buf.thinkingAcc = '';
   buf.hadThinking = false;
   buf.sawThinkingStreamEvent = false;
@@ -698,8 +706,9 @@ class StreamBufferManager {
             preferUpdateLastSealed: hadOpenThinkingBeforeBoundary,
           });
 
-          if (snapshotText) {
+          if (snapshotText && !buf.assistantTextUsesStream) {
             if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
+            buf.textAccSource = 'snapshot';
             buf.textAcc = mergeSnapshotText(buf.textAcc, snapshotText);
           }
 
@@ -718,6 +727,7 @@ class StreamBufferManager {
           if (toolResults.length === 0 && !buf.messageAppended) break;
           if (toolResults.length > 0) {
             finalizeBufferedTextSegment(buf);
+            buf.assistantTextUsesStream = false;
           }
           let nextLiveBlocks = buf.liveBlocks;
           for (const toolResult of toolResults) {
@@ -746,8 +756,9 @@ class StreamBufferManager {
         const snapshotText = stripStreamToolMarkup(
           stripSdkDiagnosticLines(extractSnapshotTextContent(content)),
         );
-        if (snapshotText) {
+        if (snapshotText && !buf.assistantTextUsesStream) {
           if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
+          buf.textAccSource = 'snapshot';
           buf.textAcc = mergeSnapshotText(buf.textAcc, snapshotText);
         }
 
@@ -770,6 +781,11 @@ class StreamBufferManager {
         closeOpenThinkingIfNeeded(buf);
         this.ensureMessage(buf);
         if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
+        if (buf.textAccSource === 'snapshot') {
+          buf.textAcc = '';
+        }
+        buf.textAccSource = 'stream';
+        buf.assistantTextUsesStream = true;
         buf.textAcc = mergeDelta(
           buf.textAcc,
           stripSdkDiagnosticLines(msg.delta || ''),
@@ -839,6 +855,7 @@ class StreamBufferManager {
 
       case 'tool_end':
         finalizeBufferedTextSegment(buf);
+        buf.assistantTextUsesStream = false;
         {
           const nextLiveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, msg);
           const applied = nextLiveBlocks !== buf.liveBlocks;

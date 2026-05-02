@@ -2,7 +2,7 @@
  * ThinkingBlock — 可折叠的思考过程区块
  */
 
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
 
 interface Props {
   content: string;
@@ -24,6 +24,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   void runningMs;
   const [expanded, setExpanded] = useState(false);
   const [shouldCollapse, setShouldCollapse] = useState(false);
+  const [contentHeight, setContentHeight] = useState(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const bodyContent = content || '';
   void streamLike;
@@ -31,6 +32,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   useEffect(() => {
     const el = contentRef.current;
     if (!el) return;
+    setContentHeight(el.scrollHeight);
     const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight || '22') || 22;
     const maxHeight = lineHeight * THINKING_COLLAPSE_LINE_THRESHOLD;
     setShouldCollapse(el.scrollHeight > maxHeight + 10);
@@ -43,6 +45,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
           <div
             ref={contentRef}
             className={`thinking-block-body${shouldCollapse && !expanded ? ' clamp' : ''}`}
+            style={{ '--thinking-body-height': `${contentHeight}px` } as CSSProperties}
           >
             {bodyContent}
           </div>

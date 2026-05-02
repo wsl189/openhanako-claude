@@ -750,6 +750,91 @@ describe('mergeDelta', () => {
     }
   });
 
+  it('keeps streamed text as the only text source when a later assistant snapshot repeats it', () => {
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '【主歌】\n屏幕的光映在脸上\n咖啡第三杯已经变凉',
+    });
+    streamBufferManager.handle({
+      type: 'sdk_message',
+      sessionPath,
+      message: {
+        role: 'assistant',
+        messageId: 'assistant-text-final',
+        content: [
+          {
+            type: 'text',
+            text: '【主歌】屏幕的光映在脸上咖啡第三杯已经变凉',
+          },
+        ],
+      },
+    });
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        {
+          type: 'text',
+          text: '【主歌】屏幕的光映在脸上咖啡第三杯已经变凉',
+        },
+      ],
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['text']);
+      const text = blocks[0];
+      expect(text?.type).toBe('text');
+      if (text?.type === 'text') {
+        expect(text.raw).toBe('【主歌】\n屏幕的光映在脸上\n咖啡第三杯已经变凉');
+      }
+    }
+  });
+
+  it('lets text deltas take over when a partial snapshot arrived first', () => {
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        {
+          type: 'text',
+          text: '【主歌】屏幕的光映在脸上咖啡第三杯已经变凉',
+        },
+      ],
+    });
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '【主歌】\n屏幕的光映在脸上\n',
+    });
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '咖啡第三杯已经变凉',
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['text']);
+      const text = blocks[0];
+      expect(text?.type).toBe('text');
+      if (text?.type === 'text') {
+        expect(text.raw).toBe('【主歌】\n屏幕的光映在脸上\n咖啡第三杯已经变凉');
+      }
+    }
+  });
+
   it('starts a new assistant message after compaction divider', () => {
     streamBufferManager.handle({
       type: 'text_delta',
