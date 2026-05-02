@@ -66,8 +66,8 @@ function PanelHost() {
 
 const SCROLL_THRESHOLD = 300;
 const INPUT_GAP = 12;
-const USER_MESSAGE_ANCHOR_RATIO = 0.65;
-const ASSISTANT_REPLY_MIN_TOP_RATIO = 0.65;
+const USER_MESSAGE_ANCHOR_RATIO = 0.70;
+const ASSISTANT_REPLY_MIN_TOP_RATIO = 0.70;
 
 function isAssistantMessageItem(item: ChatListItem | undefined): item is Extract<ChatListItem, { type: 'message' }> {
   return !!item && item.type === 'message' && item.data.role === 'assistant';
@@ -120,6 +120,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const footerRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
   const anchoredUserIdRef = useRef<string | null>(null);
+  const anchoredAssistantIdRef = useRef<string | null>(null);
   const followReplyRef = useRef(false);
   const suppressAutoScrollUntil = useRef(0);
   const lastUserIndex = useMemo(() => {
@@ -191,6 +192,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
 
   const showBottomImmediately = useCallback(() => {
     anchoredUserIdRef.current = null;
+    anchoredAssistantIdRef.current = null;
     followReplyRef.current = true;
     setFooterHeight(getFollowFooterHeight());
     scrollToBottom();
@@ -206,7 +208,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const findAssistantFollowElement = useCallback((messageId: string) => {
     const msgEl = findMessageElement(messageId);
     if (!msgEl) return null;
-    return msgEl.querySelector<HTMLElement>([
+    const primaryReplyEl = msgEl.querySelector<HTMLElement>([
       '.assistant-final-reply',
       '.file-output-card',
       '.artifact-card',
@@ -215,19 +217,23 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       '.cron-confirm-card',
       '.settings-confirm-card',
     ].join(', '));
+    if (primaryReplyEl) return primaryReplyEl;
+
+    // 在最终文本出现前，纯思考/执行链也需要作为当前回复被输入框顶起。
+    return msgEl.querySelector<HTMLElement>('.message.assistant');
   }, [findMessageElement]);
 
-  const anchorUserAtInputRatio = useCallback((messageId: string) => {
+  const anchorElementAtInputRatio = useCallback((targetEl: HTMLElement, ratio: number) => {
     const el = ref.current;
-    const msgEl = findMessageElement(messageId);
-    if (!el || !msgEl) return;
+    if (!el || !targetEl.isConnected) return;
 
     setFooterHeight(0);
     requestAnimationFrame(() => {
+      if (!targetEl.isConnected) return;
       const visibleBottom = getInputTop();
-      const desiredY = Math.floor(visibleBottom * USER_MESSAGE_ANCHOR_RATIO);
+      const desiredY = Math.floor(visibleBottom * ratio);
       const containerRect = el.getBoundingClientRect();
-      const msgRect = msgEl.getBoundingClientRect();
+      const msgRect = targetEl.getBoundingClientRect();
       const currentY = msgRect.top - containerRect.top;
       const rawTargetTop = Math.max(0, el.scrollTop + currentY - desiredY);
       const maxScrollable = el.scrollHeight - el.clientHeight;
@@ -241,7 +247,13 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
         isAtBottom.current = false;
       });
     });
-  }, [findMessageElement, getFollowFooterHeight, getInputTop, setFooterHeight]);
+  }, [getFollowFooterHeight, getInputTop, setFooterHeight]);
+
+  const anchorUserAtInputRatio = useCallback((messageId: string) => {
+    const msgEl = findMessageElement(messageId);
+    if (!msgEl) return;
+    anchorElementAtInputRatio(msgEl, USER_MESSAGE_ANCHOR_RATIO);
+  }, [anchorElementAtInputRatio, findMessageElement]);
 
   const followAssistantReplyWithMinAnchor = useCallback((replyEl: HTMLElement) => {
     const el = ref.current;
@@ -288,6 +300,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     const latestMessageItem = [...items].reverse().find((item) => item.type === 'message');
     if (!latestMessageItem || latestMessageItem.type !== 'message') {
       anchoredUserIdRef.current = null;
+      anchoredAssistantIdRef.current = null;
       followReplyRef.current = false;
       showBottomImmediately();
       return;
@@ -306,6 +319,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
 
     if (anchoredUserIdRef.current !== latestUser.id) {
       anchoredUserIdRef.current = latestUser.id;
+      anchoredAssistantIdRef.current = null;
       followReplyRef.current = false;
       anchorUserAtInputRatio(latestUser.id);
       return;
@@ -313,6 +327,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
 
     if (!latestAssistantAfterUser) {
       if (!followReplyRef.current) return;
+      anchoredAssistantIdRef.current = null;
       followReplyRef.current = false;
       anchorUserAtInputRatio(latestUser.id);
       return;
@@ -320,6 +335,13 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
 
     const msgEl = findAssistantFollowElement(latestAssistantAfterUser.data.id);
     if (!msgEl) return;
+    if (anchoredAssistantIdRef.current !== latestAssistantAfterUser.data.id) {
+      anchoredAssistantIdRef.current = latestAssistantAfterUser.data.id;
+      followReplyRef.current = false;
+      anchorElementAtInputRatio(msgEl, ASSISTANT_REPLY_MIN_TOP_RATIO);
+      return;
+    }
+
     const panelRect = el.getBoundingClientRect();
     const msgRect = msgEl.getBoundingClientRect();
     const replyReachedInput = msgRect.bottom - panelRect.top >= getInputTop() - INPUT_GAP;
@@ -329,6 +351,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     followAssistantReplyWithMinAnchor(msgEl);
   }, [
     active,
+    anchorElementAtInputRatio,
     anchorUserAtInputRatio,
     findAssistantFollowElement,
     followAssistantReplyWithMinAnchor,
