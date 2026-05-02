@@ -5,7 +5,7 @@
  * 通过 portal 渲染到 index.html 中已有的 DOM 容器。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
@@ -20,6 +20,8 @@ import { yuanFallbackAvatar } from '../utils/agent-helpers';
 import { SVG_ICONS } from '../utils/icons';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+const CHANNEL_MESSAGE_ANCHOR_RATIO = 0.65;
 
 // ── 稳定头像时间戳（避免每次渲染生成新 URL） ──
 let _avatarTs = Date.now();
@@ -934,8 +936,17 @@ export function ChannelMessages() {
   const userName = useStore((s) => s.userName);
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const anchoredUserKeyRef = useRef<string | null>(null);
+  const followReplyRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedMsgKey, setCopiedMsgKey] = useState<string | null>(null);
+  const ch = channels.find((c) => c.id === currentChannel);
+  const isDM = ch?.isDM ?? false;
+  const channelMemberKeys = useMemo(
+    () => new Set((channelMembers || []).map((m) => String(m || '').trim().toLowerCase()).filter(Boolean)),
+    [channelMembers],
+  );
 
   useEffect(() => () => {
     if (copyTimerRef.current) {
@@ -956,43 +967,124 @@ export function ChannelMessages() {
     }).catch(() => {});
   }, []);
 
-  // v2.3 频道锚点：新聊天消息出现时，把最后一条消息定位到可视区约 3/4 处。
-  useEffect(() => {
+  const getMessageKey = useCallback((msg: (typeof messages)[number], idx: number) => `${msg.timestamp}-${idx}`, []);
+
+  const isSelfChannelMessage = useCallback((msg: (typeof messages)[number]) => {
+    const senderNorm = String(msg.sender || '').trim().toLowerCase();
+    const userNameNorm = String(userName || '').trim().toLowerCase();
+    const isMemberSender = !isDM && channelMemberKeys.has(senderNorm);
+    const isGroupUserFallback = !isDM && senderNorm !== 'system' && !isMemberSender;
+    const senderInfo = isGroupUserFallback
+      ? resolveChannelMember(userName || 'user', userName, userAvatarUrl, agents, currentAgentId)
+      : resolveChannelMember(msg.sender, userName, userAvatarUrl, agents, currentAgentId);
+    const isUserSenderAlias =
+      senderNorm === 'user'
+      || senderNorm === '用户'
+      || (!!userNameNorm && senderNorm === userNameNorm);
+    return senderInfo.isUser || isUserSenderAlias || isGroupUserFallback || (isDM && msg.sender === (currentAgentId || ''));
+  }, [agents, channelMemberKeys, currentAgentId, isDM, userAvatarUrl, userName]);
+
+  const findMessageElement = useCallback((el: HTMLElement, msgKey: string) => {
+    const nodes = el.querySelectorAll<HTMLElement>('.channel-msg');
+    for (const node of nodes) {
+      if (node.dataset.channelMsgKey === msgKey) return node;
+    }
+    return null;
+  }, []);
+
+  const showChannelBottomImmediately = useCallback(() => {
     const el = document.getElementById('channelMessages');
     if (!el) return;
     const spacer = el.querySelector('.channel-context-tail-spacer') as HTMLElement | null;
-    const lastMsg = messages[messages.length - 1];
-    const isLastChatMessage = !!lastMsg && !lastMsg.isContextReset;
+    if (spacer) spacer.style.height = '0px';
+    anchoredUserKeyRef.current = null;
+    followReplyRef.current = true;
+    el.scrollTop = el.scrollHeight;
+  }, []);
 
-    if (isLastChatMessage && spacer) {
-      spacer.style.height = '0px';
+  const anchorMessageAtRatio = useCallback((el: HTMLElement, spacer: HTMLElement, msgEl: HTMLElement) => {
+    spacer.style.height = '0px';
+
+    requestAnimationFrame(() => {
+      const desiredY = Math.floor(el.clientHeight * CHANNEL_MESSAGE_ANCHOR_RATIO);
+      const containerRect = el.getBoundingClientRect();
+      const msgRect = msgEl.getBoundingClientRect();
+      const currentY = msgRect.top - containerRect.top;
+      const rawTargetTop = Math.max(0, el.scrollTop + currentY - desiredY);
+      const maxScrollable = el.scrollHeight - el.clientHeight;
+      const neededSpace = Math.max(0, rawTargetTop - maxScrollable + 12);
+      spacer.style.height = `${neededSpace}px`;
 
       requestAnimationFrame(() => {
-        const msgNodes = el.querySelectorAll('.channel-msg');
-        const lastMsgEl = msgNodes.length > 0 ? (msgNodes[msgNodes.length - 1] as HTMLElement) : null;
-        if (!lastMsgEl) return;
-
-        const desiredY = Math.floor(el.clientHeight * 0.75);
-        const containerRect = el.getBoundingClientRect();
-        const msgRect = lastMsgEl.getBoundingClientRect();
-        const currentY = msgRect.top - containerRect.top;
-        const rawTargetTop = Math.max(0, el.scrollTop + currentY - desiredY);
-        const maxScrollable = el.scrollHeight - el.clientHeight;
-        const neededSpace = Math.max(0, rawTargetTop - maxScrollable + 12);
-        spacer.style.height = `${neededSpace}px`;
-
-        requestAnimationFrame(() => {
-          const maxScrollableAfterSpacer = el.scrollHeight - el.clientHeight;
-          const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
-          el.scrollTo({ top: targetTop, behavior: 'smooth' });
-        });
+        const maxScrollableAfterSpacer = el.scrollHeight - el.clientHeight;
+        const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
+        el.scrollTo({ top: targetTop, behavior: 'smooth' });
       });
+    });
+  }, []);
+
+  const syncChannelScrollAnchor = useCallback(() => {
+    const el = document.getElementById('channelMessages');
+    if (!el) return;
+    const spacer = el.querySelector('.channel-context-tail-spacer') as HTMLElement | null;
+    if (!spacer) return;
+
+    const lastIdx = messages.length - 1;
+    const lastMsg = messages[lastIdx];
+    if (!lastMsg || lastMsg.isContextReset) {
+      anchoredUserKeyRef.current = null;
+      followReplyRef.current = false;
+      showChannelBottomImmediately();
       return;
     }
 
+    const lastMsgKey = getMessageKey(lastMsg, lastIdx);
+    const lastMsgEl = findMessageElement(el, lastMsgKey);
+    if (!lastMsgEl) return;
+
+    if (isSelfChannelMessage(lastMsg)) {
+      if (anchoredUserKeyRef.current === lastMsgKey && !followReplyRef.current) return;
+      anchoredUserKeyRef.current = lastMsgKey;
+      followReplyRef.current = false;
+      anchorMessageAtRatio(el, spacer, lastMsgEl);
+      return;
+    }
+
+    if (!anchoredUserKeyRef.current) {
+      showChannelBottomImmediately();
+      return;
+    }
+
+    const containerRect = el.getBoundingClientRect();
+    const msgRect = lastMsgEl.getBoundingClientRect();
+    const replyReachedInput = msgRect.bottom - containerRect.top >= el.clientHeight - 12;
+    if (!followReplyRef.current && !replyReachedInput) return;
+
+    followReplyRef.current = true;
     if (spacer) spacer.style.height = '0px';
-    el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [anchorMessageAtRatio, findMessageElement, getMessageKey, isSelfChannelMessage, messages, showChannelBottomImmediately]);
+
+  useEffect(() => {
+    anchoredUserKeyRef.current = null;
+    followReplyRef.current = false;
+  }, [currentChannel]);
+
+  useEffect(() => {
+    syncChannelScrollAnchor();
+  }, [syncChannelScrollAnchor]);
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const ro = new ResizeObserver(() => {
+      syncChannelScrollAnchor();
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [syncChannelScrollAnchor]);
 
   if (!currentChannel) {
     return <ChannelWelcomeGroups />;
@@ -1002,13 +1094,10 @@ export function ChannelMessages() {
     return <div className="channel-welcome">{t('channel.noMessages')}</div>;
   }
 
-  const ch = channels.find((c) => c.id === currentChannel);
-  const isDM = ch?.isDM ?? false;
-  const channelMemberKeys = new Set((channelMembers || []).map((m) => String(m || '').trim().toLowerCase()).filter(Boolean));
   let lastSender: string | null = null;
 
   return (
-    <div className="channel-messages-content">
+    <div ref={contentRef} className="channel-messages-content">
       {messages.map((msg, idx) => {
         const msgKey = `${msg.timestamp}-${idx}`;
         if (msg.isContextReset) {
@@ -1038,6 +1127,7 @@ export function ChannelMessages() {
         const el = (
           <div
             key={msgKey}
+            data-channel-msg-key={msgKey}
             className={
               'channel-msg'
               + (isContinuation ? ' channel-msg-continuation' : '')

@@ -15245,6 +15245,10 @@ body.resizing .preview-panel-inner {
     flex-direction: column;
 }
 
+.chat-session-item {
+    width: 100%;
+}
+
 /* 底部占位（给输入框留出呼吸空间） */
 .chat-session-footer {
     height: 12rem;
