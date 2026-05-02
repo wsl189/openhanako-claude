@@ -234,6 +234,18 @@ function titleBarOpts(trafficLight = { x: 16, y: 16 }) {
   return { frame: false };
 }
 
+function translucentMainWindowOpts(fallback = "#111111") {
+  if (process.platform === "darwin") {
+    return {
+      transparent: true,
+      backgroundColor: "#00000000",
+      vibrancy: "under-window",
+      visualEffectState: "active",
+    };
+  }
+  return { backgroundColor: fallback };
+}
+
 /**
  * 获取当前 agent ID（不依赖 server）
  * 直接扫描 agents/ 第一个有效目录
@@ -595,7 +607,7 @@ function createMainWindow() {
     minHeight: 500,
     title: "Hanako",
     ...titleBarOpts({ x: 16, y: 16 }),
-    backgroundColor: "#F4F0E4",
+    ...translucentMainWindowOpts("#111111"),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -706,7 +718,7 @@ function createMainWindow() {
 
 const THEME_BG = {
   "warm-paper":   "#F8F5ED",
-  "midnight":     "#2D4356",
+  "midnight":     "#111111",
   "high-contrast":"#FAF9F6",
   "grass-aroma":  "#F5F8F3",
   "contemplation":"#F3F5F7",

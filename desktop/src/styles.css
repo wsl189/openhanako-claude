@@ -9718,15 +9718,16 @@ body.resizing .jian-sidebar-inner {
 
 /* 青夜：用青夜主题的真实配色 */
 .theme-card[data-theme="midnight"] {
-    background: #2D4356;
+    background: #111111;
+    border: 1px solid rgba(255, 255, 255, 0.10);
 }
 
 .theme-card[data-theme="midnight"] .theme-card-name {
-    color: #C8D1D8;
+    color: #E8E8E8;
 }
 
 .theme-card[data-theme="midnight"] .theme-card-mode {
-    color: #A76F6F;
+    color: #D0D0D0;
 }
 
 /* 素白（高对比）：用高对比主题的真实配色 */
