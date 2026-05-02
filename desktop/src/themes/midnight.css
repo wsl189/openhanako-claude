@@ -143,3 +143,16 @@
     background: rgba(255, 255, 255, 0.10);
     box-shadow: none;
 }
+
+[data-theme="midnight"] .send-btn,
+[data-theme="midnight"] .send-btn .send-label-text,
+[data-theme="midnight"] .send-btn .send-enter-icon {
+    color: #FFFFFF;
+}
+
+[data-theme="midnight"] .send-btn:disabled {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.24);
+    color: #FFFFFF;
+}
