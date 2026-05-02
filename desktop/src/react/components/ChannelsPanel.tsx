@@ -1111,6 +1111,7 @@ export function ChannelMessages() {
         lastSender = msg.sender;
         return el;
       })}
+      <div className="channel-messages-footer" />
     </div>
   );
 }

@@ -13714,6 +13714,11 @@ a.about-link:hover {
     min-height: 100%;
 }
 
+.channel-messages-footer {
+    height: 5.5rem;
+    flex-shrink: 0;
+}
+
 .channel-msg {
     display: flex;
     gap: 10px;
