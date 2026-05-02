@@ -13715,7 +13715,7 @@ a.about-link:hover {
 }
 
 .channel-messages-footer {
-    height: 5.5rem;
+    height: 7rem;
     flex-shrink: 0;
 }
 
@@ -15247,7 +15247,7 @@ body.resizing .preview-panel-inner {
 
 /* 底部占位（给输入框留出呼吸空间） */
 .chat-session-footer {
-    height: 14rem;
+    height: 16rem;
     flex-shrink: 0;
 }
 
