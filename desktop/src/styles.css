@@ -13715,8 +13715,12 @@ a.about-link:hover {
 }
 
 .channel-messages-footer {
-    height: 7rem;
+    height: 0;
     flex-shrink: 0;
+}
+
+.channel-messages-footer.is-self-latest {
+    height: 7rem;
 }
 
 .channel-msg {
