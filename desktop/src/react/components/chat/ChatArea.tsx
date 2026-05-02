@@ -74,18 +74,6 @@ function isUserMessageItem(item: ChatListItem | undefined): item is Extract<Chat
   return !!item && item.type === 'message' && item.data.role === 'user';
 }
 
-function hasVisibleAssistantContent(message: ChatMessage): boolean {
-  const blocks: ContentBlock[] = Array.isArray(message.blocks) ? message.blocks : [];
-  if (blocks.length === 0) return false;
-  return blocks.some((block) => {
-    if (block.type === 'text') return !!String(block.raw || block.html || '').trim();
-    if (block.type === 'thinking' || block.type === 'xing') return !!String(block.content || '').trim();
-    if (block.type === 'mood') return !!String(block.text || block.yuan || '').trim();
-    if (block.type === 'tool_group') return Array.isArray(block.tools) && block.tools.length > 0;
-    return true;
-  });
-}
-
 function mergeAssistantMessages(prev: ChatMessage, next: ChatMessage): ChatMessage {
   const prevBlocks: ContentBlock[] = Array.isArray(prev.blocks) ? prev.blocks : [];
   const nextBlocks: ContentBlock[] = Array.isArray(next.blocks) ? next.blocks : [];
@@ -142,15 +130,6 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     }
     return -1;
   }, [items, isPathStreaming, lastUserIndex]);
-  const latestMessageIsUser = useMemo(() => {
-    for (let idx = items.length - 1; idx >= 0; idx--) {
-      const item = items[idx];
-      if (item.type !== 'message') continue;
-      if (item.data.role === 'user') return true;
-      if (hasVisibleAssistantContent(item.data)) return false;
-    }
-    return false;
-  }, [items]);
 
   // 判断是否在底部
   const checkAtBottom = () => {
@@ -276,7 +255,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             runningMs={i === streamingAssistantIndex ? runningMs : undefined}
           />
         ))}
-        <div className={`chat-session-footer${latestMessageIsUser ? ' is-user-latest' : ''}`} />
+        <div className="chat-session-footer" />
       </div>
     </div>
   );

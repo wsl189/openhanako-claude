@@ -1026,28 +1026,6 @@ export function ChannelMessages() {
   const ch = channels.find((c) => c.id === currentChannel);
   const isDM = ch?.isDM ?? false;
   const channelMemberKeys = new Set((channelMembers || []).map((m) => String(m || '').trim().toLowerCase()).filter(Boolean));
-  const isSelfChannelMessage = (msg: (typeof messages)[number]) => {
-    const senderNorm = String(msg.sender || '').trim().toLowerCase();
-    const userNameNorm = String(userName || '').trim().toLowerCase();
-    const isMemberSender = !isDM && channelMemberKeys.has(senderNorm);
-    const isGroupUserFallback = !isDM && senderNorm !== 'system' && !isMemberSender;
-    const senderInfo = isGroupUserFallback
-      ? resolveChannelMember(userName || 'user', userName, userAvatarUrl, agents, currentAgentId)
-      : resolveChannelMember(msg.sender, userName, userAvatarUrl, agents, currentAgentId);
-    const isUserSenderAlias =
-      senderNorm === 'user'
-      || senderNorm === '用户'
-      || (!!userNameNorm && senderNorm === userNameNorm);
-    return senderInfo.isUser || isUserSenderAlias || isGroupUserFallback || (isDM && msg.sender === (currentAgentId || ''));
-  };
-  let latestMessage: (typeof messages)[number] | null = null;
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (!messages[i]?.isContextReset) {
-      latestMessage = messages[i];
-      break;
-    }
-  }
-  const latestIsSelf = latestMessage ? isSelfChannelMessage(latestMessage) : false;
   let lastSender: string | null = null;
 
   return (
@@ -1133,7 +1111,6 @@ export function ChannelMessages() {
         lastSender = msg.sender;
         return el;
       })}
-      <div className={`channel-messages-footer${latestIsSelf ? ' is-self-latest' : ''}`} />
     </div>
   );
 }
