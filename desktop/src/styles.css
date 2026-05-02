@@ -13714,6 +13714,11 @@ a.about-link:hover {
     min-height: 100%;
 }
 
+.channel-context-tail-spacer {
+    height: 0;
+    pointer-events: none;
+}
+
 .channel-msg {
     display: flex;
     gap: 10px;

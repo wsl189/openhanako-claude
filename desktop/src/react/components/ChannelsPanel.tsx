@@ -934,24 +934,8 @@ export function ChannelMessages() {
   const userName = useStore((s) => s.userName);
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const isAtBottomRef = useRef(true);
-  const prevMessagesLenRef = useRef(0);
-  const forceStickRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedMsgKey, setCopiedMsgKey] = useState<string | null>(null);
-
-  const checkAtBottom = useCallback(() => {
-    const el = document.getElementById('channelMessages');
-    if (!el) return;
-    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-  }, []);
-
-  const scrollToBottom = useCallback(() => {
-    const el = document.getElementById('channelMessages');
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, []);
 
   useEffect(() => () => {
     if (copyTimerRef.current) {
@@ -972,48 +956,43 @@ export function ChannelMessages() {
     }).catch(() => {});
   }, []);
 
-  // 监听用户滚动，维护“是否贴底”状态
+  // v2.3 频道锚点：新聊天消息出现时，把最后一条消息定位到可视区约 3/4 处。
   useEffect(() => {
     const el = document.getElementById('channelMessages');
     if (!el) return;
-    const onScroll = () => checkAtBottom();
-    el.addEventListener('scroll', onScroll, { passive: true });
-    checkAtBottom();
-    return () => el.removeEventListener('scroll', onScroll);
-  }, [checkAtBottom]);
+    const spacer = el.querySelector('.channel-context-tail-spacer') as HTMLElement | null;
+    const lastMsg = messages[messages.length - 1];
+    const isLastChatMessage = !!lastMsg && !lastMsg.isContextReset;
 
-  // 切换频道时，下一次渲染强制贴底
-  useEffect(() => {
-    if (!currentChannel) return;
-    forceStickRef.current = true;
-    isAtBottomRef.current = true;
-    prevMessagesLenRef.current = 0;
-  }, [currentChannel]);
+    if (isLastChatMessage && spacer) {
+      spacer.style.height = '0px';
 
-  // 新消息到达时：仅在用户原本贴底时继续自动跟随
-  useEffect(() => {
-    const messageAppended = messages.length > prevMessagesLenRef.current;
-    if (forceStickRef.current || (messageAppended && isAtBottomRef.current)) {
       requestAnimationFrame(() => {
-        scrollToBottom();
-        requestAnimationFrame(scrollToBottom);
-      });
-      forceStickRef.current = false;
-    }
-    prevMessagesLenRef.current = messages.length;
-  }, [currentChannel, messages.length, scrollToBottom]);
+        const msgNodes = el.querySelectorAll('.channel-msg');
+        const lastMsgEl = msgNodes.length > 0 ? (msgNodes[msgNodes.length - 1] as HTMLElement) : null;
+        if (!lastMsgEl) return;
 
-  // 内容高度持续变化（长消息渲染、图片加载）时保持贴底
-  useEffect(() => {
-    const content = contentRef.current;
-    if (!content) return;
-    const ro = new ResizeObserver(() => {
-      if (!isAtBottomRef.current) return;
-      scrollToBottom();
-    });
-    ro.observe(content);
-    return () => ro.disconnect();
-  }, [scrollToBottom]);
+        const desiredY = Math.floor(el.clientHeight * 0.75);
+        const containerRect = el.getBoundingClientRect();
+        const msgRect = lastMsgEl.getBoundingClientRect();
+        const currentY = msgRect.top - containerRect.top;
+        const rawTargetTop = Math.max(0, el.scrollTop + currentY - desiredY);
+        const maxScrollable = el.scrollHeight - el.clientHeight;
+        const neededSpace = Math.max(0, rawTargetTop - maxScrollable + 12);
+        spacer.style.height = `${neededSpace}px`;
+
+        requestAnimationFrame(() => {
+          const maxScrollableAfterSpacer = el.scrollHeight - el.clientHeight;
+          const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
+          el.scrollTo({ top: targetTop, behavior: 'smooth' });
+        });
+      });
+      return;
+    }
+
+    if (spacer) spacer.style.height = '0px';
+    el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   if (!currentChannel) {
     return <ChannelWelcomeGroups />;
@@ -1029,7 +1008,7 @@ export function ChannelMessages() {
   let lastSender: string | null = null;
 
   return (
-    <div ref={contentRef} className="channel-messages-content">
+    <div className="channel-messages-content">
       {messages.map((msg, idx) => {
         const msgKey = `${msg.timestamp}-${idx}`;
         if (msg.isContextReset) {
@@ -1111,6 +1090,7 @@ export function ChannelMessages() {
         lastSender = msg.sender;
         return el;
       })}
+      <div className="channel-context-tail-spacer" />
     </div>
   );
 }
