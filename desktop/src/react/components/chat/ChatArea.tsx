@@ -130,6 +130,13 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     }
     return -1;
   }, [items, isPathStreaming, lastUserIndex]);
+  const latestMessageIsUser = useMemo(() => {
+    for (let idx = items.length - 1; idx >= 0; idx--) {
+      const item = items[idx];
+      if (item.type === 'message') return item.data.role === 'user';
+    }
+    return false;
+  }, [items]);
 
   // 判断是否在底部
   const checkAtBottom = () => {
@@ -255,7 +262,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             runningMs={i === streamingAssistantIndex ? runningMs : undefined}
           />
         ))}
-        <div className="chat-session-footer" />
+        <div className={`chat-session-footer${latestMessageIsUser ? ' is-user-latest' : ''}`} />
       </div>
     </div>
   );
