@@ -494,8 +494,9 @@ function InputAreaInner() {
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
+    const minHeight = parseFloat(window.getComputedStyle(el).minHeight) || 0;
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    el.style.height = Math.min(Math.max(el.scrollHeight, minHeight), 120) + 'px';
   }, [inputText]);
 
   // ── Placeholder from yuan ──

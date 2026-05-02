@@ -7252,6 +7252,7 @@ body.resizing .jian-sidebar-inner {
 
 .input-box {
     width: 100%;
+    min-height: 2.1rem;
     font-family: var(--font-serif);
     font-size: 0.95rem;
     line-height: 1.6;
@@ -14016,6 +14017,7 @@ a.about-link:hover {
 
 .channel-input-box {
     flex: 1;
+    min-height: 44px;
     resize: none;
     border: 1px solid var(--overlay-medium);
     border-radius: var(--radius-md);
@@ -14035,8 +14037,8 @@ a.about-link:hover {
 }
 
 .channel-send-btn {
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     align-self: flex-end;
     box-sizing: border-box;
     border-radius: var(--radius-md);

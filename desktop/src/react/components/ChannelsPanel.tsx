@@ -1233,7 +1233,8 @@ export function ChannelInput() {
     const borderTop = parseFloat(cs.borderTopWidth) || 0;
     const borderBottom = parseFloat(cs.borderBottomWidth) || 0;
     const chrome = paddingTop + paddingBottom + borderTop + borderBottom;
-    const minHeight = Math.ceil(lineHeight + chrome);
+    const cssMinHeight = parseFloat(cs.minHeight) || 0;
+    const minHeight = Math.max(Math.ceil(lineHeight + chrome), cssMinHeight);
     const maxHeight = Math.ceil(lineHeight * 5 + chrome);
 
     el.style.height = 'auto';
