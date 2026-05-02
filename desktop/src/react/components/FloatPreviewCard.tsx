@@ -128,7 +128,7 @@ function SessionListCard({ onAction }: { onAction: () => void }) {
         <span className="float-card-bar-divider" />
         <div
           className="float-card-bar-btn float-card-bar-icon"
-          title={t('settings.title')}
+          aria-label={t('settings.title')}
           onClick={() => { onAction(); (window as any).platform?.openSettings(); }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

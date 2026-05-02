@@ -886,8 +886,8 @@ const ToolIndicator = memo(function ToolIndicator({
         data-done={String(tool.done)}
         onClick={() => { if (canExpand) setExpanded((v) => !v); }}
         aria-expanded={canExpand ? expanded : undefined}
+        aria-label={label}
         disabled={!canExpand}
-        title={label}
       >
         <span className="tool-leading">{phase === 'failed' ? '!' : (phase === 'done' ? '✓' : '›')}</span>
         <span className="tool-desc">{renderActionLineWithDiffColors(actionLine)}</span>
