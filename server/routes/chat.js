@@ -165,6 +165,11 @@ function getTurnTimeoutMessage(timeoutMs) {
   return `等待模型回复超时（${sec} 秒），已自动停止。请重试。`;
 }
 
+function getSteerPromptText(text) {
+  const isZh = (process.env.HANAKO_LANG || "zh").startsWith("zh");
+  return `${isZh ? "（插话）\n" : "(Interjection)\n"}${text}`;
+}
+
 /**
  * 从内容块中提取纯文本
  */
@@ -1153,16 +1158,18 @@ export default async function chatRoute(app, { engine, hub }) {
       if (msg.type === "steer" && msg.text) {
         debugLog()?.log("ws", `steer (${msg.text.length} chars)`);
         const steerPath = msg.sessionPath || engine.currentSessionPath;
-        if (engine.steerSession(steerPath, msg.text)) {
-          // 插话本质上会中断当前生成轮，避免该轮 turn_end 被误判为“空回复”。
+        if (engine.isSessionStreaming(steerPath)) {
           const ss = steerPath ? getState(steerPath) : null;
-          if (ss) ss.userAborted = true;
+          if (ss) {
+            ss.userAborted = true;
+            finalizeAbortedTurn(steerPath, ss);
+          }
+          try { await hub.abort(steerPath); } catch {}
           wsSend(ws, { type: "steered" });
-          return;
         }
-        // agent 已停止，降级为正常 prompt（下面的 prompt 分支会处理）
-        debugLog()?.log("ws", `steer missed, falling back to prompt`);
+        // 插话作为新一轮 prompt 立即进入，避免旧轮思考/工具链在同一轮里被重新回放。
         msg.type = "prompt";
+        msg.text = getSteerPromptText(msg.text);
       }
 
       // session 切回时，前端请求补发离屏期间的流式内容
