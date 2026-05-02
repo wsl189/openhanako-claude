@@ -73,6 +73,69 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     });
   });
 
+  it("does not emit content_block_start text when text deltas follow", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-text-start-plus-delta";
+
+    let translated = coordinator._translateClaudeEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "完整正文" },
+      },
+    }, sessionPath);
+
+    expect(translated).toEqual([]);
+
+    translated = coordinator._translateClaudeEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "完整" },
+      },
+    }, sessionPath);
+
+    expect(translated).toEqual([{ type: "text_delta", delta: "完整" }]);
+
+    translated = coordinator._translateClaudeEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_stop",
+        index: 0,
+      },
+    }, sessionPath);
+
+    expect(translated).toEqual([]);
+  });
+
+  it("emits content_block_start text on stop when no text deltas arrive", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-text-start-only";
+
+    let translated = coordinator._translateClaudeEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "只有起始块正文" },
+      },
+    }, sessionPath);
+
+    expect(translated).toEqual([]);
+
+    translated = coordinator._translateClaudeEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_stop",
+        index: 0,
+      },
+    }, sessionPath);
+
+    expect(translated).toEqual([{ type: "text_delta", delta: "只有起始块正文" }]);
+  });
+
   it("emits sdk_message for user tool_result blocks", () => {
     const coordinator = new SessionCoordinator({});
 

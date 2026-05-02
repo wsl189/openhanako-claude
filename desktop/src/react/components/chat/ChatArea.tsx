@@ -5,7 +5,7 @@
  * 不用 Virtuoso，不用 Activity，不用快照，不用任何花活。
  */
 
-import { memo, useCallback, useRef, useEffect, useState, useMemo } from 'react';
+import { memo, useRef, useEffect, useState, useMemo } from 'react';
 import { useStore } from '../../stores';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
@@ -65,9 +65,6 @@ function PanelHost() {
 // ── Panel：一个 session 的原生滚动容器 ──
 
 const SCROLL_THRESHOLD = 300;
-const INPUT_GAP = 12;
-const USER_MESSAGE_ANCHOR_RATIO = 0.70;
-const ASSISTANT_REPLY_MIN_TOP_RATIO = 0.70;
 
 function isAssistantMessageItem(item: ChatListItem | undefined): item is Extract<ChatListItem, { type: 'message' }> {
   return !!item && item.type === 'message' && item.data.role === 'assistant';
@@ -117,11 +114,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const [streamingNow, setStreamingNow] = useState<number>(Date.now());
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const footerRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
-  const anchoredUserIdRef = useRef<string | null>(null);
-  const anchoredAssistantIdRef = useRef<string | null>(null);
-  const followReplyRef = useRef(false);
   const suppressAutoScrollUntil = useRef(0);
   const lastUserIndex = useMemo(() => {
     for (let idx = items.length - 1; idx >= 0; idx--) {
@@ -145,225 +138,11 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     isAtBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
   };
 
-  const getInputTop = useCallback(() => {
-    const el = ref.current;
-    if (!el) return 0;
-    const input = document.querySelector('.input-area:not(.hidden)') as HTMLElement | null;
-    if (!input) return el.clientHeight;
-    const panelRect = el.getBoundingClientRect();
-    const inputRect = input.getBoundingClientRect();
-    const inputTop = inputRect.top - panelRect.top;
-    if (!Number.isFinite(inputTop)) return el.clientHeight;
-    return Math.max(0, Math.min(el.clientHeight, inputTop));
-  }, []);
-
-  const setFooterHeight = useCallback((height: number) => {
-    const footer = footerRef.current;
-    if (!footer) return;
-    const next = `${Math.max(0, Math.ceil(height))}px`;
-    if (footer.style.height !== next) footer.style.height = next;
-  }, []);
-
-  const getFooterHeight = useCallback(() => {
-    const footer = footerRef.current;
-    if (!footer) return 0;
-    return footer.getBoundingClientRect().height;
-  }, []);
-
-  const getFollowFooterHeight = useCallback(() => {
-    const el = ref.current;
-    if (!el) return 0;
-    return Math.max(0, el.clientHeight - getInputTop() + INPUT_GAP);
-  }, [getInputTop]);
-
-  const getFooterHeightForTargetTop = useCallback((targetTop: number, minHeight: number) => {
-    const el = ref.current;
-    if (!el) return minHeight;
-    const maxScrollable = Math.max(0, el.scrollHeight - el.clientHeight);
-    const maxScrollableWithoutFooter = Math.max(0, maxScrollable - getFooterHeight());
-    return Math.max(minHeight, targetTop - maxScrollableWithoutFooter + INPUT_GAP);
-  }, [getFooterHeight]);
-
   // 滚到底
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = () => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, []);
-
-  const showBottomImmediately = useCallback(() => {
-    anchoredUserIdRef.current = null;
-    anchoredAssistantIdRef.current = null;
-    followReplyRef.current = true;
-    setFooterHeight(getFollowFooterHeight());
-    scrollToBottom();
-    isAtBottom.current = true;
-  }, [getFollowFooterHeight, scrollToBottom, setFooterHeight]);
-
-  const findMessageElement = useCallback((messageId: string) => {
-    const el = ref.current;
-    if (!el) return null;
-    return el.querySelector<HTMLElement>(`.chat-session-item[data-chat-message-id="${CSS.escape(messageId)}"]`);
-  }, []);
-
-  const findAssistantFollowElement = useCallback((messageId: string) => {
-    const msgEl = findMessageElement(messageId);
-    if (!msgEl) return null;
-    const primaryReplyEl = msgEl.querySelector<HTMLElement>([
-      '.assistant-final-reply',
-      '.file-output-card',
-      '.artifact-card',
-      '.browser-screenshot',
-      '.skill-card',
-      '.cron-confirm-card',
-      '.settings-confirm-card',
-    ].join(', '));
-    if (primaryReplyEl) return primaryReplyEl;
-
-    // 在最终文本出现前，纯思考/执行链也需要作为当前回复被输入框顶起。
-    return msgEl.querySelector<HTMLElement>('.message.assistant');
-  }, [findMessageElement]);
-
-  const anchorElementAtInputRatio = useCallback((targetEl: HTMLElement, ratio: number) => {
-    const el = ref.current;
-    if (!el || !targetEl.isConnected) return;
-
-    setFooterHeight(0);
-    requestAnimationFrame(() => {
-      if (!targetEl.isConnected) return;
-      const visibleBottom = getInputTop();
-      const desiredY = Math.floor(visibleBottom * ratio);
-      const containerRect = el.getBoundingClientRect();
-      const msgRect = targetEl.getBoundingClientRect();
-      const currentY = msgRect.top - containerRect.top;
-      const rawTargetTop = Math.max(0, el.scrollTop + currentY - desiredY);
-      const maxScrollable = el.scrollHeight - el.clientHeight;
-      const neededSpace = Math.max(getFollowFooterHeight(), rawTargetTop - maxScrollable + INPUT_GAP);
-      setFooterHeight(neededSpace);
-
-      requestAnimationFrame(() => {
-        const maxScrollableAfterSpacer = el.scrollHeight - el.clientHeight;
-        const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
-        el.scrollTo({ top: targetTop, behavior: 'smooth' });
-        isAtBottom.current = false;
-      });
-    });
-  }, [getFollowFooterHeight, getInputTop, setFooterHeight]);
-
-  const anchorUserAtInputRatio = useCallback((messageId: string) => {
-    const msgEl = findMessageElement(messageId);
-    if (!msgEl) return;
-    anchorElementAtInputRatio(msgEl, USER_MESSAGE_ANCHOR_RATIO);
-  }, [anchorElementAtInputRatio, findMessageElement]);
-
-  const followAssistantReplyWithMinAnchor = useCallback((replyEl: HTMLElement) => {
-    const el = ref.current;
-    if (!el || !replyEl.isConnected) return;
-
-    const visibleBottom = getInputTop();
-    const minTopY = Math.floor(visibleBottom * ASSISTANT_REPLY_MIN_TOP_RATIO);
-    const availableBelowAnchor = Math.max(0, visibleBottom - minTopY - INPUT_GAP);
-    const panelRect = el.getBoundingClientRect();
-    const replyRect = replyEl.getBoundingClientRect();
-    const currentTopY = replyRect.top - panelRect.top;
-    const currentBottomY = replyRect.bottom - panelRect.top;
-    const targetTop = replyRect.height <= availableBelowAnchor
-      ? el.scrollTop + currentTopY - minTopY
-      : el.scrollTop + currentBottomY - (visibleBottom - INPUT_GAP);
-    const rawTargetTop = Math.max(0, targetTop);
-    const neededSpace = getFooterHeightForTargetTop(rawTargetTop, getFollowFooterHeight());
-    setFooterHeight(neededSpace);
-
-    requestAnimationFrame(() => {
-      const maxScrollableAfterSpacer = Math.max(0, el.scrollHeight - el.clientHeight);
-      const nextTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
-      el.scrollTo({ top: nextTop, behavior: 'smooth' });
-      isAtBottom.current = nextTop >= maxScrollableAfterSpacer - SCROLL_THRESHOLD;
-    });
-  }, [getFollowFooterHeight, getInputTop, setFooterHeight]);
-
-  const syncChatScrollAnchor = useCallback(() => {
-    if (!active || items.length === 0) return;
-    const el = ref.current;
-    if (!el) return;
-
-    let latestUser: ChatMessage | null = null;
-    let latestUserIndex = -1;
-    for (let idx = items.length - 1; idx >= 0; idx -= 1) {
-      const item = items[idx];
-      if (item.type === 'message' && item.data.role === 'user') {
-        latestUser = item.data;
-        latestUserIndex = idx;
-        break;
-      }
-    }
-
-    const latestMessageItem = [...items].reverse().find((item) => item.type === 'message');
-    if (!latestMessageItem || latestMessageItem.type !== 'message') {
-      anchoredUserIdRef.current = null;
-      anchoredAssistantIdRef.current = null;
-      followReplyRef.current = false;
-      showBottomImmediately();
-      return;
-    }
-
-    if (!latestUser) {
-      showBottomImmediately();
-      return;
-    }
-
-    const latestAssistantAfterUser = items
-      .slice(latestUserIndex + 1)
-      .find((item): item is Extract<ChatListItem, { type: 'message' }> => (
-        item.type === 'message' && item.data.role === 'assistant'
-      ));
-
-    if (anchoredUserIdRef.current !== latestUser.id) {
-      anchoredUserIdRef.current = latestUser.id;
-      anchoredAssistantIdRef.current = null;
-      followReplyRef.current = false;
-      anchorUserAtInputRatio(latestUser.id);
-      return;
-    }
-
-    if (!latestAssistantAfterUser) {
-      if (!followReplyRef.current) return;
-      anchoredAssistantIdRef.current = null;
-      followReplyRef.current = false;
-      anchorUserAtInputRatio(latestUser.id);
-      return;
-    }
-
-    // 历史会话恢复时不要把最后一条 assistant 摘要/短回复重新吸到底部；
-    // 只有当前正在流式输出的新回复，才进入 assistant 跟随逻辑。
-    if (!isPathStreaming) return;
-
-    const msgEl = findAssistantFollowElement(latestAssistantAfterUser.data.id);
-    if (!msgEl) return;
-    if (anchoredAssistantIdRef.current !== latestAssistantAfterUser.data.id) {
-      anchoredAssistantIdRef.current = latestAssistantAfterUser.data.id;
-      followReplyRef.current = false;
-      anchorElementAtInputRatio(msgEl, ASSISTANT_REPLY_MIN_TOP_RATIO);
-      return;
-    }
-
-    const panelRect = el.getBoundingClientRect();
-    const msgRect = msgEl.getBoundingClientRect();
-    const replyReachedInput = msgRect.bottom - panelRect.top >= getInputTop() - INPUT_GAP;
-    if (!followReplyRef.current && !replyReachedInput) return;
-
-    followReplyRef.current = true;
-    followAssistantReplyWithMinAnchor(msgEl);
-  }, [
-    active,
-    anchorElementAtInputRatio,
-    anchorUserAtInputRatio,
-    findAssistantFollowElement,
-    followAssistantReplyWithMinAnchor,
-    getInputTop,
-    isPathStreaming,
-    items,
-    showBottomImmediately,
-  ]);
+  };
 
   // scroll 事件维护 isAtBottom 标志
   useEffect(() => {
@@ -374,17 +153,19 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  // ResizeObserver：内容高度变化时，按“用户锚点 → 回复触顶后贴底”的策略调整滚动。
+  // ResizeObserver：内容高度变化 + 在底部 → 自动滚
   useEffect(() => {
     const content = contentRef.current;
     if (!content) return;
     const ro = new ResizeObserver(() => {
       if (Date.now() < suppressAutoScrollUntil.current) return;
-      syncChatScrollAnchor();
+      if (active && isAtBottom.current) {
+        scrollToBottom();
+      }
     });
     ro.observe(content);
     return () => ro.disconnect();
-  }, [syncChatScrollAnchor]);
+  }, [active]);
 
   // 点击执行链/思考链的展开收起时，锁定点击锚点位置并临时禁用自动吸底
   useEffect(() => {
@@ -418,25 +199,26 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     return () => el.removeEventListener('click', onClickCapture, true);
   }, []);
 
-  // 首次有内容 → 应用当前消息锚点，避免会话切换后回到底部。
+  // 首次有内容 → 滚到底
   const scrolledOnce = useRef(false);
   useEffect(() => {
     if (scrolledOnce.current) return;
     if (items.length > 0) {
-      requestAnimationFrame(syncChatScrollAnchor);
+      scrollToBottom();
+      isAtBottom.current = true;
       scrolledOnce.current = true;
     }
-  }, [items.length, syncChatScrollAnchor]);
+  }, [items.length]);
 
+  // 新消息加入 → 强制 sticky（发送消息后自动跟随）
+  const prevLen = useRef(items.length);
   useEffect(() => {
-    if (!active || items.length === 0) return;
-    requestAnimationFrame(syncChatScrollAnchor);
-  }, [active, items.length, syncChatScrollAnchor]);
-
-  // 新消息加入 → 用户消息先锚在 65%，回复触到输入框上方后再自动贴底。
-  useEffect(() => {
-    syncChatScrollAnchor();
-  }, [syncChatScrollAnchor]);
+    if (items.length > prevLen.current && active) {
+      isAtBottom.current = true;
+      scrollToBottom();
+    }
+    prevLen.current = items.length;
+  }, [items.length, active]);
 
   useEffect(() => {
     if (!isPathStreaming) return undefined;
@@ -464,24 +246,16 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       }}
     >
       <div ref={contentRef} className="chat-session-messages">
-        {items.map((item, i) => {
-          const itemKey = item.type === 'message' ? item.data.id : `c-${i}`;
-          return (
-            <div
-              key={itemKey}
-              className="chat-session-item"
-              data-chat-message-id={item.type === 'message' ? item.data.id : undefined}
-            >
-              <ItemView
-                item={item}
-                prevItem={i > 0 ? items[i - 1] : undefined}
-                isStreamingMessage={i === streamingAssistantIndex}
-                runningMs={i === streamingAssistantIndex ? runningMs : undefined}
-              />
-            </div>
-          );
-        })}
-        <div ref={footerRef} className="chat-session-footer" />
+        {items.map((item, i) => (
+          <ItemView
+            key={item.type === 'message' ? item.data.id : `c-${i}`}
+            item={item}
+            prevItem={i > 0 ? items[i - 1] : undefined}
+            isStreamingMessage={i === streamingAssistantIndex}
+            runningMs={i === streamingAssistantIndex ? runningMs : undefined}
+          />
+        ))}
+        <div className="chat-session-footer" />
       </div>
     </div>
   );

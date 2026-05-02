@@ -434,6 +434,8 @@ export class SessionCoordinator {
       this._streamState.set(sessionPath, {
         blockTypes: new Map(),
         blockToolUseByIndex: new Map(),
+        pendingTextBlockStartByIndex: new Map(),
+        textDeltaSeenByIndex: new Set(),
         toolCalls: new Map(),
         turnSawStructuredToolUse: false,
         turnSawTextToolMarkup: false,
@@ -485,12 +487,23 @@ export class SessionCoordinator {
             args: block.input,
           });
         } else if (block?.type === "text" && typeof block.text === "string" && block.text) {
-          translated.push({ type: "text_delta", delta: block.text });
+          if (TEXT_TOOL_MARKUP_RE.test(block.text)) {
+            state.turnSawTextToolMarkup = true;
+          }
+          if (Number.isInteger(raw.index)) {
+            state.pendingTextBlockStartByIndex.set(raw.index, block.text);
+          } else {
+            translated.push({ type: "text_delta", delta: block.text });
+          }
         }
       } else if (raw?.type === "content_block_delta") {
         if (raw?.delta?.type === "text_delta") {
           if (TEXT_TOOL_MARKUP_RE.test(raw.delta.text || "")) {
             state.turnSawTextToolMarkup = true;
+          }
+          if (Number.isInteger(raw.index)) {
+            state.textDeltaSeenByIndex.add(raw.index);
+            state.pendingTextBlockStartByIndex.delete(raw.index);
           }
           translated.push({ type: "text_delta", delta: raw.delta.text || "" });
         } else if (raw?.delta?.type === "thinking_delta") {
@@ -520,6 +533,14 @@ export class SessionCoordinator {
         const blockType = state.blockTypes.get(raw.index);
         if (blockType === "thinking") {
           translated.push({ type: "thinking_end" });
+        }
+        if (blockType === "text") {
+          const pendingText = state.pendingTextBlockStartByIndex.get(raw.index);
+          if (pendingText && !state.textDeltaSeenByIndex.has(raw.index)) {
+            translated.push({ type: "text_delta", delta: pendingText });
+          }
+          state.pendingTextBlockStartByIndex.delete(raw.index);
+          state.textDeltaSeenByIndex.delete(raw.index);
         }
         if (blockType === "tool_use") {
           state.blockToolUseByIndex.delete(raw.index);
@@ -733,6 +754,8 @@ export class SessionCoordinator {
       translated.push({ type: "turn_end" });
       state.blockTypes.clear();
       state.blockToolUseByIndex.clear();
+      state.pendingTextBlockStartByIndex.clear();
+      state.textDeltaSeenByIndex.clear();
       state.toolCalls.clear();
       state.turnSawStructuredToolUse = false;
       state.turnSawTextToolMarkup = false;
@@ -747,6 +770,8 @@ export class SessionCoordinator {
       translated.push({ type: "turn_end" });
       state.blockTypes.clear();
       state.blockToolUseByIndex.clear();
+      state.pendingTextBlockStartByIndex.clear();
+      state.textDeltaSeenByIndex.clear();
       state.toolCalls.clear();
       state.turnSawStructuredToolUse = false;
       state.turnSawTextToolMarkup = false;
