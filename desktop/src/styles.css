@@ -15247,7 +15247,7 @@ body.resizing .preview-panel-inner {
 
 /* 底部占位（给输入框留出呼吸空间） */
 .chat-session-footer {
-    height: 12rem;
+    height: 14rem;
     flex-shrink: 0;
 }
 
