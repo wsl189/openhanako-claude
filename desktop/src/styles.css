@@ -15260,6 +15260,13 @@ body.resizing .preview-panel-inner {
     width: 100%;
 }
 
+.chat-session-head-spacer,
+.chat-session-tail-spacer {
+    height: 0;
+    flex-shrink: 0;
+    pointer-events: none;
+}
+
 /* 底部占位（给输入框留出呼吸空间） */
 .chat-session-footer {
     height: 12rem;

@@ -5,7 +5,7 @@
  * 不用 Virtuoso，不用 Activity，不用快照，不用任何花活。
  */
 
-import { memo, useRef, useEffect, useState, useMemo } from 'react';
+import { memo, useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useStore } from '../../stores';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
@@ -65,6 +65,9 @@ function PanelHost() {
 // ── Panel：一个 session 的原生滚动容器 ──
 
 const SCROLL_THRESHOLD = 300;
+const LATEST_TURN_ANCHOR_RATIO = 0.70;
+const INPUT_SAFE_GAP = 12;
+const LATEST_TURN_ANCHOR_GUARD_MS = 500;
 
 function isAssistantMessageItem(item: ChatListItem | undefined): item is Extract<ChatListItem, { type: 'message' }> {
   return !!item && item.type === 'message' && item.data.role === 'assistant';
@@ -114,8 +117,13 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const [streamingNow, setStreamingNow] = useState<number>(Date.now());
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const headSpacerRef = useRef<HTMLDivElement>(null);
+  const tailSpacerRef = useRef<HTMLDivElement>(null);
   const isAtBottom = useRef(true);
   const suppressAutoScrollUntil = useRef(0);
+  const anchoredUserIdRef = useRef<string | null>(null);
+  const followReplyRef = useRef(false);
+  const latestTurnAnchorGuardUntil = useRef(0);
   const lastUserIndex = useMemo(() => {
     for (let idx = items.length - 1; idx >= 0; idx--) {
       if (isUserMessageItem(items[idx])) return idx;
@@ -130,6 +138,10 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     }
     return -1;
   }, [items, isPathStreaming, lastUserIndex]);
+  const lastUserId = useMemo(() => {
+    const item = lastUserIndex >= 0 ? items[lastUserIndex] : undefined;
+    return isUserMessageItem(item) ? item.data.id : null;
+  }, [items, lastUserIndex]);
 
   // 判断是否在底部
   const checkAtBottom = () => {
@@ -144,6 +156,145 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     if (el) el.scrollTop = el.scrollHeight;
   };
 
+  const clearTurnSpacers = useCallback(() => {
+    if (headSpacerRef.current) headSpacerRef.current.style.height = '0px';
+    if (tailSpacerRef.current) tailSpacerRef.current.style.height = '0px';
+  }, []);
+
+  const scrollToBottomAfterSpacerReset = useCallback(() => {
+    clearTurnSpacers();
+    requestAnimationFrame(() => {
+      scrollToBottom();
+      isAtBottom.current = true;
+    });
+  }, [clearTurnSpacers]);
+
+  const findItemElement = useCallback((index: number) => {
+    const el = ref.current;
+    if (!el || index < 0) return null;
+    return el.querySelector<HTMLElement>(`.chat-session-item[data-chat-item-index="${index}"]`);
+  }, []);
+
+  const getSafeBottomY = useCallback((el: HTMLElement) => {
+    const panelRect = el.getBoundingClientRect();
+    const inputEl = document.querySelector('.input-area:not(.hidden)') as HTMLElement | null;
+    if (!inputEl) return el.clientHeight - INPUT_SAFE_GAP;
+    const inputRect = inputEl.getBoundingClientRect();
+    return Math.max(0, Math.min(el.clientHeight, inputRect.top - panelRect.top - INPUT_SAFE_GAP));
+  }, []);
+
+  const anchorMessageAtRatio = useCallback((msgEl: HTMLElement) => {
+    const el = ref.current;
+    const headSpacer = headSpacerRef.current;
+    const tailSpacer = tailSpacerRef.current;
+    if (!el || !headSpacer || !tailSpacer) return;
+
+    headSpacer.style.height = '0px';
+    tailSpacer.style.height = '0px';
+
+    requestAnimationFrame(() => {
+      if (!msgEl.isConnected) return;
+      const desiredY = Math.floor(el.clientHeight * LATEST_TURN_ANCHOR_RATIO);
+      const containerRect = el.getBoundingClientRect();
+      const msgRect = msgEl.getBoundingClientRect();
+      const currentY = msgRect.top - containerRect.top;
+
+      if (el.scrollTop <= 1 && currentY < desiredY) {
+        headSpacer.style.height = `${Math.ceil(desiredY - currentY)}px`;
+      }
+
+      requestAnimationFrame(() => {
+        if (!msgEl.isConnected) return;
+        const nextContainerRect = el.getBoundingClientRect();
+        const nextMsgRect = msgEl.getBoundingClientRect();
+        const nextY = nextMsgRect.top - nextContainerRect.top;
+        const rawTargetTop = Math.max(0, el.scrollTop + nextY - desiredY);
+        const maxScrollable = Math.max(0, el.scrollHeight - el.clientHeight);
+        const neededTailSpace = Math.max(0, rawTargetTop - maxScrollable + INPUT_SAFE_GAP);
+        tailSpacer.style.height = `${neededTailSpace}px`;
+
+        requestAnimationFrame(() => {
+          const maxScrollableAfterSpacer = Math.max(0, el.scrollHeight - el.clientHeight);
+          const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
+          el.scrollTo({ top: targetTop, behavior: 'smooth' });
+          isAtBottom.current = false;
+        });
+      });
+    });
+  }, []);
+
+  const restoredTurnWouldOverflowInput = useCallback((userEl: HTMLElement) => {
+    const el = ref.current;
+    if (!el) return false;
+    const lastItemEl = findItemElement(items.length - 1);
+    if (!lastItemEl) return false;
+
+    const userRect = userEl.getBoundingClientRect();
+    const lastRect = lastItemEl.getBoundingClientRect();
+    const latestTurnHeight = Math.max(0, lastRect.bottom - userRect.top);
+    const desiredY = Math.floor(el.clientHeight * LATEST_TURN_ANCHOR_RATIO);
+    const safeBottomY = getSafeBottomY(el);
+    return desiredY + latestTurnHeight >= safeBottomY;
+  }, [findItemElement, getSafeBottomY, items.length]);
+
+  const syncLatestTurnScroll = useCallback(() => {
+    if (!active) return;
+    const el = ref.current;
+    const headSpacer = headSpacerRef.current;
+    const tailSpacer = tailSpacerRef.current;
+    if (!el || !headSpacer || !tailSpacer || items.length === 0) return;
+
+    if (lastUserIndex >= 0 && lastUserId && anchoredUserIdRef.current !== lastUserId) {
+      const userEl = findItemElement(lastUserIndex);
+      if (!userEl) return;
+      anchoredUserIdRef.current = lastUserId;
+      followReplyRef.current = false;
+      latestTurnAnchorGuardUntil.current = Date.now() + LATEST_TURN_ANCHOR_GUARD_MS;
+      if (!isPathStreaming && restoredTurnWouldOverflowInput(userEl)) {
+        followReplyRef.current = true;
+        latestTurnAnchorGuardUntil.current = 0;
+        scrollToBottomAfterSpacerReset();
+        return;
+      }
+      anchorMessageAtRatio(userEl);
+      return;
+    }
+
+    if (!anchoredUserIdRef.current) {
+      if (items.length > 0) scrollToBottom();
+      return;
+    }
+
+    if (!isPathStreaming && !followReplyRef.current) return;
+
+    const lastItemEl = findItemElement(items.length - 1);
+    if (!lastItemEl) return;
+    const containerRect = el.getBoundingClientRect();
+    const lastRect = lastItemEl.getBoundingClientRect();
+    const lastBottomY = lastRect.bottom - containerRect.top;
+    const safeBottomY = getSafeBottomY(el);
+    const reachedInput = lastBottomY >= safeBottomY;
+
+    if (!followReplyRef.current && Date.now() < latestTurnAnchorGuardUntil.current) return;
+
+    if (!followReplyRef.current && !reachedInput) return;
+
+    followReplyRef.current = true;
+    latestTurnAnchorGuardUntil.current = 0;
+    scrollToBottomAfterSpacerReset();
+  }, [
+    active,
+    anchorMessageAtRatio,
+    findItemElement,
+    getSafeBottomY,
+    isPathStreaming,
+    items.length,
+    lastUserId,
+    lastUserIndex,
+    restoredTurnWouldOverflowInput,
+    scrollToBottomAfterSpacerReset,
+  ]);
+
   // scroll 事件维护 isAtBottom 标志
   useEffect(() => {
     const el = ref.current;
@@ -153,19 +304,17 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  // ResizeObserver：内容高度变化 + 在底部 → 自动滚
+  // ResizeObserver：内容高度变化时同步最新一轮的 70% 锚点与后续上顶
   useEffect(() => {
     const content = contentRef.current;
     if (!content) return;
     const ro = new ResizeObserver(() => {
       if (Date.now() < suppressAutoScrollUntil.current) return;
-      if (active && isAtBottom.current) {
-        scrollToBottom();
-      }
+      syncLatestTurnScroll();
     });
     ro.observe(content);
     return () => ro.disconnect();
-  }, [active]);
+  }, [syncLatestTurnScroll]);
 
   // 点击执行链/思考链的展开收起时，锁定点击锚点位置并临时禁用自动吸底
   useEffect(() => {
@@ -199,26 +348,10 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     return () => el.removeEventListener('click', onClickCapture, true);
   }, []);
 
-  // 首次有内容 → 滚到底
-  const scrolledOnce = useRef(false);
+  // 首次/切回当前 session/消息结构变化时，同步最新一轮位置
   useEffect(() => {
-    if (scrolledOnce.current) return;
-    if (items.length > 0) {
-      scrollToBottom();
-      isAtBottom.current = true;
-      scrolledOnce.current = true;
-    }
-  }, [items.length]);
-
-  // 新消息加入 → 强制 sticky（发送消息后自动跟随）
-  const prevLen = useRef(items.length);
-  useEffect(() => {
-    if (items.length > prevLen.current && active) {
-      isAtBottom.current = true;
-      scrollToBottom();
-    }
-    prevLen.current = items.length;
-  }, [items.length, active]);
+    syncLatestTurnScroll();
+  }, [syncLatestTurnScroll]);
 
   useEffect(() => {
     if (!isPathStreaming) return undefined;
@@ -246,15 +379,26 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       }}
     >
       <div ref={contentRef} className="chat-session-messages">
-        {items.map((item, i) => (
-          <ItemView
-            key={item.type === 'message' ? item.data.id : `c-${i}`}
-            item={item}
-            prevItem={i > 0 ? items[i - 1] : undefined}
-            isStreamingMessage={i === streamingAssistantIndex}
-            runningMs={i === streamingAssistantIndex ? runningMs : undefined}
-          />
-        ))}
+        <div ref={headSpacerRef} className="chat-session-head-spacer" />
+        {items.map((item, i) => {
+          const role = item.type === 'message' ? item.data.role : item.type;
+          return (
+            <div
+              key={item.type === 'message' ? item.data.id : `c-${i}`}
+              className="chat-session-item"
+              data-chat-item-index={i}
+              data-chat-role={role}
+            >
+              <ItemView
+                item={item}
+                prevItem={i > 0 ? items[i - 1] : undefined}
+                isStreamingMessage={i === streamingAssistantIndex}
+                runningMs={i === streamingAssistantIndex ? runningMs : undefined}
+              />
+            </div>
+          );
+        })}
+        <div ref={tailSpacerRef} className="chat-session-tail-spacer" />
         <div className="chat-session-footer" />
       </div>
     </div>
