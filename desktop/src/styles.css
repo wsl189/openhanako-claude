@@ -4637,7 +4637,7 @@ html[data-platform="darwin"] .sv-topbar-title {
 
 .tool-group {
     margin: 0.2rem 0;
-    max-width: 100%;
+    max-width: min(100%, 900px);
     width: 100%;
     border: 0;
     background: transparent;
@@ -4876,6 +4876,8 @@ html[data-platform="darwin"] .sv-topbar-title {
 
 .tool-panel {
     margin: 0.18rem 0 0.34rem 1.2rem;
+    max-width: min(100%, 900px);
+    box-sizing: border-box;
     padding: 0.45rem 0.55rem;
     border-radius: 10px;
     border: 1px solid color-mix(in oklab, var(--overlay-light) 82%, transparent);
