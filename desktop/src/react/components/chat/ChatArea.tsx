@@ -333,6 +333,10 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       return;
     }
 
+    // 历史会话恢复时不要把最后一条 assistant 摘要/短回复重新吸到底部；
+    // 只有当前正在流式输出的新回复，才进入 assistant 跟随逻辑。
+    if (!isPathStreaming) return;
+
     const msgEl = findAssistantFollowElement(latestAssistantAfterUser.data.id);
     if (!msgEl) return;
     if (anchoredAssistantIdRef.current !== latestAssistantAfterUser.data.id) {
@@ -356,6 +360,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     findAssistantFollowElement,
     followAssistantReplyWithMinAnchor,
     getInputTop,
+    isPathStreaming,
     items,
     showBottomImmediately,
   ]);
