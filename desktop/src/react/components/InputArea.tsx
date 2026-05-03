@@ -100,6 +100,18 @@ interface SlashCommand {
   execute: () => Promise<void>;
 }
 
+type QueuedChatTask = {
+  id: string;
+  sessionPath: string;
+  text: string;
+  finalText: string;
+  attachments?: AttachedFile[];
+  renderAttachments?: Array<AttachedFile & { isDir?: boolean }>;
+  images?: Array<{ type: 'image'; data: string; mimeType: string }>;
+  modelId?: string;
+  createdAt: number;
+};
+
 // ── 主组件 ──
 
 export function InputArea() {
@@ -152,9 +164,11 @@ function InputAreaInner() {
   const [slashSelected, setSlashSelected] = useState(0);
   const [slashBusy, setSlashBusy] = useState<string | null>(null); // command name while executing
   const [slashResult, setSlashResult] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [queuedTasks, setQueuedTasks] = useState<QueuedChatTask[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isComposing = useRef(false);
+  const processingQueuedTaskRef = useRef(false);
   const voiceAnchorRef = useRef<{ prefix: string; suffix: string; interim: string } | null>(null);
   const textDraftBySessionRef = useRef<Record<string, string>>({});
   const attachmentDraftBySessionRef = useRef<Record<string, AttachedFile[]>>({});
@@ -302,6 +316,10 @@ function InputAreaInner() {
     ? streamingSessions.includes(currentSessionPath)
     : isStreaming;
   const inputIsStreaming = isStreaming || currentSessionIsStreaming;
+  const queuedTasksForCurrentSession = useMemo(
+    () => queuedTasks.filter((task) => task.sessionPath === currentSessionPath),
+    [queuedTasks, currentSessionPath],
+  );
 
   // Focus trigger from store
   const inputFocusTrigger = useStore(s => s.inputFocusTrigger);
@@ -374,6 +392,130 @@ function InputAreaInner() {
   const hasDoc = !!currentDoc;
 
   // ── 统一命令发送 ──
+
+  const prepareCurrentChatTask = useCallback(async (
+    sessionPath: string,
+    modelId?: string,
+  ): Promise<QueuedChatTask | null> => {
+    const text = inputText.trim();
+    const safeAttachedFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path));
+    const hasFiles = safeAttachedFiles.length > 0;
+    if (!sessionPath || (!text && !hasFiles && !(docContextAttached && currentDoc))) return null;
+
+    const imageFiles = hasFiles ? safeAttachedFiles.filter(f => !f.isDirectory && isImageFile(f.name)) : [];
+    let finalText = text;
+    if (hasFiles) {
+      const fileBlock = safeAttachedFiles
+        .map(f => f.isDirectory ? `[目录] ${f.path}` : `[附件] ${f.path}`)
+        .join('\n');
+      finalText = text ? `${text}\n\n${fileBlock}` : fileBlock;
+    }
+
+    const hana = (window as any).hana;
+    const images: Array<{ type: 'image'; data: string; mimeType: string }> = [];
+    const inlineImageMap = new Map<string, { base64Data: string; mimeType: string }>();
+    if (imageFiles.length > 0) {
+      for (const img of imageFiles) {
+        try {
+          if (img.base64Data && img.mimeType) {
+            images.push({ type: 'image', data: img.base64Data, mimeType: img.mimeType });
+            inlineImageMap.set(img.path, { base64Data: img.base64Data, mimeType: img.mimeType });
+          } else if (hana?.readFileBase64) {
+            const base64: string = await hana.readFileBase64(img.path);
+            if (base64) {
+              const ext = img.name.toLowerCase().replace(/^.*\./, '');
+              const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' };
+              const mimeType = mimeMap[ext] || 'image/png';
+              images.push({ type: 'image', data: base64, mimeType });
+              inlineImageMap.set(img.path, { base64Data: base64, mimeType });
+            }
+          }
+        } catch {
+          // 路径文本已在 fileBlock 中，读取失败不阻塞发送。
+        }
+      }
+    }
+
+    let docForRender: { path: string; name: string } | null = null;
+    if (docContextAttached && currentDoc) {
+      const docBlock = `[参考文档] ${currentDoc.path}`;
+      finalText = finalText ? `${finalText}\n\n${docBlock}` : docBlock;
+      docForRender = currentDoc;
+    }
+
+    const renderAttachments: Array<AttachedFile & { isDir?: boolean }> = [];
+    if (hasFiles) {
+      for (const f of safeAttachedFiles) {
+        const inlineImage = inlineImageMap.get(f.path);
+        renderAttachments.push({
+          ...f,
+          isDir: !!f.isDirectory,
+          base64Data: inlineImage?.base64Data ?? f.base64Data,
+          mimeType: inlineImage?.mimeType ?? f.mimeType,
+        });
+      }
+    }
+    if (docForRender) {
+      renderAttachments.push({
+        path: docForRender.path,
+        name: docForRender.name,
+        isDirectory: false,
+        isDir: false,
+      } as AttachedFile & { isDir?: boolean });
+    }
+
+    return {
+      id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      sessionPath,
+      text: text || finalText,
+      finalText,
+      attachments: safeAttachedFiles.map((file) => ({ ...file })),
+      renderAttachments: renderAttachments.length > 0 ? renderAttachments : undefined,
+      images: images.length > 0 ? images : undefined,
+      modelId,
+      createdAt: Date.now(),
+    };
+  }, [inputText, attachedFiles, docContextAttached, currentDoc]);
+
+  const clearComposerAfterTaskCapture = useCallback(() => {
+    setInputText('');
+    clearAttachedFiles();
+    if (docContextAttached) setDocContextAttached(false);
+  }, [clearAttachedFiles, docContextAttached, setDocContextAttached]);
+
+  const executeChatTask = useCallback(async (task: QueuedChatTask, mode: 'prompt' | 'steer' = 'prompt') => {
+    const ws = getWebSocket();
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    const { renderMarkdown } = await import('../utils/markdown');
+    useStore.getState().appendItem(task.sessionPath, {
+      type: 'message',
+      data: {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        text: task.text,
+        textHtml: renderMarkdown(task.text),
+        attachments: task.renderAttachments && task.renderAttachments.length > 0
+          ? task.renderAttachments.map((f: any) => ({
+            path: f.path,
+            name: f.name,
+            isDir: !!f.isDir || !!f.isDirectory,
+            base64Data: f.base64Data,
+            mimeType: f.mimeType,
+          }))
+          : undefined,
+      },
+    });
+    useStore.setState({ welcomeVisible: false });
+    if (mode === 'prompt') {
+      beginOptimisticStreamingTurn(task.sessionPath);
+    }
+
+    const wsMsg: any = { type: mode, text: task.finalText, sessionPath: task.sessionPath };
+    if (mode === 'prompt' && task.modelId) wsMsg.modelId = task.modelId;
+    if (task.images && task.images.length > 0) wsMsg.images = task.images;
+    ws.send(JSON.stringify(wsMsg));
+    return true;
+  }, [beginOptimisticStreamingTurn]);
 
   /** 统一的"以用户身份发送"入口，所有斜杠命令共用 */
   const sendAsUser = useCallback(async (text: string, displayText?: string): Promise<boolean> => {
@@ -487,8 +629,8 @@ function InputAreaInner() {
   }, []);
 
   // Can send?
-  const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || docContextAttached;
-  const canSend = hasContent && connected && !inputIsStreaming;
+  const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || (docContextAttached && hasDoc);
+  const canSubmit = hasContent && connected && !sending;
 
   // ── Auto resize ──
   useEffect(() => {
@@ -576,140 +718,73 @@ function InputAreaInner() {
       }
     }
 
-    const safeAttachedFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path));
-    const hasFiles = safeAttachedFiles.length > 0;
+    const hasFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path)).length > 0;
     if ((!text && !hasFiles && !docContextAttached) || !connected) return;
-    if (inputIsStreaming) return; // streaming 时由 handleSteer 处理
     if (sending) return;
     setSending(true);
 
     try {
-      if (pendingNewSession) {
+      if (!inputIsStreaming && pendingNewSession) {
         const ok = await ensureSession();
         if (!ok) return;
         loadSessions();
       }
 
-      // 分离图片附件（用于视觉输入）
-      const imageFiles = hasFiles ? safeAttachedFiles.filter(f => !f.isDirectory && isImageFile(f.name)) : [];
-
-      let finalText = text;
-      if (hasFiles) {
-        // 无论是否图片，都把原始路径写入文本，避免模型只看到远端视觉 URL 而拿不到本地路径。
-        const fileBlock = safeAttachedFiles
-          .map(f => f.isDirectory ? `[目录] ${f.path}` : `[附件] ${f.path}`)
-          .join('\n');
-        finalText = text ? `${text}\n\n${fileBlock}` : fileBlock;
-      }
-
-      // 图片文件读 base64 编码
-      const hana = (window as any).hana;
-      const images: Array<{ type: 'image'; data: string; mimeType: string }> = [];
-      const inlineImageMap = new Map<string, { base64Data: string; mimeType: string }>();
-      if (imageFiles.length > 0) {
-        for (const img of imageFiles) {
-          try {
-            if (img.base64Data && img.mimeType) {
-              // 内联 base64（粘贴图片）
-              images.push({ type: 'image', data: img.base64Data, mimeType: img.mimeType });
-              inlineImageMap.set(img.path, { base64Data: img.base64Data, mimeType: img.mimeType });
-            } else if (hana?.readFileBase64) {
-              const base64: string = await hana.readFileBase64(img.path);
-              if (base64) {
-                const ext = img.name.toLowerCase().replace(/^.*\./, '');
-                const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' };
-                const mimeType = mimeMap[ext] || 'image/png';
-                images.push({ type: 'image', data: base64, mimeType });
-                inlineImageMap.set(img.path, { base64Data: base64, mimeType });
-              }
-            }
-          } catch {
-            // ignore: 路径文本已在上面的 fileBlock 中
-          }
-        }
-      }
-
-      // 文档上下文：把当前打开的文档路径附加到消息里
-      let docForRender: { path: string; name: string } | null = null;
-      if (docContextAttached && currentDoc) {
-        const docBlock = `[参考文档] ${currentDoc.path}`;
-        finalText = finalText ? `${finalText}\n\n${docBlock}` : docBlock;
-        docForRender = currentDoc;
-      }
-
-      if (docContextAttached) {
-        setDocContextAttached(false);
-      }
-
-      const filesToRender = hasFiles ? [...safeAttachedFiles] : null;
-      // 文档上下文渲染为附件卡片
-      const allFiles = filesToRender ? [...filesToRender] : [];
-      if (docForRender) {
-        allFiles.push({ path: docForRender.path, name: docForRender.name });
-      }
-      // 用户消息写入 store
       const sessionPath = useStore.getState().currentSessionPath;
-      if (sessionPath) {
-        const { renderMarkdown } = await import('../utils/markdown');
-        useStore.getState().appendItem(sessionPath, {
-          type: 'message',
-          data: {
-            id: `user-${Date.now()}`,
-            role: 'user',
-            text,
-            textHtml: renderMarkdown(text),
-            attachments: allFiles.length > 0
-              ? allFiles.map((f: any) => {
-                const inlineImage = inlineImageMap.get(f.path);
-                return {
-                  path: f.path,
-                  name: f.name,
-                  isDir: !!f.isDirectory,
-                  base64Data: inlineImage?.base64Data ?? f.base64Data,
-                  mimeType: inlineImage?.mimeType ?? f.mimeType,
-                };
-              })
-              : undefined,
-          },
-        });
-        useStore.setState({ welcomeVisible: false });
-        beginOptimisticStreamingTurn(sessionPath);
+      if (!sessionPath) return;
+      const task = await prepareCurrentChatTask(sessionPath, draftModelIdBeforeEnsure || undefined);
+      if (!task) return;
+
+      clearComposerAfterTaskCapture();
+      if (inputIsStreaming) {
+        setQueuedTasks((prev) => [...prev, task]);
+        return;
       }
-
-      setInputText('');
-      clearAttachedFiles();
-
-      const ws = getWebSocket();
-      const wsMsg: any = { type: 'prompt', text: finalText, sessionPath: useStore.getState().currentSessionPath };
-      // 仅草稿首轮携带 modelId，避免把其它 session 的当前模型覆盖成全局/错误值。
-      if (draftModelIdBeforeEnsure) wsMsg.modelId = draftModelIdBeforeEnsure;
-      if (images.length > 0) wsMsg.images = images;
-      ws?.send(JSON.stringify(wsMsg));
+      await executeChatTask(task, 'prompt');
     } finally {
       setSending(false);
     }
-  }, [inputText, attachedFiles, docContextAttached, connected, inputIsStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, setDocContextAttached, slashMenuOpen, filteredCommands, slashSelected, beginOptimisticStreamingTurn, resolveSelectedModelId]);
+  }, [
+    inputText,
+    attachedFiles,
+    docContextAttached,
+    connected,
+    inputIsStreaming,
+    sending,
+    pendingNewSession,
+    slashMenuOpen,
+    filteredCommands,
+    slashSelected,
+    prepareCurrentChatTask,
+    clearComposerAfterTaskCapture,
+    executeChatTask,
+    resolveSelectedModelId,
+  ]);
 
   // ── Steer (插话) ──
-  const handleSteer = useCallback(async () => {
-    const text = inputText.trim();
-    if (!text || !inputIsStreaming) return;
-    const ws = getWebSocket();
-    if (!ws) return;
+  const handleGuideTask = useCallback(async (task: QueuedChatTask) => {
+    if (!inputIsStreaming) return;
+    setQueuedTasks((prev) => prev.filter((item) => item.id !== task.id));
+    await executeChatTask(task, 'steer');
+  }, [executeChatTask, inputIsStreaming]);
 
-    // steer：用户消息写入 store
-    const sessionPath = useStore.getState().currentSessionPath;
-    if (sessionPath) {
-      const { renderMarkdown } = await import('../utils/markdown');
-      useStore.getState().appendItem(sessionPath, {
-        type: 'message',
-        data: { id: `user-${Date.now()}`, role: 'user', text, textHtml: renderMarkdown(text) },
-      });
-    }
+  const handleRemoveQueuedTask = useCallback((taskId: string) => {
+    setQueuedTasks((prev) => prev.filter((item) => item.id !== taskId));
+  }, []);
 
-    setInputText('');
-    ws.send(JSON.stringify({ type: 'steer', text, sessionPath: useStore.getState().currentSessionPath }));
-  }, [inputText, inputIsStreaming]);
+  const handleEditQueuedTask = useCallback((task: QueuedChatTask) => {
+    setQueuedTasks((prev) => prev.filter((item) => item.id !== task.id));
+    setInputText(task.text);
+    setAttachedFiles((task.attachments || []).map((file) => ({ ...file })));
+    setDocContextAttached(false);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const pos = el.value.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }, [setAttachedFiles, setDocContextAttached]);
 
   // ── Stop generation ──
   const handleStop = useCallback(() => {
@@ -717,6 +792,25 @@ function InputAreaInner() {
     if (!inputIsStreaming || !ws) return;
     ws.send(JSON.stringify({ type: 'abort', sessionPath: useStore.getState().currentSessionPath }));
   }, [inputIsStreaming]);
+
+  useEffect(() => {
+    if (inputIsStreaming || !currentSessionPath || processingQueuedTaskRef.current) return;
+    const nextTask = queuedTasks.find((task) => task.sessionPath === currentSessionPath);
+    if (!nextTask) return;
+
+    processingQueuedTaskRef.current = true;
+    setQueuedTasks((prev) => prev.filter((task) => task.id !== nextTask.id));
+    executeChatTask(nextTask, 'prompt')
+      .catch((err) => {
+        const fallback = String((window as any).i18n?.locale || '').startsWith('zh')
+          ? '队列任务发送失败，请重试。'
+          : 'Failed to send queued task. Please retry.';
+        showToast(extractFetchErrorMessage(err, fallback), 'error', 5000);
+      })
+      .finally(() => {
+        processingQueuedTaskRef.current = false;
+      });
+  }, [inputIsStreaming, currentSessionPath, queuedTasks, executeChatTask]);
 
   // ── Key handler ──
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -748,13 +842,9 @@ function InputAreaInner() {
     }
     if (e.key === 'Enter' && !e.shiftKey && !isComposing.current) {
       e.preventDefault();
-      if (inputIsStreaming && inputText.trim()) {
-        handleSteer();
-      } else {
-        handleSend();
-      }
+      handleSend();
     }
-  }, [handleSend, handleSteer, inputIsStreaming, inputText, slashMenuOpen, filteredCommands, slashSelected, handleVoiceKeyDown]);
+  }, [handleSend, slashMenuOpen, filteredCommands, slashSelected, handleVoiceKeyDown]);
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     handleVoiceKeyUp(e);
@@ -796,6 +886,16 @@ function InputAreaInner() {
         <div className="slash-busy-bar slash-result-error">
           <span>{voiceError}</span>
         </div>
+      )}
+
+      {queuedTasksForCurrentSession.length > 0 && (
+        <QueuedChatTaskList
+          tasks={queuedTasksForCurrentSession}
+          isStreaming={inputIsStreaming}
+          onGuide={handleGuideTask}
+          onRemove={handleRemoveQueuedTask}
+          onEdit={handleEditQueuedTask}
+        />
       )}
 
       {activeInputPrompt && (
@@ -861,16 +961,82 @@ function InputAreaInner() {
             />
             <SendButton
               isStreaming={inputIsStreaming}
-              hasInput={!!inputText.trim()}
-              disabled={inputIsStreaming ? false : !canSend}
+              hasInput={hasContent}
+              disabled={inputIsStreaming ? (!hasContent ? false : !canSubmit) : !canSubmit}
               onSend={handleSend}
-              onSteer={handleSteer}
               onStop={handleStop}
             />
           </div>
         </div>
       </div>
     </>
+  );
+}
+
+function QueuedChatTaskList({
+  tasks,
+  isStreaming,
+  onGuide,
+  onRemove,
+  onEdit,
+}: {
+  tasks: QueuedChatTask[];
+  isStreaming: boolean;
+  onGuide: (task: QueuedChatTask) => void;
+  onRemove: (taskId: string) => void;
+  onEdit: (task: QueuedChatTask) => void;
+}) {
+  const isZh = String((window as any).i18n?.locale || '').startsWith('zh');
+  return (
+    <div className="queued-chat-list" aria-live="polite">
+      {tasks.map((task, index) => (
+        <div key={task.id} className="queued-chat-item">
+          <div className="queued-chat-main">
+            <span className="queued-chat-index">{index + 1}</span>
+            <span className="queued-chat-text">{task.text}</span>
+          </div>
+          <div className="queued-chat-actions">
+            <button
+              type="button"
+              className="queued-chat-guide"
+              disabled={!isStreaming}
+              onClick={() => onGuide(task)}
+              title={isZh ? '立即引导当前回复' : 'Guide current response now'}
+            >
+              <span className="queued-chat-guide-icon">↪</span>
+              <span>{isZh ? '引导' : 'Guide'}</span>
+            </button>
+            <button
+              type="button"
+              className="queued-chat-icon-btn"
+              onClick={() => onRemove(task.id)}
+              title={isZh ? '删除' : 'Delete'}
+              aria-label={isZh ? '删除' : 'Delete'}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M8 6V4h8v2" />
+                <path d="M19 6l-1 14H6L5 6" />
+                <path d="M10 11v5" />
+                <path d="M14 11v5" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="queued-chat-icon-btn"
+              onClick={() => onEdit(task)}
+              title={isZh ? '重新编辑' : 'Edit again'}
+              aria-label={isZh ? '重新编辑' : 'Edit again'}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1571,24 +1737,23 @@ function SlashCommandMenu({ commands, selected, busy, onSelect, onHover }: {
 
 // ── Send Button ──
 
-function SendButton({ isStreaming, hasInput, disabled, onSend, onSteer, onStop }: {
+function SendButton({ isStreaming, hasInput, disabled, onSend, onStop }: {
   isStreaming: boolean;
   hasInput: boolean;
   disabled: boolean;
   onSend: () => void;
-  onSteer: () => void;
   onStop: () => void;
 }) {
   const { t } = useI18n();
 
-  // 三态：发送 / 插话 / 停止
-  const mode = isStreaming ? (hasInput ? 'steer' : 'stop') : 'send';
+  // 三态：发送 / 排队 / 停止
+  const mode = isStreaming ? (hasInput ? 'queue' : 'stop') : 'send';
 
   return (
     <button
-      className={'send-btn' + (mode === 'steer' ? ' is-steer' : mode === 'stop' ? ' is-streaming' : '')}
+      className={'send-btn' + (mode === 'queue' ? ' is-queue' : mode === 'stop' ? ' is-streaming' : '')}
       disabled={disabled}
-      onClick={mode === 'steer' ? onSteer : mode === 'stop' ? onStop : onSend}
+      onClick={mode === 'stop' ? onStop : onSend}
     >
       {mode === 'send' && (
         <span className="send-label">
@@ -1598,12 +1763,12 @@ function SendButton({ isStreaming, hasInput, disabled, onSend, onSteer, onStop }
           <span className="send-label-text">{t('chat.send')}</span>
         </span>
       )}
-      {mode === 'steer' && (
+      {mode === 'queue' && (
         <span className="send-label">
           <svg className="send-enter-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 18 9 12 15 6" />
+            <polyline points="9 10 4 15 9 20" /><path d="M20 4v7a4 4 0 01-4 4H4" />
           </svg>
-          <span className="send-label-text">{t('chat.steer')}</span>
+          <span className="send-label-text">{t('chat.send')}</span>
         </span>
       )}
       {mode === 'stop' && (
