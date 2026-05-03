@@ -143,7 +143,7 @@ function SessionItem({ session: s, isActive, isStreaming, agents, browserUrl }: 
   const parts: string[] = [];
   if (s.agentName || s.agentId) parts.push(s.agentName || s.agentId!);
   if (s.cwd) {
-    const dirName = s.cwd.split('/').filter(Boolean).pop();
+    const dirName = s.cwd.split(/[\\/]/).filter(Boolean).pop();
     if (dirName) parts.push(dirName);
   }
   if (s.modified) parts.push(formatSessionDate(s.modified));
