@@ -595,7 +595,7 @@ export default async function chatRoute(app, { engine, hub }) {
       preserveUserAborted: true,
       preserveAbortingStreamId: true,
     });
-    broadcast({ type: "status", isStreaming: false, sessionPath });
+    broadcast({ type: "status", isStreaming: false, sessionPath, statusStreamId: abortedStreamId });
     scheduleContextUsagePush(sessionPath, { force: true });
     return true;
   }
@@ -1165,7 +1165,7 @@ export default async function chatRoute(app, { engine, hub }) {
             finalizeAbortedTurn(steerPath, ss);
           }
           try { await hub.abort(steerPath); } catch {}
-          wsSend(ws, { type: "steered" });
+          wsSend(ws, { type: "steered", sessionPath: steerPath || null });
         }
         // 插话作为新一轮 prompt 立即进入，避免旧轮思考/工具链在同一轮里被重新回放。
         msg.type = "prompt";
@@ -1324,6 +1324,7 @@ export default async function chatRoute(app, { engine, hub }) {
         }
         const ss = getState(promptSessionPath);
         let timeoutTimer = null;
+        let turnStreamId = null;
         try {
           ss.thinkTagParser.reset();
           ss.xingParser.reset();
@@ -1335,8 +1336,8 @@ export default async function chatRoute(app, { engine, hub }) {
           ss.lastAssistantSnapshotSig = "";
           ss.lastAssistantContent = null;
           ss.titleRequested = false;
-          beginSessionStream(ss);
-          broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath });
+          turnStreamId = beginSessionStream(ss);
+          broadcast({ type: "status", isStreaming: true, sessionPath: promptSessionPath, statusStreamId: turnStreamId });
           // 透传图片给主对话模型：支持原生多模态模型直接看图回复，
           // 同时仍保留 pendingImages 供 describe_images 工具按需使用。
           const sendPromise = hub.send(promptText, { sessionPath: promptSessionPath, images: msg.images });
@@ -1352,7 +1353,7 @@ export default async function chatRoute(app, { engine, hub }) {
             }, CHAT_TURN_TIMEOUT_MS);
           });
           await Promise.race([sendPromise, timeoutPromise]);
-          broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
+          broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath, statusStreamId: turnStreamId });
         } catch (err) {
           if (isTurnTimeoutError(err)) {
             ss.userAborted = true;
@@ -1364,7 +1365,7 @@ export default async function chatRoute(app, { engine, hub }) {
           if (!ss.hadError && !shouldSuppressUserFacingErrorMessage(errorMessage)) {
             wsSend(ws, { type: "error", message: errorMessage || t("error.modelNoResponse") });
           }
-          broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath });
+          broadcast({ type: "status", isStreaming: false, sessionPath: promptSessionPath, statusStreamId: turnStreamId });
         } finally {
           if (timeoutTimer) {
             clearTimeout(timeoutTimer);

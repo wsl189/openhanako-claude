@@ -19,6 +19,7 @@ import {
   replayStreamResume,
   isStreamResumeRebuilding,
   isStreamScopedMessage,
+  getSessionStreamMeta,
   updateSessionStreamMeta,
 } from './stream-resume';
 
@@ -124,6 +125,25 @@ export function applyStreamingStatus(isStreaming: boolean): void {
       loadSessionsAction().catch(() => {});
     }
   }
+}
+
+function restartStreamingAfterSteer(sessionPath?: string | null): void {
+  const sp = sessionPath || useStore.getState().currentSessionPath;
+  if (!sp) return;
+  const since = Date.now();
+  useStore.setState((prev: any) => {
+    const list: string[] = Array.isArray(prev.streamingSessions) ? prev.streamingSessions : [];
+    return {
+      isStreaming: true,
+      streamingSessions: list.includes(sp) ? list : [...list, sp],
+      streamingSinceByPath: {
+        ...(prev.streamingSinceByPath || {}),
+        [sp]: since,
+      },
+    };
+  });
+  ensureCurrentSessionVisible();
+  streamBufferManager.startTurn(sp);
 }
 
 // ── 消息分发（大 switch） ──
@@ -263,6 +283,10 @@ export function handleServerMessage(msg: any): void {
   switch (msg.type) {
     case 'stream_resume':
       replayStreamResume(msg);
+      break;
+
+    case 'steered':
+      restartStreamingAfterSteer(msg.sessionPath);
       break;
 
     case 'session_title':
@@ -511,7 +535,17 @@ export function handleServerMessage(msg: any): void {
     case 'status': {
       // 元数据层：维护所有 session 的 streaming 状态
       const sp = msg.sessionPath;
+      const statusStreamId = typeof msg.statusStreamId === 'string' ? msg.statusStreamId : null;
+      if (sp && statusStreamId && !msg.isStreaming) {
+        const currentStreamId = getSessionStreamMeta(sp)?.streamId || null;
+        if (currentStreamId && currentStreamId !== statusStreamId) {
+          break;
+        }
+      }
       if (sp) {
+        if (statusStreamId && msg.isStreaming) {
+          updateSessionStreamMeta({ sessionPath: sp, streamId: statusStreamId });
+        }
         useStore.setState((prev: any) => {
           const list: string[] = Array.isArray(prev.streamingSessions) ? prev.streamingSessions : [];
           const sinceMap: Record<string, number> = (prev.streamingSinceByPath || {}) as Record<string, number>;
