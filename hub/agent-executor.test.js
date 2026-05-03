@@ -4,17 +4,26 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
+  buildSessionMetadataMock,
   createSessionMetadataMock,
+  readSessionMetadataMock,
+  writeSessionMetadataMock,
   buildClaudeRuntimeConfigMock,
   runtimeCtorMock,
 } = vi.hoisted(() => ({
+  buildSessionMetadataMock: vi.fn(),
   createSessionMetadataMock: vi.fn(),
+  readSessionMetadataMock: vi.fn(),
+  writeSessionMetadataMock: vi.fn(),
   buildClaudeRuntimeConfigMock: vi.fn(),
   runtimeCtorMock: vi.fn(),
 }));
 
 vi.mock("../core/claude-session-store.js", () => ({
+  buildSessionMetadata: buildSessionMetadataMock,
   createSessionMetadata: createSessionMetadataMock,
+  readSessionMetadata: readSessionMetadataMock,
+  writeSessionMetadata: writeSessionMetadataMock,
 }));
 
 vi.mock("../core/claude-runtime-config.js", () => ({
@@ -42,6 +51,17 @@ describe("runAgentSession with Claude runtime", () => {
       sessionPath: "/tmp/fake.session.json",
       metadata: { sessionId: "s1" },
     });
+    buildSessionMetadataMock.mockImplementation((data) => ({
+      version: 1,
+      kind: "claude-agent-session",
+      ...data,
+    }));
+    readSessionMetadataMock.mockImplementation((sessionPath) => ({
+      sessionId: "persisted-session",
+      cwd: "/workspace",
+      agentId: "alpha",
+      sessionPath,
+    }));
     buildClaudeRuntimeConfigMock.mockReturnValue({
       options: {
         systemPrompt: {
@@ -133,6 +153,79 @@ describe("runAgentSession with Claude runtime", () => {
       expect(buildClaudeRuntimeConfigMock).toHaveBeenCalledTimes(1);
       expect(fakeRuntime.start).toHaveBeenCalledTimes(1);
       expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a persistent named session instead of creating a temp session", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-exec-test-"));
+    const agentDir = path.join(tempRoot, "alpha");
+    const channelSessionDir = path.join(agentDir, "sessions", "channel");
+    const channelSessionPath = path.join(channelSessionDir, "ch_team.session.json");
+    fs.mkdirSync(channelSessionDir, { recursive: true });
+    fs.writeFileSync(channelSessionPath, "{}", "utf-8");
+
+    const fakeRuntime = {
+      start: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      abort: vi.fn(async () => true),
+      prompt: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+      sessionManager: {
+        getSessionFile: () => channelSessionPath,
+        getSessionId: () => "persisted-session",
+        getCwd: () => "/workspace",
+      },
+      _emit: vi.fn(),
+    };
+    runtimeCtorMock.mockImplementation((opts) => {
+      expect(opts.sessionPath).toBe(channelSessionPath);
+      expect(opts.sessionId).toBe("persisted-session");
+      expect(opts.resumeSessionId).toBe("persisted-session");
+      return fakeRuntime;
+    });
+
+    const agent = {
+      agentDir,
+      tools: [],
+      personality: "personality",
+      systemPrompt: "system",
+      buildSystemAppendPrompt: () => "hanako append",
+      config: {
+        locale: "zh-CN",
+        desk: { home_folder: "/workspace" },
+        models: { overrides: null },
+      },
+      refreshSystemPrompt: vi.fn(),
+    };
+    const engine = {
+      getAgent: vi.fn(() => agent),
+      getHomeFolder: vi.fn(() => "/workspace"),
+      createSessionContext: vi.fn(() => ({
+        resolveModel: vi.fn(() => ({ id: "test-model", contextWindow: 200_000 })),
+      })),
+      getAgentPermissionConfig: vi.fn(() => ({
+        sandbox: { mode: "standard", path_rules: [] },
+        tools: { builtin_enabled: ["read", "grep"], custom_enabled: [] },
+      })),
+      setSessionPendingImages: vi.fn(),
+      clearSessionPendingImages: vi.fn(),
+    };
+
+    try {
+      await runAgentSession(
+        "alpha",
+        [{ text: "hello", capture: true }],
+        {
+          engine,
+          sessionSuffix: "channel",
+          persistentSessionName: "ch_team",
+        },
+      );
+
+      expect(createSessionMetadataMock).not.toHaveBeenCalled();
+      expect(writeSessionMetadataMock).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

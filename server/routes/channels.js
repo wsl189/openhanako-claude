@@ -549,6 +549,7 @@ export default async function channelsRoute(app, { engine, hub }) {
         return { error: "Failed to append context reset marker" };
       }
 
+      engine.resetChannelSessions?.(name);
       debugLog()?.log("api", `POST /channels/${name}/new`);
       return { ok: true, timestamp };
     } catch (err) {
@@ -569,6 +570,7 @@ export default async function channelsRoute(app, { engine, hub }) {
       }
 
       await clearChannelMessages(filePath);
+      engine.resetChannelSessions?.(name);
       debugLog()?.log("api", `POST /channels/${name}/reset`);
       return { ok: true };
     } catch (err) {

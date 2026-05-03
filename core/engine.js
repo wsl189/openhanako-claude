@@ -386,6 +386,7 @@ export class HanaEngine {
   // ════════════════════════════
 
   deleteChannelByName(n) { return this._channels.deleteChannelByName(n); }
+  resetChannelSessions(n) { return this._channels.resetChannelSessions(n); }
   async triggerChannelTriage(n, o) { return this._channels.triggerChannelTriage(n, o); }
 
   // ════════════════════════════

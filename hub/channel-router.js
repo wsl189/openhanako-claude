@@ -597,12 +597,14 @@ export class ChannelRouter {
       [
         {
           text: isZh
-            ? `${latestUserFocus}\n\n#${channelName} 频道的最近消息（按时间从旧到新）：\n\n${msgText}\n\n`
+            ? `# 本轮频道约束（由系统注入）\n${roleContext}\n\n---\n\n`
+              + `${latestUserFocus}\n\n#${channelName} 频道的最近消息（按时间从旧到新）：\n\n${msgText}\n\n`
               + `你只有这一轮回复机会。请在这一轮里结合频道上下文，直接给出你要发到群聊的回复内容。`
               + `如果你希望其他成员参与，不要用 @ 触发；请调用 ask_agent(agent=xxx 或 agents=[...], task, channel="${channelName}")，让对方直接在本群回复。`
               + `如果本轮要检索，请先检索再回答，不要只说“我去查一下”。`
               + (channelMemoryEnabled ? `如果需要补充过往信息，可调用 search_memory 工具检索相关记忆。` : ``)
-            : `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}\n\n`
+            : `# Current Channel Constraints (system-injected)\n${roleContext}\n\n---\n\n`
+              + `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}\n\n`
               + `You only have one reply round. In this same round, rely on channel context and directly output the message you want to post in the group chat.`
               + `If another member is needed, do not trigger via @mention; call ask_agent(agent=... or agents=[...], task, channel="${channelName}") so they post directly in this channel.`
               + `If search is needed, search first and answer now; do not only say you'll do it later.`
@@ -615,7 +617,8 @@ export class ChannelRouter {
         signal,
         noMemory: !channelMemoryEnabled,
         disabledBuiltinTools: CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
-        sessionSuffix: "channel-temp",
+        sessionSuffix: "channel",
+        persistentSessionName: channelName,
         extractInlineImages: true,
         systemAppend: sessionRoleAppend,
       },
@@ -632,20 +635,20 @@ export class ChannelRouter {
                 ? `你刚才没有输出可见回复。现在请直接回答用户刚才的问题，不要只确认收到 @，不要输出空白。`
                   + `如果需要检索，本轮立刻检索并给结果，禁止“我现在去查/稍等”这类延后承诺。`
                   + `务必先处理“本轮主任务（最新用户消息）”，不要重复回答更早问题。`
-                  + `\n\n${latestUserFocus}\n\n#${channelName} 最近消息（按时间从旧到新）：\n\n${msgText}`
+                  + `\n\n# 本轮频道约束（由系统注入）\n${roleContext}\n\n---\n\n${latestUserFocus}\n\n#${channelName} 最近消息（按时间从旧到新）：\n\n${msgText}`
                 : `你刚才没有输出可见回复。现在必须输出一条你自己的频道消息，禁止空白。`
                   + `如果你刚调用 ask_agent 分配了任务，请简要同步你已分配给谁，并提示查看对应成员回复。`
                   + `务必先处理“本轮主任务（最新用户消息）”，不要重复回答更早问题。`
-                  + `\n\n${latestUserFocus}\n\n#${channelName} 最近消息（按时间从旧到新）：\n\n${msgText}`
+                  + `\n\n# 本轮频道约束（由系统注入）\n${roleContext}\n\n---\n\n${latestUserFocus}\n\n#${channelName} 最近消息（按时间从旧到新）：\n\n${msgText}`
               : forceReply
                 ? `You produced no visible reply. Now directly answer the user's latest question. Do not only acknowledge the @, and do not output blank text. `
                   + `If search is needed, do it now and provide results; do not promise to do it later. `
                   + `You must prioritize the primary task (latest user message) and avoid re-answering older questions.\n\n`
-                  + `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}`
+                  + `# Current Channel Constraints (system-injected)\n${roleContext}\n\n---\n\n${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}`
                 : `You produced no visible reply. You must output one visible channel message now; no blank output. `
                   + `If you just delegated via ask_agent, briefly state who was assigned and ask the user to check those members' replies. `
                   + `Prioritize the primary task (latest user message) and avoid re-answering older questions.\n\n`
-                  + `${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}`,
+                  + `# Current Channel Constraints (system-injected)\n${roleContext}\n\n---\n\n${latestUserFocus}\n\nRecent messages in #${channelName} (ordered oldest to newest):\n\n${msgText}`,
             capture: true,
           },
         ],
@@ -654,7 +657,8 @@ export class ChannelRouter {
             signal,
             noMemory: !channelMemoryEnabled,
             disabledBuiltinTools: CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
-            sessionSuffix: "channel-temp",
+            sessionSuffix: "channel",
+            persistentSessionName: channelName,
             extractInlineImages: true,
             systemAppend: sessionRoleAppend,
           },

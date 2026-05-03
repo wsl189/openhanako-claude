@@ -30,6 +30,7 @@
     "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
     "rebuild:node": "npm rebuild better-sqlite3 --build-from-source",
     "rebuild": "npm run rebuild:electron",
+    "memory:doctor": "node scripts/memory-doctor.js",
     "pack": "npm run build:renderer && electron-builder --dir",
     "dist": "npm run build:renderer && electron-builder --mac",
     "prepare:win": "node scripts/download-git-portable.js",

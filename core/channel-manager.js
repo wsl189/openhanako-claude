@@ -17,8 +17,16 @@ import {
   removeBookmarkEntry,
   deleteChannel,
 } from "../lib/channels/channel-store.js";
+import { readSessionMetadata } from "./claude-session-store.js";
+import { resolveClaudeTranscriptPath } from "./claude-transcript.js";
 
 const log = createModuleLogger("channel");
+
+function safeSessionFileSegment(value = "") {
+  const raw = String(value || "").trim();
+  const safe = raw.replace(/[^a-zA-Z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  return safe || "default";
+}
 
 export class ChannelManager {
   /**
@@ -60,6 +68,7 @@ export class ChannelManager {
         if (remaining.length <= 1) {
           deleteChannel(filePath);
           deletedChannels.push(channelId);
+          this._cleanupChannelSessions([channelId]);
           log.log(`频道 "${channelId}" 成员不足，已删除`);
         }
       } catch (err) {
@@ -82,6 +91,7 @@ export class ChannelManager {
     }
 
     deleteChannel(filePath);
+    this._cleanupChannelSessions([channelId]);
 
     // 清理所有 agent 的 bookmark
     const agentDirs = fs.readdirSync(this._agentsDir, { withFileTypes: true })
@@ -97,6 +107,10 @@ export class ChannelManager {
     removeBookmarkEntry(userBookmarkPath, channelId);
 
     log.log(`已删除频道: ${channelId}`);
+  }
+
+  resetChannelSessions(channelId) {
+    this._cleanupChannelSessions([channelId]);
   }
 
   /**
@@ -156,6 +170,46 @@ export class ChannelManager {
       } catch (err) {
         log.error(`清理用户 bookmark "${ch}" 失败: ${err.message}`);
       }
+    }
+  }
+
+  _cleanupChannelSessions(channelIds = []) {
+    if (!this._agentsDir || !fs.existsSync(this._agentsDir)) return;
+    const ids = [...new Set((channelIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+    if (!ids.length) return;
+
+    const agentDirs = fs.readdirSync(this._agentsDir, { withFileTypes: true })
+      .filter(d => d.isDirectory());
+
+    for (const d of agentDirs) {
+      const channelSessionDir = path.join(this._agentsDir, d.name, "sessions", "channel");
+      for (const channelId of ids) {
+        const sessionPath = path.join(channelSessionDir, `${safeSessionFileSegment(channelId)}.session.json`);
+        if (!fs.existsSync(sessionPath)) continue;
+
+        try {
+          const metadata = readSessionMetadata(sessionPath);
+          const transcriptPath = resolveClaudeTranscriptPath(metadata.sessionId, metadata.cwd);
+          if (transcriptPath) {
+            try { fs.rmSync(transcriptPath, { force: true }); } catch {}
+          }
+        } catch {
+          // Metadata may be corrupt; still remove the local shell.
+        }
+
+        try {
+          fs.rmSync(sessionPath, { force: true });
+          log.log(`已清理频道会话: ${d.name}/#${channelId}`);
+        } catch (err) {
+          log.error(`清理频道会话失败 (${d.name}/#${channelId}): ${err.message}`);
+        }
+      }
+
+      try {
+        if (fs.existsSync(channelSessionDir) && fs.readdirSync(channelSessionDir).length === 0) {
+          fs.rmdirSync(channelSessionDir);
+        }
+      } catch {}
     }
   }
 }

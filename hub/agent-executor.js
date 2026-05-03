@@ -14,7 +14,12 @@ import { debugLog } from "../lib/debug-log.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
 import { t } from "../server/i18n.js";
 import { applyRuntimeModelOverrides } from "../core/model-runtime-overrides.js";
-import { createSessionMetadata } from "../core/claude-session-store.js";
+import {
+  buildSessionMetadata,
+  createSessionMetadata,
+  readSessionMetadata,
+  writeSessionMetadata,
+} from "../core/claude-session-store.js";
 import { ClaudeSessionRuntime } from "../core/claude-session-runtime.js";
 import { buildClaudeRuntimeConfig } from "../core/claude-runtime-config.js";
 import { normalizeWorkspacePath } from "../core/path-utils.js";
@@ -164,10 +169,32 @@ function readImagesFromText(text = "", maxCount = 10) {
   return images;
 }
 
+function safeSessionFileSegment(value = "") {
+  const raw = String(value || "").trim();
+  const safe = raw.replace(/[^a-zA-Z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  return safe || "default";
+}
+
+function resolvePersistentSessionMetadata(sessionDir, sessionName, data) {
+  const sessionPath = path.join(sessionDir, `${safeSessionFileSegment(sessionName)}.session.json`);
+  try {
+    if (fs.existsSync(sessionPath)) {
+      return { sessionPath, metadata: readSessionMetadata(sessionPath), existing: true };
+    }
+  } catch {
+    // Invalid metadata is replaced below with a fresh resumable shell.
+  }
+
+  const metadata = buildSessionMetadata(data);
+  writeSessionMetadata(sessionPath, metadata);
+  return { sessionPath, metadata, existing: false };
+}
+
 export async function runAgentSession(agentId, rounds, {
   engine,
   signal,
   sessionSuffix = "temp",
+  persistentSessionName = null,
   systemAppend,
   keepSession = false,
   noMemory = false,
@@ -195,12 +222,24 @@ export async function runAgentSession(agentId, rounds, {
   const sessionDir = path.join(agentDir, "sessions", sessionSuffix);
   fs.mkdirSync(sessionDir, { recursive: true });
 
-  const sessionId = randomUUID();
-  const { sessionPath } = createSessionMetadata(sessionDir, {
-    sessionId,
-    cwd,
-    agentId,
-  });
+  const wantsPersistentSession = !!persistentSessionName;
+  const sessionMeta = wantsPersistentSession
+    ? resolvePersistentSessionMetadata(sessionDir, persistentSessionName, {
+        sessionId: randomUUID(),
+        cwd,
+        agentId,
+        title: String(persistentSessionName || ""),
+        memoryEnabled: !noMemory,
+      })
+    : createSessionMetadata(sessionDir, {
+        sessionId: randomUUID(),
+        cwd,
+        agentId,
+        memoryEnabled: !noMemory,
+      });
+  const { sessionPath, metadata } = sessionMeta;
+  const sessionId = metadata?.sessionId || randomUUID();
+  const runtimeCwd = metadata?.cwd || cwd;
 
   const modelRef = agent?.config?.models?.chat || engine.currentModel?.id || engine.currentModel?.name || null;
   let resolvedModelWithCreds = null;
@@ -230,10 +269,10 @@ export async function runAgentSession(agentId, rounds, {
   let runtime = null;
   const runtimeConfig = buildClaudeRuntimeConfig({
     agent,
-    cwd,
+    cwd: runtimeCwd,
     workspace: normalizeWorkspacePath(
-      agent?.config?.desk?.home_folder || engine.getHomeFolder(agentId) || cwd,
-      cwd,
+      agent?.config?.desk?.home_folder || engine.getHomeFolder(agentId) || runtimeCwd,
+      runtimeCwd,
     ),
     toolProfile: engine.getAgentPermissionConfig?.(agentId) || null,
     customTools: agent.tools,
@@ -254,9 +293,11 @@ export async function runAgentSession(agentId, rounds, {
 
   runtime = new ClaudeSessionRuntime({
     sessionId,
-    cwd,
+    resumeSessionId: wantsPersistentSession ? (metadata?.sessionId || null) : null,
+    cwd: runtimeCwd,
     sessionPath,
     options: runtimeConfig.options,
+    initialContextUsage: metadata?.contextUsage || null,
   });
   await runtime.start();
 
@@ -321,6 +362,7 @@ export async function runAgentSession(agentId, rounds, {
       }
       throwIfAborted();
     }
+
   } finally {
     if (signal && onAbort) signal.removeEventListener("abort", onAbort);
     unsub?.();
@@ -330,7 +372,7 @@ export async function runAgentSession(agentId, rounds, {
 
   throwIfAborted();
 
-  if (!keepSession) {
+  if (!keepSession && !wantsPersistentSession) {
     try { fs.unlinkSync(sessionPath); } catch {}
   }
 
