@@ -5,7 +5,7 @@
  * 不用 Virtuoso，不用 Activity，不用快照，不用任何花活。
  */
 
-import { memo, useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import { memo, useRef, useEffect, useLayoutEffect, useState, useMemo, useCallback } from 'react';
 import { useStore } from '../../stores';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
@@ -122,6 +122,9 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   const isAtBottom = useRef(true);
   const suppressAutoScrollUntil = useRef(0);
   const anchoredUserIdRef = useRef<string | null>(null);
+  const anchoredReplyForUserIdRef = useRef<string | null>(null);
+  const topFlowTurnUserIdRef = useRef<string | null>(null);
+  const naturalTopFlowEndedRef = useRef(false);
   const followReplyRef = useRef(false);
   const latestTurnAnchorGuardUntil = useRef(0);
   const lastUserIndex = useMemo(() => {
@@ -169,11 +172,35 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     });
   }, [clearTurnSpacers]);
 
+  const showLatestTurnFromTop = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    clearTurnSpacers();
+    el.scrollTop = 0;
+    isAtBottom.current = false;
+  }, [clearTurnSpacers]);
+
   const findItemElement = useCallback((index: number) => {
     const el = ref.current;
     if (!el || index < 0) return null;
     return el.querySelector<HTMLElement>(`.chat-session-item[data-chat-item-index="${index}"]`);
   }, []);
+
+  const latestContentBottomY = useCallback(() => {
+    const el = ref.current;
+    if (!el || items.length === 0) return 0;
+    const lastItemEl = findItemElement(items.length - 1);
+    if (!lastItemEl) return 0;
+    const containerRect = el.getBoundingClientRect();
+    const lastRect = lastItemEl.getBoundingClientRect();
+    return lastRect.bottom - containerRect.top;
+  }, [findItemElement, items.length]);
+
+  const latestContentIsBeforeAnchorLine = useCallback(() => {
+    const el = ref.current;
+    if (!el) return false;
+    return latestContentBottomY() <= Math.floor(el.clientHeight * LATEST_TURN_ANCHOR_RATIO);
+  }, [latestContentBottomY]);
 
   const getSafeBottomY = useCallback((el: HTMLElement) => {
     const panelRect = el.getBoundingClientRect();
@@ -183,7 +210,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     return Math.max(0, Math.min(el.clientHeight, inputRect.top - panelRect.top - INPUT_SAFE_GAP));
   }, []);
 
-  const anchorMessageAtRatio = useCallback((msgEl: HTMLElement) => {
+  const anchorMessageAtRatio = useCallback((msgEl: HTMLElement, behavior: ScrollBehavior = 'smooth') => {
     const el = ref.current;
     const headSpacer = headSpacerRef.current;
     const tailSpacer = tailSpacerRef.current;
@@ -192,35 +219,39 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     headSpacer.style.height = '0px';
     tailSpacer.style.height = '0px';
 
-    requestAnimationFrame(() => {
-      if (!msgEl.isConnected) return;
-      const desiredY = Math.floor(el.clientHeight * LATEST_TURN_ANCHOR_RATIO);
-      const containerRect = el.getBoundingClientRect();
-      const msgRect = msgEl.getBoundingClientRect();
-      const currentY = msgRect.top - containerRect.top;
+    if (!msgEl.isConnected) return;
+    const desiredY = Math.floor(el.clientHeight * LATEST_TURN_ANCHOR_RATIO);
+    const containerRect = el.getBoundingClientRect();
+    const msgRect = msgEl.getBoundingClientRect();
+    const currentY = msgRect.top - containerRect.top;
+    const missingTopSpace = Math.max(0, desiredY - currentY - el.scrollTop);
+    if (missingTopSpace > 0) {
+      headSpacer.style.height = `${Math.ceil(missingTopSpace)}px`;
+    }
 
-      if (el.scrollTop <= 1 && currentY < desiredY) {
-        headSpacer.style.height = `${Math.ceil(desiredY - currentY)}px`;
-      }
+    const nextContainerRect = el.getBoundingClientRect();
+    const nextMsgRect = msgEl.getBoundingClientRect();
+    const nextY = nextMsgRect.top - nextContainerRect.top;
+    const rawTargetTop = Math.max(0, el.scrollTop + nextY - desiredY);
+    const maxScrollable = Math.max(0, el.scrollHeight - el.clientHeight);
+    const neededTailSpace = Math.max(0, rawTargetTop - maxScrollable + INPUT_SAFE_GAP);
+    tailSpacer.style.height = `${neededTailSpace}px`;
 
-      requestAnimationFrame(() => {
-        if (!msgEl.isConnected) return;
-        const nextContainerRect = el.getBoundingClientRect();
-        const nextMsgRect = msgEl.getBoundingClientRect();
-        const nextY = nextMsgRect.top - nextContainerRect.top;
-        const rawTargetTop = Math.max(0, el.scrollTop + nextY - desiredY);
-        const maxScrollable = Math.max(0, el.scrollHeight - el.clientHeight);
-        const neededTailSpace = Math.max(0, rawTargetTop - maxScrollable + INPUT_SAFE_GAP);
-        tailSpacer.style.height = `${neededTailSpace}px`;
+    const maxScrollableAfterSpacer = Math.max(0, el.scrollHeight - el.clientHeight);
+    const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
+    el.scrollTo({ top: targetTop, behavior });
+    isAtBottom.current = false;
+  }, []);
 
-        requestAnimationFrame(() => {
-          const maxScrollableAfterSpacer = Math.max(0, el.scrollHeight - el.clientHeight);
-          const targetTop = Math.min(rawTargetTop, maxScrollableAfterSpacer);
-          el.scrollTo({ top: targetTop, behavior: 'smooth' });
-          isAtBottom.current = false;
-        });
-      });
-    });
+  const pushLatestTurnAboveInput = useCallback((lastItemEl: HTMLElement, safeBottomY: number) => {
+    const el = ref.current;
+    if (!el) return;
+    const containerRect = el.getBoundingClientRect();
+    const lastRect = lastItemEl.getBoundingClientRect();
+    const overflow = lastRect.bottom - containerRect.top - safeBottomY;
+    if (overflow <= 0) return;
+    el.scrollTop += overflow;
+    isAtBottom.current = false;
   }, []);
 
   const restoredTurnWouldOverflowInput = useCallback((userEl: HTMLElement) => {
@@ -248,6 +279,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       const userEl = findItemElement(lastUserIndex);
       if (!userEl) return;
       anchoredUserIdRef.current = lastUserId;
+      anchoredReplyForUserIdRef.current = null;
       followReplyRef.current = false;
       latestTurnAnchorGuardUntil.current = Date.now() + LATEST_TURN_ANCHOR_GUARD_MS;
       if (!isPathStreaming && restoredTurnWouldOverflowInput(userEl)) {
@@ -256,7 +288,37 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
         scrollToBottomAfterSpacerReset();
         return;
       }
-      anchorMessageAtRatio(userEl);
+      if (!naturalTopFlowEndedRef.current && latestContentIsBeforeAnchorLine()) {
+        topFlowTurnUserIdRef.current = lastUserId;
+        showLatestTurnFromTop();
+        return;
+      }
+      naturalTopFlowEndedRef.current = true;
+      topFlowTurnUserIdRef.current = null;
+      anchorMessageAtRatio(userEl, isPathStreaming ? 'auto' : 'smooth');
+      return;
+    }
+
+    if (topFlowTurnUserIdRef.current === lastUserId) {
+      if (!latestContentIsBeforeAnchorLine()) {
+        naturalTopFlowEndedRef.current = true;
+      }
+    }
+
+    if (
+      isPathStreaming
+      && lastUserId
+      && lastUserIndex > 0
+      && streamingAssistantIndex > lastUserIndex
+      && topFlowTurnUserIdRef.current !== lastUserId
+      && anchoredReplyForUserIdRef.current !== lastUserId
+    ) {
+      const assistantEl = findItemElement(streamingAssistantIndex);
+      if (!assistantEl) return;
+      anchoredReplyForUserIdRef.current = lastUserId;
+      followReplyRef.current = false;
+      latestTurnAnchorGuardUntil.current = Date.now() + LATEST_TURN_ANCHOR_GUARD_MS;
+      anchorMessageAtRatio(assistantEl, 'auto');
       return;
     }
 
@@ -265,7 +327,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       return;
     }
 
-    if (!isPathStreaming && !followReplyRef.current) return;
+    if (!isPathStreaming) return;
 
     const lastItemEl = findItemElement(items.length - 1);
     if (!lastItemEl) return;
@@ -281,7 +343,8 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
 
     followReplyRef.current = true;
     latestTurnAnchorGuardUntil.current = 0;
-    scrollToBottomAfterSpacerReset();
+    naturalTopFlowEndedRef.current = true;
+    pushLatestTurnAboveInput(lastItemEl, safeBottomY);
   }, [
     active,
     anchorMessageAtRatio,
@@ -291,8 +354,12 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
     items.length,
     lastUserId,
     lastUserIndex,
+    latestContentIsBeforeAnchorLine,
+    pushLatestTurnAboveInput,
     restoredTurnWouldOverflowInput,
     scrollToBottomAfterSpacerReset,
+    showLatestTurnFromTop,
+    streamingAssistantIndex,
   ]);
 
   // scroll 事件维护 isAtBottom 标志
@@ -349,7 +416,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   }, []);
 
   // 首次/切回当前 session/消息结构变化时，同步最新一轮位置
-  useEffect(() => {
+  useLayoutEffect(() => {
     syncLatestTurnScroll();
   }, [syncLatestTurnScroll]);
 
