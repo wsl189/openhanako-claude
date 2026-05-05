@@ -28,6 +28,9 @@ export interface ChannelSlice {
   channelMemoryLoading: boolean;
   channelPreviewInfoName: string;
   channelPreviewMembers: string[];
+  channelPreviewLeaders: string[];
+  channelPreviewMode: 'command' | 'discussion';
+  channelPreviewDiscussionMaxRounds: number;
   channelPreviewAnnouncement: string;
   channelIsDM: boolean;
   setChannels: (channels: Channel[]) => void;
@@ -48,7 +51,7 @@ export interface ChannelSlice {
   clearChannelMessages: () => Promise<void>;
   stopChannelReplies: () => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
-  createChannel: (name: string, members: string[], intro?: string) => Promise<string | null>;
+  createChannel: (name: string, members: string[], intro?: string, leaders?: string[], mode?: 'command' | 'discussion', discussionMaxRounds?: number) => Promise<string | null>;
 }
 
 type Get = () => ChannelSlice & Record<string, any>;
@@ -72,6 +75,9 @@ export const createChannelSlice = (
   channelMemoryLoading: false,
   channelPreviewInfoName: '',
   channelPreviewMembers: [],
+  channelPreviewLeaders: [],
+  channelPreviewMode: 'command',
+  channelPreviewDiscussionMaxRounds: 3,
   channelPreviewAnnouncement: '',
   channelIsDM: false,
   setChannels: (channels) => set({ channels }),
@@ -146,6 +152,9 @@ export const createChannelSlice = (
       set({
         channelPreviewInfoName: previewName,
         channelPreviewMembers: Array.isArray(data.members) ? data.members : [],
+        channelPreviewLeaders: Array.isArray(data.leaders) ? data.leaders : [],
+        channelPreviewMode: data.mode === 'discussion' ? 'discussion' : 'command',
+        channelPreviewDiscussionMaxRounds: Number(data.discussionMaxRounds) || 3,
         channelPreviewAnnouncement: String(data.announcement || ''),
       });
     } catch (err) {
@@ -205,6 +214,9 @@ export const createChannelSlice = (
           channelMemoryLoading: false,
           channelPreviewInfoName: channelName,
           channelPreviewMembers: members,
+          channelPreviewLeaders: Array.isArray(data.leaders) ? data.leaders : [],
+          channelPreviewMode: data.mode === 'discussion' ? 'discussion' : 'command',
+          channelPreviewDiscussionMaxRounds: Number(data.discussionMaxRounds) || 3,
           channelPreviewAnnouncement: String(data.announcement || ''),
         });
 
@@ -417,7 +429,7 @@ export const createChannelSlice = (
     }
   },
 
-  createChannel: async (name: string, members: string[], intro?: string) => {
+  createChannel: async (name: string, members: string[], intro?: string, leaders?: string[], mode?: 'command' | 'discussion', discussionMaxRounds?: number) => {
     try {
       const res = await hanaFetch('/api/channels', {
         method: 'POST',
@@ -425,6 +437,9 @@ export const createChannelSlice = (
         body: JSON.stringify({
           name,
           members,
+          leaders: mode === 'discussion' ? [] : (Array.isArray(leaders) ? leaders : undefined),
+          mode: mode || 'command',
+          discussionMaxRounds: discussionMaxRounds || undefined,
           intro: intro || undefined,
         }),
       });

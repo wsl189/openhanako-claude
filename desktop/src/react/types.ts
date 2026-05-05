@@ -37,6 +37,9 @@ export interface Channel {
   name: string;
   description?: string;
   members: string[];
+  leaders?: string[];
+  mode?: 'command' | 'discussion';
+  discussionMaxRounds?: number;
   lastMessage: string;
   lastSender: string;
   lastTimestamp: string;

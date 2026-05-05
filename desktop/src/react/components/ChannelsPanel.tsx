@@ -666,12 +666,14 @@ function ChannelManageMembersModal({ channel, onClose }: {
   const currentChannel = useStore((s) => s.currentChannel);
   const addToast = useStore((s) => s.addToast);
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [selectedLeaders, setSelectedLeaders] = useState<string[]>([]);
   const [membersError, setMembersError] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!channel) return;
     setSelectedMembers(Array.isArray(channel.members) ? channel.members : []);
+    setSelectedLeaders(Array.isArray(channel.leaders) ? channel.leaders : []);
     setMembersError(false);
 
     let cancelled = false;
@@ -682,7 +684,9 @@ function ChannelManageMembersModal({ channel, onClose }: {
         const data = await res.json();
         if (cancelled) return;
         const latestMembers = Array.isArray(data.members) ? data.members : [];
+        const latestLeaders = Array.isArray(data.leaders) ? data.leaders : [];
         setSelectedMembers(latestMembers);
+        setSelectedLeaders(latestLeaders.filter((id: string) => latestMembers.includes(id)));
       } catch {}
     })();
 
@@ -704,8 +708,18 @@ function ChannelManageMembersModal({ channel, onClose }: {
         ? prev.filter((id) => id !== agentId)
         : [...prev, agentId],
     );
+    setSelectedLeaders((prev) => prev.filter((id) => id !== agentId));
     setMembersError(false);
   }, []);
+
+  const toggleLeader = useCallback((agentId: string) => {
+    if (!selectedMembers.includes(agentId)) return;
+    setSelectedLeaders((prev) =>
+      prev.includes(agentId)
+        ? prev.filter((id) => id !== agentId)
+        : [...prev, agentId],
+    );
+  }, [selectedMembers]);
 
   const handleSave = useCallback(async () => {
     if (!channel || saving) return;
@@ -719,13 +733,20 @@ function ChannelManageMembersModal({ channel, onClose }: {
       setTimeout(() => setMembersError(false), 1200);
       return;
     }
+    const leaders = channel.mode === 'discussion'
+      ? []
+      : [...new Set(
+          selectedLeaders
+            .map((id) => String(id || '').trim())
+            .filter((id) => id && members.includes(id)),
+        )];
 
     setSaving(true);
     try {
       const res = await hanaFetch(`/api/channels/${encodeURIComponent(channel.id)}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ members }),
+        body: JSON.stringify({ members, leaders }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.error) {
@@ -743,7 +764,7 @@ function ChannelManageMembersModal({ channel, onClose }: {
     } finally {
       setSaving(false);
     }
-  }, [addToast, channel, currentChannel, loadChannels, onClose, openChannel, saving, selectedMembers, t]);
+  }, [addToast, channel, currentChannel, loadChannels, onClose, openChannel, saving, selectedLeaders, selectedMembers, t]);
 
   if (!channel) return null;
 
@@ -792,6 +813,35 @@ function ChannelManageMembersModal({ channel, onClose }: {
             {membersError ? t('channel.manageMembersMinOne') : t('channel.manageMembersHint')}
           </div>
         </div>
+
+        {channel.mode !== 'discussion' && (
+          <div className="settings-field">
+            <label className="settings-field-label">{t('channel.createLeaders')}</label>
+            <div className="channel-create-members channel-manage-members-list">
+              {agents.filter((agent) => selectedMembers.includes(agent.id)).map((agent) => {
+                const isLeader = selectedLeaders.includes(agent.id);
+                return (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={`channel-create-member-chip${isLeader ? ' selected' : ''}`}
+                    onClick={() => toggleLeader(agent.id)}
+                    disabled={saving}
+                  >
+                    <AgentChipAvatar
+                      agentId={agent.id}
+                      agentName={agent.name}
+                      agentYuan={agent.yuan}
+                      hasAvatar={agent.hasAvatar}
+                    />
+                    <span>{agent.name || agent.id}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="channel-manage-members-hint">{t('channel.createLeadersHint')}</div>
+          </div>
+        )}
 
         <div className="agent-create-actions">
           <button className="agent-create-cancel" onClick={onClose} disabled={saving}>
@@ -1450,12 +1500,18 @@ export function ChannelInput() {
     const textBeforeCursor = val.slice(0, cursorPos);
 
     const atIdx = textBeforeCursor.lastIndexOf('@');
-    if (atIdx < 0 || (atIdx > 0 && /\S/.test(textBeforeCursor[atIdx - 1]))) {
+    if (atIdx < 0) {
       setMentionActive(false);
       return;
     }
 
-    const keyword = textBeforeCursor.slice(atIdx + 1).toLowerCase();
+    const keywordRaw = textBeforeCursor.slice(atIdx + 1);
+    if (/\s/.test(keywordRaw)) {
+      setMentionActive(false);
+      return;
+    }
+
+    const keyword = keywordRaw.toLowerCase();
     setMentionStartPos(atIdx);
 
     const members = (channelMembers || [])
@@ -1793,7 +1849,10 @@ export function ChannelCreate() {
 
   const [name, setName] = useState('');
   const [intro, setIntro] = useState('');
+  const [channelMode, setChannelMode] = useState<'command' | 'discussion'>('discussion');
+  const [discussionMaxRounds, setDiscussionMaxRounds] = useState(3);
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [selectedLeaders, setSelectedLeaders] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [nameError, setNameError] = useState(false);
   const [membersError, setMembersError] = useState(false);
@@ -1808,7 +1867,10 @@ export function ChannelCreate() {
       if (overlay.classList.contains('visible')) {
         setName('');
         setIntro('');
+        setChannelMode('discussion');
+        setDiscussionMaxRounds(3);
         setSelectedMembers(agents.map((a) => a.id));
+        setSelectedLeaders([]);
         setNameError(false);
         setMembersError(false);
         requestAnimationFrame(() => nameRef.current?.focus());
@@ -1846,8 +1908,18 @@ export function ChannelCreate() {
         ? prev.filter((id) => id !== agentId)
         : [...prev, agentId],
     );
+    setSelectedLeaders((prev) => prev.filter((id) => id !== agentId));
     setMembersError(false);
   }, []);
+
+  const toggleLeader = useCallback((agentId: string) => {
+    if (!selectedMembers.includes(agentId)) return;
+    setSelectedLeaders((prev) =>
+      prev.includes(agentId)
+        ? prev.filter((id) => id !== agentId)
+        : [...prev, agentId],
+    );
+  }, [selectedMembers]);
 
   const handleCancel = useCallback(() => {
     document.getElementById('channelCreateOverlay')?.classList.remove('visible');
@@ -1867,7 +1939,10 @@ export function ChannelCreate() {
 
     setCreating(true);
     try {
-      await createChannel(name.trim(), selectedMembers, intro.trim() || undefined);
+      const leaders = channelMode === 'command'
+        ? selectedLeaders.filter((id) => selectedMembers.includes(id))
+        : [];
+      await createChannel(name.trim(), selectedMembers, intro.trim() || undefined, leaders, channelMode, discussionMaxRounds);
       document.getElementById('channelCreateOverlay')?.classList.remove('visible');
     } catch (err: any) {
       const msg = String(err?.message || err || '');
@@ -1879,7 +1954,7 @@ export function ChannelCreate() {
     } finally {
       setCreating(false);
     }
-  }, [creating, name, selectedMembers, intro, createChannel]);
+  }, [channelMode, creating, name, discussionMaxRounds, selectedLeaders, selectedMembers, intro, createChannel]);
 
   const handleNameKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') handleCancel();
@@ -1929,6 +2004,72 @@ export function ChannelCreate() {
           })}
         </div>
       </div>
+      <div className="settings-field">
+        <label className="settings-field-label">{t('channel.createMode')}</label>
+        <div className="channel-create-members">
+          <button
+            type="button"
+            className={`channel-create-member-chip${channelMode === 'discussion' ? ' selected' : ''}`}
+            onClick={() => setChannelMode('discussion')}
+          >
+            <span>{t('channel.modeDiscussion')}</span>
+          </button>
+          <button
+            type="button"
+            className={`channel-create-member-chip${channelMode === 'command' ? ' selected' : ''}`}
+            onClick={() => setChannelMode('command')}
+          >
+            <span>{t('channel.modeCommand')}</span>
+          </button>
+        </div>
+        <div className="channel-manage-members-hint">
+          {channelMode === 'discussion' ? t('channel.modeDiscussionHint') : t('channel.modeCommandHint')}
+        </div>
+      </div>
+      {channelMode === 'discussion' && (
+        <div className="settings-field">
+          <label className="settings-field-label">{t('channel.discussionMaxRounds')}</label>
+          <input
+            className="settings-input"
+            type="number"
+            min={1}
+            max={8}
+            value={discussionMaxRounds}
+            onChange={(e) => {
+              const next = Math.max(1, Math.min(8, Number(e.target.value) || 3));
+              setDiscussionMaxRounds(next);
+            }}
+          />
+          <div className="channel-manage-members-hint">{t('channel.discussionMaxRoundsHint')}</div>
+        </div>
+      )}
+      {channelMode === 'command' && (
+        <div className="settings-field">
+          <label className="settings-field-label">{t('channel.createLeaders')}</label>
+          <div className="channel-create-members">
+            {agents.filter((agent) => selectedMembers.includes(agent.id)).map((agent) => {
+              const isLeader = selectedLeaders.includes(agent.id);
+              return (
+                <button
+                  key={agent.id}
+                  type="button"
+                  className={`channel-create-member-chip${isLeader ? ' selected' : ''}`}
+                  onClick={() => toggleLeader(agent.id)}
+                >
+                  <AgentChipAvatar
+                    agentId={agent.id}
+                    agentName={agent.name}
+                    agentYuan={agent.yuan}
+                    hasAvatar={agent.hasAvatar}
+                  />
+                  <span>{agent.name || agent.id}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="channel-manage-members-hint">{t('channel.createLeadersHint')}</div>
+        </div>
+      )}
       <div className="settings-field">
         <label className="settings-field-label">
           {t('channel.createIntro')}{' '}

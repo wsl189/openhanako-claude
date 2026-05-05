@@ -37,6 +37,12 @@ import {
   getChannelMemoryEnabled,
   setChannelMemoryEnabled,
   getChannelAnnouncementFromMeta,
+  getChannelLeadersFromMeta,
+  getChannelModeFromMeta,
+  getDiscussionMaxRoundsFromMeta,
+  normalizeChannelMode,
+  normalizeDiscussionMaxRounds,
+  setChannelLeaders,
   setChannelAnnouncement,
   isContextResetMessage,
 } from "../../lib/channels/channel-store.js";
@@ -134,6 +140,9 @@ export default async function channelsRoute(app, { engine, hub }) {
           name: meta.name || channelId,
           description: meta.description || "",
           announcement: getChannelAnnouncementFromMeta(meta),
+          mode: getChannelModeFromMeta(meta),
+          discussionMaxRounds: getDiscussionMaxRoundsFromMeta(meta),
+          leaders: getChannelLeadersFromMeta(meta),
           members,
           messageCount: visibleMessages.length,
           newMessageCount,
@@ -271,6 +280,11 @@ export default async function channelsRoute(app, { engine, hub }) {
   app.post("/api/channels", async (req, reply) => {
     try {
       const { name, description, members, intro } = req.body || {};
+      const mode = normalizeChannelMode(req.body?.mode);
+      const discussionMaxRounds = normalizeDiscussionMaxRounds(req.body?.discussionMaxRounds);
+      const leaders = mode === "command" && Array.isArray(req.body?.leaders)
+        ? [...new Set(req.body.leaders.map((m) => String(m || "").trim()).filter(Boolean))]
+        : [];
 
       if (!name || typeof name !== "string") {
         reply.code(400);
@@ -280,6 +294,12 @@ export default async function channelsRoute(app, { engine, hub }) {
         reply.code(400);
         return { error: "members must be an array with at least 2 items" };
       }
+      const memberSet = new Set(members);
+      const invalidLeaders = leaders.filter((id) => !memberSet.has(id));
+      if (invalidLeaders.length > 0) {
+        reply.code(400);
+        return { error: `leaders must be channel members: ${invalidLeaders.join(",")}` };
+      }
 
       const channelsDir = engine.channelsDir;
       fs.mkdirSync(channelsDir, { recursive: true });
@@ -288,6 +308,9 @@ export default async function channelsRoute(app, { engine, hub }) {
         name,
         description: description || undefined,
         members,
+        leaders,
+        mode,
+        discussionMaxRounds,
         intro: intro || undefined,
       });
 
@@ -305,7 +328,7 @@ export default async function channelsRoute(app, { engine, hub }) {
       addBookmarkEntry(userBookmarkPath(), channelId);
 
       debugLog()?.log("api", `POST /channels — created "${channelId}" (${name}) members=[${members}]`);
-      return { ok: true, id: channelId, name, members };
+      return { ok: true, id: channelId, name, members, leaders, mode, discussionMaxRounds };
     } catch (err) {
       if (err.message?.includes("已存在")) {
         reply.code(409);
@@ -344,6 +367,9 @@ export default async function channelsRoute(app, { engine, hub }) {
         description: meta.description || "",
         announcement: getChannelAnnouncementFromMeta(meta),
         memoryEnabled: getChannelMemoryEnabled(filePath),
+        mode: getChannelModeFromMeta(meta),
+        discussionMaxRounds: getDiscussionMaxRoundsFromMeta(meta),
+        leaders: getChannelLeadersFromMeta(meta),
         messages: apiMessages,
         members,
       };
@@ -374,9 +400,24 @@ export default async function channelsRoute(app, { engine, hub }) {
           .map((m) => String(m || "").trim())
           .filter(Boolean),
       )];
+      const requestedLeaders = Array.isArray(req.body?.leaders)
+        ? [...new Set(
+            req.body.leaders
+              .map((m) => String(m || "").trim())
+              .filter(Boolean),
+          )]
+        : null;
       if (nextMembers.length < 1) {
         reply.code(400);
         return { error: "members must include at least 1 item" };
+      }
+      const nextMemberSet = new Set(nextMembers);
+      const invalidLeaders = requestedLeaders
+        ? requestedLeaders.filter((id) => !nextMemberSet.has(id))
+        : [];
+      if (invalidLeaders.length > 0) {
+        reply.code(400);
+        return { error: `leaders must be channel members: ${invalidLeaders.join(",")}` };
       }
 
       const meta = getChannelMeta(filePath);
@@ -414,8 +455,11 @@ export default async function channelsRoute(app, { engine, hub }) {
           removeBookmarkEntry(path.join(memberDir, "channels.md"), name);
         }
       }
+      const nextLeaders = requestedLeaders
+        || getChannelLeadersFromMeta(getChannelMeta(filePath)).filter((id) => nextMemberSet.has(id));
+      setChannelLeaders(filePath, nextLeaders);
 
-      return { ok: true, members: nextMembers };
+      return { ok: true, members: nextMembers, leaders: nextLeaders };
     } catch (err) {
       reply.code(500);
       return { error: err.message };

@@ -190,7 +190,54 @@ function resolvePersistentSessionMetadata(sessionDir, sessionName, data) {
   return { sessionPath, metadata, existing: false };
 }
 
-export async function runAgentSession(agentId, rounds, {
+const _persistentSessionChains = new Map();
+
+function persistentSessionKey(agentId, sessionSuffix, persistentSessionName) {
+  if (!persistentSessionName) return "";
+  return [
+    String(agentId || "").trim(),
+    String(sessionSuffix || "temp").trim(),
+    safeSessionFileSegment(persistentSessionName),
+  ].join("\u0000");
+}
+
+export function isPersistentAgentSessionBusy(agentId, {
+  sessionSuffix = "channel",
+  persistentSessionName = null,
+} = {}) {
+  const key = persistentSessionKey(agentId, sessionSuffix, persistentSessionName);
+  return !!key && _persistentSessionChains.has(key);
+}
+
+function enqueuePersistentAgentSession(key, task) {
+  const prev = _persistentSessionChains.get(key) || Promise.resolve();
+  const next = prev
+    .catch(() => {})
+    .then(task);
+
+  _persistentSessionChains.set(key, next);
+  next.finally(() => {
+    if (_persistentSessionChains.get(key) === next) {
+      _persistentSessionChains.delete(key);
+    }
+  }).catch(() => {});
+  return next;
+}
+
+export async function runAgentSession(agentId, rounds, opts = {}) {
+  const persistentSessionName = opts?.persistentSessionName || null;
+  if (!persistentSessionName) {
+    return runAgentSessionNow(agentId, rounds, opts);
+  }
+
+  const key = persistentSessionKey(agentId, opts?.sessionSuffix || "temp", persistentSessionName);
+  return enqueuePersistentAgentSession(
+    key,
+    () => runAgentSessionNow(agentId, rounds, opts),
+  );
+}
+
+async function runAgentSessionNow(agentId, rounds, {
   engine,
   signal,
   sessionSuffix = "temp",
@@ -200,6 +247,7 @@ export async function runAgentSession(agentId, rounds, {
   noMemory = false,
   noTools = false,
   disabledBuiltinTools = [],
+  disabledCustomTools = [],
   extractInlineImages = false,
 } = {}) {
   const agent = engine.getAgent(agentId);
@@ -267,6 +315,16 @@ export async function runAgentSession(agentId, rounds, {
   );
 
   let runtime = null;
+  const toolProfile = engine.getAgentPermissionConfig?.(agentId) || null;
+  const disabledCustom = new Set(
+    (Array.isArray(disabledCustomTools) ? disabledCustomTools : [])
+      .map((name) => String(name || "").trim())
+      .filter(Boolean),
+  );
+  const customEnabledOverride = disabledCustom.size > 0
+    ? (toolProfile?.tools?.custom_enabled || []).filter((name) => !disabledCustom.has(name))
+    : null;
+
   const runtimeConfig = buildClaudeRuntimeConfig({
     agent,
     cwd: runtimeCwd,
@@ -274,9 +332,10 @@ export async function runAgentSession(agentId, rounds, {
       agent?.config?.desk?.home_folder || engine.getHomeFolder(agentId) || runtimeCwd,
       runtimeCwd,
     ),
-    toolProfile: engine.getAgentPermissionConfig?.(agentId) || null,
+    toolProfile,
     customTools: agent.tools,
     noTools,
+    customEnabledOverride,
     noMemory,
     disabledBuiltinTools,
     systemAppend: mergedSystemAppend,
