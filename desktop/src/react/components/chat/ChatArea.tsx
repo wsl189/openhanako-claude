@@ -281,6 +281,10 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
       anchoredUserIdRef.current = lastUserId;
       anchoredReplyForUserIdRef.current = null;
       followReplyRef.current = false;
+      topFlowTurnUserIdRef.current = null;
+      naturalTopFlowEndedRef.current = false;
+      // 新一轮消息要重新判断是否适合从顶部自然开始，不能继承上一轮遗留的 spacer / 锚点状态。
+      clearTurnSpacers();
       latestTurnAnchorGuardUntil.current = Date.now() + LATEST_TURN_ANCHOR_GUARD_MS;
       if (!isPathStreaming && restoredTurnWouldOverflowInput(userEl)) {
         followReplyRef.current = true;
@@ -348,6 +352,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
   }, [
     active,
     anchorMessageAtRatio,
+    clearTurnSpacers,
     findItemElement,
     getSafeBottomY,
     isPathStreaming,
