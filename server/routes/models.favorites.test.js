@@ -100,4 +100,35 @@ describe("/api/models/favorites", () => {
     expect(data.ok).toBe(true);
     expect(data.modelRef).toBe("openai/gpt-4.1");
   });
+
+  it("resolves provider/model refs in health checks", async () => {
+    const engine = createEngine({
+      availableModels: [
+        { id: "minimax-m2.5:free", name: "MiniMax M2.5 Free", provider: "minimax", api: "openai-completions" },
+      ],
+      _resolveProviderCredentials: () => ({
+        api_key: "test-key",
+        base_url: "https://openrouter.ai/api/v1",
+        api: "openai-completions",
+      }),
+    });
+
+    const originalFetch = global.fetch;
+    global.fetch = async () => ({ ok: true, status: 200 });
+
+    const app = Fastify();
+    apps.push(app);
+    await app.register(modelsRoute, { engine });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/models/health",
+      payload: { modelId: "minimax/minimax-m2.5:free" },
+    });
+
+    global.fetch = originalFetch;
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, status: 200, provider: "minimax" });
+  });
 });

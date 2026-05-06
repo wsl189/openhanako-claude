@@ -125,6 +125,22 @@ function resolveSharedTranscribeTarget(engine, sharedModels = {}, providerHint) 
   };
 }
 
+function resolveRequestedTranscribeModel(engine, modelRef, providerHint = "") {
+  const normalized = normalizeModelRef(modelRef);
+  if (!normalized) return "";
+  try {
+    const resolved = engine.resolveModelWithCredentials?.(normalized);
+    const modelId = String(resolved?.model || resolved?.id || "").trim();
+    const provider = String(resolved?.provider || "").trim();
+    if (modelId && (!providerHint || provider === providerHint)) {
+      return modelId;
+    }
+  } catch {
+    // Fall back to the normalized ref when the model cannot be resolved yet.
+  }
+  return normalized;
+}
+
 function parseErrorMessage(data, fallback) {
   return String(
     data?.error?.message
@@ -382,8 +398,13 @@ export default async function voiceRoute(app, { engine }) {
       const sharedModelHint = sharedTarget && sharedTarget.provider === target.provider
         ? String(sharedTarget.shared_voice_model || "").trim()
         : "";
+      const requestedModelHint = resolveRequestedTranscribeModel(
+        engine,
+        body.model,
+        target.provider,
+      );
       const modelHints = [
-        normalizeModelRef(body.model),
+        requestedModelHint,
         sharedModelHint,
         normalizeModelRef(process.env.HANA_VOICE_TRANSCRIBE_MODEL || ""),
         target.provider === "siliconflow" ? "TeleAI/TeleSpeechASR" : "",
@@ -439,7 +460,11 @@ export default async function voiceRoute(app, { engine }) {
       const sharedModelHint = sharedTarget && sharedTarget.provider === target.provider
         ? String(sharedTarget.shared_voice_model || "").trim()
         : "";
-      const requestedModel = normalizeModelRef(body.model);
+      const requestedModel = resolveRequestedTranscribeModel(
+        engine,
+        body.model,
+        target.provider,
+      );
       const modelHints = [
         requestedModel,
         sharedModelHint,

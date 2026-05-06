@@ -457,6 +457,7 @@ export default async function agentsRoute(app, { engine }) {
             api: p.api || "",
             api_key: mask(p.api_key),
             models: p.models || [],
+            custom_models: p.custom_models || [],
             model_count: (p.models || []).length,
           };
         }

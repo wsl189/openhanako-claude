@@ -165,7 +165,7 @@ export default async function modelsRoute(app, { engine }) {
       const { modelId } = req.body || {};
       if (!modelId) { reply.code(400); return { error: "modelId required" }; }
 
-      const model = engine.availableModels.find(m => m.id === modelId);
+      const model = resolveModelRef(modelId, engine.availableModels, modelCatalog);
       if (!model) { reply.code(404); return { error: `model "${modelId}" not found` }; }
 
       // 凭证解析：providers.yaml → auth.json OAuth（含 resourceUrl）→ 模型对象自带 baseUrl
@@ -194,7 +194,7 @@ export default async function modelsRoute(app, { engine }) {
         const res = await fetch(url, {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: modelId, max_tokens: 1, messages: [{ role: "user", content: "." }] }),
+          body: JSON.stringify({ model: model.id, max_tokens: 1, messages: [{ role: "user", content: "." }] }),
           signal: AbortSignal.timeout(10000),
         });
         // 200 或 400（参数错误但连通）都算健康

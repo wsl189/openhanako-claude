@@ -91,6 +91,19 @@ function normalizeRemoteModels(data) {
     .filter((m) => m.id);
 }
 
+function normalizeModelIdList(values) {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const id = String(value || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+
 function summarizeBodyPreview(text) {
   const compact = String(text || "").replace(/\s+/g, " ").trim();
   return compact.length > 120 ? `${compact.slice(0, 120)}...` : compact;
@@ -218,7 +231,10 @@ export default async function providersRoute(app, { engine }) {
       const sdkIds = sdkByProvider.get(name) || [];
       // 合并：providers.yaml models + SDK 发现的模型
       const allModels = [...new Set([...(p.models || []), ...sdkIds])];
-      const customModels = oauthCustom[name] || [];
+      const configuredCustomModels = normalizeModelIdList(p.custom_models);
+      const customModels = isOAuth
+        ? [...new Set([...(oauthCustom[name] || []), ...configuredCustomModels])]
+        : configuredCustomModels;
 
       result[name] = {
         type: isOAuth ? "oauth" : "api-key",

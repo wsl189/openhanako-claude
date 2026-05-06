@@ -59,6 +59,29 @@ function toStringArray(input: unknown): string[] {
   return [];
 }
 
+function mergeModelIds(...groups: unknown[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const group of groups) {
+    for (const id of toStringArray(group)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      result.push(id);
+    }
+  }
+  return result;
+}
+
+function getProviderCustomModels(summary: ProviderSummary, providerConfig?: any): string[] {
+  return mergeModelIds(summary.custom_models, providerConfig?.custom_models);
+}
+
+function getProviderPersistedModels(summary: ProviderSummary, providerConfig?: any): string[] {
+  const configured = toStringArray(providerConfig?.models);
+  if (configured.length > 0) return configured;
+  return mergeModelIds(summary.models, getProviderCustomModels(summary, providerConfig));
+}
+
 function normalizeProviderSummary(raw: unknown, id: string): ProviderSummary {
   const src = (raw && typeof raw === 'object') ? raw as Record<string, any> : {};
   return {
@@ -326,10 +349,10 @@ function ProviderDetail({ providerId, summary, providerConfig, isPresetSetup, pr
       )}
 
       {/* 已收藏模型（紧凑） */}
-      <FavoritedModels providerId={providerId} summary={summary} />
+      <FavoritedModels providerId={providerId} summary={summary} providerConfig={providerConfig} onRefresh={onRefresh} />
 
       {/* 全部模型（下拉选择器） */}
-      <ProviderModelList providerId={providerId} summary={summary} onRefresh={onRefresh} />
+      <ProviderModelList providerId={providerId} summary={summary} providerConfig={providerConfig} onRefresh={onRefresh} />
     </div>
   );
 }
@@ -655,13 +678,14 @@ function OAuthCredentials({ providerId, summary, onRefresh }: {
 // Favorited Models (紧凑列表，在凭证和全部模型之间)
 // ════════════════════════════════════════════════════
 
-function FavoritedModels({ providerId, summary }: {
-  providerId: string; summary: ProviderSummary;
+function FavoritedModels({ providerId, summary, providerConfig, onRefresh }: {
+  providerId: string; summary: ProviderSummary; providerConfig?: any; onRefresh: () => Promise<void>;
 }) {
-  const { pendingFavorites, pendingDefaultModel } = useSettingsStore();
+  const { pendingFavorites, pendingDefaultModel, showToast } = useSettingsStore();
   const favoriteSet = toStringSet(pendingFavorites);
   const allModels = [...new Set([...(summary.models || []), ...(summary.custom_models || [])])];
   const favModels = allModels.filter(m => favoriteSet.has(m));
+  const customModelSet = new Set(getProviderCustomModels(summary, providerConfig));
 
   const removeFavorite = (mid: string) => {
     const next = new Set(favoriteSet);
@@ -678,6 +702,32 @@ function FavoritedModels({ providerId, summary }: {
     }
     useSettingsStore.setState({ pendingFavorites: next, pendingDefaultModel: nextDefault });
     autoSaveModels();
+  };
+
+  const removeCustomModel = async (id: string) => {
+    try {
+      if (summary.supports_oauth) {
+        const res = await hanaFetch(`/api/auth/oauth/${providerId}/custom-models/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+      } else {
+        const nextModels = getProviderPersistedModels(summary, providerConfig).filter(m => m !== id);
+        const nextCustomModels = getProviderCustomModels(summary, providerConfig).filter(m => m !== id);
+        await hanaFetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providers: { [providerId]: { models: nextModels, custom_models: nextCustomModels } } }),
+        });
+      }
+
+      removeFavorite(id);
+      await onRefresh();
+      platform?.settingsChanged?.('models-changed');
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
   };
 
   const [editing, setEditing] = useState<{ id: string; anchor: HTMLElement } | null>(null);
@@ -709,7 +759,11 @@ function FavoritedModels({ providerId, summary }: {
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                   </svg>
                 </button>
-                <button className="pv-fav-item-remove" onClick={() => removeFavorite(mid)} title={t('settings.api.removeModel')}>
+                <button
+                  className="pv-fav-item-remove"
+                  onClick={() => { void (customModelSet.has(mid) ? removeCustomModel(mid) : removeFavorite(mid)); }}
+                  title={customModelSet.has(mid) ? t('settings.providers.delete') : t('settings.api.removeModel')}
+                >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
@@ -730,8 +784,8 @@ function FavoritedModels({ providerId, summary }: {
 // Provider Model List (折叠式)
 // ════════════════════════════════════════════════════
 
-function ProviderModelList({ providerId, summary, onRefresh }: {
-  providerId: string; summary: ProviderSummary; onRefresh: () => Promise<void>;
+function ProviderModelList({ providerId, summary, providerConfig, onRefresh }: {
+  providerId: string; summary: ProviderSummary; providerConfig?: any; onRefresh: () => Promise<void>;
 }) {
   const { pendingFavorites, pendingDefaultModel, showToast } = useSettingsStore();
   const favoriteSet = toStringSet(pendingFavorites);
@@ -741,7 +795,7 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
   const [editingModel, setEditingModel] = useState<{ id: string; anchor: HTMLElement } | null>(null);
 
   const allModels = [...new Set([...(summary.models || []), ...(summary.custom_models || [])])];
-  const customModelSet = new Set(summary.custom_models || []);
+  const customModelSet = new Set(getProviderCustomModels(summary, providerConfig));
   const query = search.toLowerCase();
   const filtered = query ? allModels.filter(m => m.toLowerCase().includes(query)) : allModels;
 
@@ -788,11 +842,19 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
         const data = await res.json();
         if (data.error) throw new Error(data.error);
       } else {
-        const currentModels = summary.models || [];
+        const currentModels = getProviderPersistedModels(summary, providerConfig);
+        const currentCustomModels = getProviderCustomModels(summary, providerConfig);
         await hanaFetch('/api/config', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ providers: { [providerId]: { models: [...currentModels, id] } } }),
+          body: JSON.stringify({
+            providers: {
+              [providerId]: {
+                models: mergeModelIds(currentModels, [id]),
+                custom_models: mergeModelIds(currentCustomModels, [id]),
+              },
+            },
+          }),
         });
       }
       setCustomInput('');
@@ -812,11 +874,12 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
         const data = await res.json();
         if (data.error) throw new Error(data.error);
       } else {
-        const currentModels = (summary.models || []).filter(m => m !== id);
+        const currentModels = getProviderPersistedModels(summary, providerConfig).filter(m => m !== id);
+        const currentCustomModels = getProviderCustomModels(summary, providerConfig).filter(m => m !== id);
         await hanaFetch('/api/config', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ providers: { [providerId]: { models: currentModels } } }),
+          body: JSON.stringify({ providers: { [providerId]: { models: currentModels, custom_models: currentCustomModels } } }),
         });
       }
 
@@ -880,7 +943,13 @@ function ProviderModelList({ providerId, summary, onRefresh }: {
       await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providers: { [providerId]: { models } } }),
+        body: JSON.stringify({
+          providers: {
+            [providerId]: {
+              models: mergeModelIds(models, getProviderCustomModels(summary, providerConfig)),
+            },
+          },
+        }),
       });
       showFetchHint(t('settings.providers.fetchSuccess', { name: providerId, n: models.length }), true);
       await onRefresh();
