@@ -1483,6 +1483,8 @@ function formatTokenWindow(value: number | null): string {
     const m = value / 1_000_000;
     return `${Number.isInteger(m) ? m : +m.toFixed(1)}M`;
   }
+  const k = value / 1024;
+  if (Number.isInteger(k)) return `${k}k`;
   return `${Math.round(value / 1000)}k`;
 }
 
