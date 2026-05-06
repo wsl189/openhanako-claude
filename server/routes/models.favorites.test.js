@@ -52,6 +52,67 @@ describe("/api/models/favorites", () => {
     expect(data.current).toBe("openai/gpt-4.1");
   });
 
+  it("keeps canonical refs pinned to the requested provider even when raw model ids overlap", async () => {
+    const engine = createEngine({
+      _models: {
+        modelCatalog: {
+          resolve(ref) {
+            if (ref === "openrouter/minimax/minimax-m2.5:free") {
+              return {
+                key: "openrouter/minimax/minimax-m2.5:free",
+                modelId: "minimax/minimax-m2.5:free",
+                providerId: "openrouter",
+                displayName: "MiniMax M2.5 Free",
+              };
+            }
+            if (ref === "minimax/minimax-m2.5:free") {
+              return {
+                key: "minimax/minimax-m2.5:free",
+                modelId: "minimax-m2.5:free",
+                providerId: "minimax",
+                displayName: "MiniMax M2.5 Free",
+              };
+            }
+            return null;
+          },
+          toSdkEntry(entry) {
+            return {
+              id: entry.modelId,
+              name: entry.displayName,
+              provider: entry.providerId,
+            };
+          },
+        },
+      },
+      readFavorites: () => [
+        "openrouter/minimax/minimax-m2.5:free",
+        "minimax/minimax-m2.5:free",
+      ],
+      availableModels: [
+        { id: "minimax/minimax-m2.5:free", name: "MiniMax M2.5 Free", provider: "openrouter", reasoning: true },
+        { id: "minimax-m2.5:free", name: "MiniMax M2.5 Free", provider: "minimax", reasoning: true },
+      ],
+    });
+
+    const app = Fastify();
+    apps.push(app);
+    await app.register(modelsRoute, { engine });
+
+    const res = await app.inject({ method: "GET", url: "/api/models/favorites" });
+    expect(res.statusCode).toBe(200);
+    const data = res.json();
+
+    expect(data.models).toHaveLength(2);
+    expect(data.models[0]).toMatchObject({
+      id: "openrouter/minimax/minimax-m2.5:free",
+      provider: "openrouter",
+    });
+    expect(data.models[1]).toMatchObject({
+      id: "minimax/minimax-m2.5:free",
+      provider: "minimax",
+    });
+  });
+
   it("prepends current model when not in favorites", async () => {
     const engine = createEngine({
       readFavorites: () => ["minimax/MiniMax-M2.7"],

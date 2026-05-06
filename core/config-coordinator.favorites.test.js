@@ -6,6 +6,7 @@ function buildCoordinator(initialPrefs = {}) {
   const savePreferences = vi.fn((next) => {
     Object.assign(prefs, next);
   });
+  const availableModels = initialPrefs.availableModels || [];
 
   const coord = new ConfigCoordinator({
     getPrefs: () => ({
@@ -16,7 +17,13 @@ function buildCoordinator(initialPrefs = {}) {
     getAgents: () => new Map(),
     getModels: () => ({
       syncModelsAndRefresh: vi.fn(async () => ({})),
-      availableModels: [],
+      availableModels,
+      findAvailableModel: vi.fn((modelRef) => {
+        const ref = String(modelRef || "").trim();
+        return availableModels.find((model) =>
+          model.id === ref || `${model.provider}/${model.id}` === ref
+        ) || null;
+      }),
     }),
     getSkills: () => ({}),
     getSession: () => null,
@@ -62,6 +69,22 @@ describe("ConfigCoordinator favorites normalization", () => {
 
     expect(prefs.favorites).toEqual(["minimax/MiniMax-M2.7", "openai/gpt-4.1"]);
     expect(syncSpy).toHaveBeenCalledWith(["minimax/MiniMax-M2.7", "openai/gpt-4.1"]);
+  });
+
+  it("canonicalizes legacy bare favorite ids when the provider is unambiguous", () => {
+    const { coord, prefs, savePreferences } = buildCoordinator({
+      favorites: ["qwen3.6:35b-256k", "deepseek-v4-pro"],
+      availableModels: [
+        { id: "qwen3.6:35b-256k", provider: "ollama" },
+        { id: "deepseek-v4-pro", provider: "deepseek" },
+      ],
+    });
+
+    const favorites = coord.readFavorites();
+
+    expect(favorites).toEqual(["ollama/qwen3.6:35b-256k", "deepseek/deepseek-v4-pro"]);
+    expect(prefs.favorites).toEqual(["ollama/qwen3.6:35b-256k", "deepseek/deepseek-v4-pro"]);
+    expect(savePreferences).toHaveBeenCalledTimes(1);
   });
 });
 

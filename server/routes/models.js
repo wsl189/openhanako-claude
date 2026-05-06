@@ -32,6 +32,16 @@ function resolveModelRef(modelRef, availableModels, modelCatalog) {
   const ref = String(modelRef || "").trim();
   if (!ref) return null;
 
+  if (modelCatalog && ref.includes("/")) {
+    const entry = modelCatalog.resolve(ref);
+    if (entry) {
+      return (
+        availableModels.find((model) => model.id === entry.modelId && model.provider === entry.providerId)
+        || modelCatalog.toSdkEntry(entry)
+      );
+    }
+  }
+
   const direct = availableModels.find((model) => {
     if (model.id === ref) return true;
     return !!(model.provider && `${model.provider}/${model.id}` === ref);

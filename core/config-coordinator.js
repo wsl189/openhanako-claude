@@ -39,12 +39,27 @@ function normalizeFavoriteRef(raw) {
   return normalizeModelRef(raw);
 }
 
-function normalizeFavoriteRefs(values) {
+function canonicalizeModelRef(raw, findAvailableModel) {
+  const ref = normalizeModelRef(raw);
+  if (!ref) return "";
+  if (ref.includes("/")) return ref;
+  if (typeof findAvailableModel !== "function") return ref;
+
+  try {
+    const resolved = findAvailableModel(ref);
+    const canonical = normalizeModelRef(resolved);
+    return canonical || ref;
+  } catch {
+    return ref;
+  }
+}
+
+function normalizeFavoriteRefs(values, findAvailableModel) {
   if (!Array.isArray(values)) return [];
   const out = [];
   const seen = new Set();
   for (const value of values) {
-    const ref = normalizeFavoriteRef(value);
+    const ref = canonicalizeModelRef(value, findAvailableModel);
     if (!ref || seen.has(ref)) continue;
     seen.add(ref);
     out.push(ref);
@@ -72,6 +87,14 @@ export class ConfigCoordinator {
    */
   constructor(deps) {
     this._d = deps;
+  }
+
+  _findAvailableModel(modelRef) {
+    return this._d.getModels?.()?.findAvailableModel?.(modelRef) || null;
+  }
+
+  _canonicalizeModelRef(raw) {
+    return canonicalizeModelRef(raw, (modelRef) => this._findAvailableModel(modelRef));
   }
 
   // ── Home Folder ──
@@ -126,7 +149,7 @@ export class ConfigCoordinator {
     const changedPrefs = {};
     let changed = false;
     for (const [field, prefKey] of SHARED_MODEL_KEYS) {
-      const normalized = normalizeModelRef(prefs[prefKey]);
+      const normalized = this._canonicalizeModelRef(prefs[prefKey]);
       result[field] = normalized || null;
       if (prefs[prefKey] !== undefined && prefs[prefKey] !== normalized) {
         changedPrefs[prefKey] = normalized || null;
@@ -149,7 +172,7 @@ export class ConfigCoordinator {
   setSharedModels(partial) {
     const normalized = {};
     for (const [k, v] of Object.entries(partial || {})) {
-      normalized[k] = normalizeModelRef(v);
+      normalized[k] = this._canonicalizeModelRef(v);
     }
     if (normalized.utility !== undefined && normalized.utility_large === undefined) {
       normalized.utility_large = normalized.utility;
@@ -217,7 +240,7 @@ export class ConfigCoordinator {
 
   readFavorites() {
     const prefs = this._prefs();
-    const normalized = normalizeFavoriteRefs(prefs.favorites);
+    const normalized = normalizeFavoriteRefs(prefs.favorites, (modelRef) => this._findAvailableModel(modelRef));
     const prev = Array.isArray(prefs.favorites) ? prefs.favorites : [];
     const changed = prev.length !== normalized.length
       || prev.some((value, index) => normalizeFavoriteRef(value) !== normalized[index]);
@@ -230,7 +253,7 @@ export class ConfigCoordinator {
   }
 
   async saveFavorites(favorites) {
-    const normalized = normalizeFavoriteRefs(favorites);
+    const normalized = normalizeFavoriteRefs(favorites, (modelRef) => this._findAvailableModel(modelRef));
     const prefs = this._prefs();
     prefs.favorites = normalized;
     this._savePrefs(prefs);
@@ -729,7 +752,7 @@ export class ConfigCoordinator {
     const shared = this.getSharedModels();
     const utilityModelId = shared.utility || this._d.getAgent()?.config?.models?.utility || "";
     const utilityEntry = utilityModelId
-      ? this._d.getModels().availableModels.find((m) => m.id === utilityModelId)
+      ? this._d.getModels().findAvailableModel(utilityModelId)
       : null;
 
     let reason = "";

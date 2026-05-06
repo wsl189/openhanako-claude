@@ -89,6 +89,14 @@ export class ModelManager {
     const ref = normalizeModelRef(modelRef);
     if (!ref) return null;
 
+    if (this.modelCatalog && ref.includes("/")) {
+      const entry = this.modelCatalog.resolve(ref);
+      if (entry) {
+        return this._availableModels.find((m) => m.id === entry.modelId && m.provider === entry.providerId)
+          || this.modelCatalog.toSdkEntry(entry);
+      }
+    }
+
     const direct = this._availableModels.find((m) => {
       if (m.id === ref || m.name === ref) return true;
       return !!(m.provider && `${m.provider}/${m.id}` === ref);

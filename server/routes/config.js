@@ -325,12 +325,16 @@ export default async function configRoute(app, { engine }) {
             const modelsJson = JSON.parse(readFileSync(modelsJsonPath, "utf-8"));
             // 收集被删 provider 下的所有模型 ID
             const orphanedModels = new Set();
+            const orphanedModelRefs = new Set();
             let changed = false;
             for (const name of deletedProviders) {
               const provData = modelsJson.providers?.[name];
               if (provData) {
                 for (const m of (provData.models || [])) {
-                  orphanedModels.add(typeof m === "string" ? m : m?.id);
+                  const id = typeof m === "string" ? m : m?.id;
+                  if (!id) continue;
+                  orphanedModels.add(id);
+                  orphanedModelRefs.add(`${name}/${id}`);
                 }
                 delete modelsJson.providers[name];
                 changed = true;
@@ -342,7 +346,7 @@ export default async function configRoute(app, { engine }) {
             // 从 favorites 中移除已删 provider 的模型
             if (orphanedModels.size > 0) {
               const favorites = engine.readFavorites();
-              const cleaned = favorites.filter(id => !orphanedModels.has(id));
+              const cleaned = favorites.filter(id => !orphanedModels.has(id) && !orphanedModelRefs.has(id));
               if (cleaned.length !== favorites.length) {
                 await engine.saveFavorites(cleaned);
               }

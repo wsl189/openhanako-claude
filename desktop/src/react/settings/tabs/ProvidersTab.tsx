@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSettingsStore, type ProviderSummary } from '../store';
 import { hanaFetch } from '../api';
 import {
-  t, formatContext, lookupModelMeta, normalizeModelRef, resolveProviderForModel,
+  t, formatContext, lookupModelMeta, matchesProviderModelRef, normalizeModelRef, resolveProviderForModel, toProviderModelRef,
   autoSaveConfig, autoSaveGlobalModels, autoSaveModels,
   PROVIDER_PRESETS, API_FORMAT_OPTIONS, CONTEXT_PRESETS, OUTPUT_PRESETS,
 } from '../helpers';
@@ -98,6 +98,17 @@ function normalizeProviderSummary(raw: unknown, id: string): ProviderSummary {
     is_coding_plan: src.is_coding_plan === undefined ? undefined : Boolean(src.is_coding_plan),
     can_delete: src.can_delete === undefined ? false : Boolean(src.can_delete),
   };
+}
+
+function hasProviderModelFavorite(favoriteSet: Set<string>, providerId: string, modelId: string): boolean {
+  return [...favoriteSet].some((ref) => matchesProviderModelRef(ref, providerId, modelId));
+}
+
+function deleteProviderModelFavorite(favoriteSet: Set<string>, providerId: string, modelId: string): Set<string> {
+  const next = new Set(favoriteSet);
+  next.delete(toProviderModelRef(providerId, modelId));
+  next.delete(String(modelId || '').trim());
+  return next;
 }
 
 class ProvidersErrorBoundary extends React.Component<
@@ -197,8 +208,8 @@ function ProvidersTabInner() {
     const p = normalizedProvidersSummary[id];
     if (!p) return null;
     const preset = PROVIDER_PRESETS.find(pr => pr.value === id);
-    const favCount = (p.models || []).filter(m => favoriteSet.has(m)).length
-      + (p.custom_models || []).filter(m => favoriteSet.has(m)).length;
+    const favCount = (p.models || []).filter(m => hasProviderModelFavorite(favoriteSet, id, m)).length
+      + (p.custom_models || []).filter(m => hasProviderModelFavorite(favoriteSet, id, m)).length;
     const totalCount = (p.models || []).length + (p.custom_models || []).length;
     return (
       <button
@@ -684,14 +695,13 @@ function FavoritedModels({ providerId, summary, providerConfig, onRefresh }: {
   const { pendingFavorites, pendingDefaultModel, showToast } = useSettingsStore();
   const favoriteSet = toStringSet(pendingFavorites);
   const allModels = [...new Set([...(summary.models || []), ...(summary.custom_models || [])])];
-  const favModels = allModels.filter(m => favoriteSet.has(m));
+  const favModels = allModels.filter(m => hasProviderModelFavorite(favoriteSet, providerId, m));
   const customModelSet = new Set(getProviderCustomModels(summary, providerConfig));
 
   const removeFavorite = (mid: string) => {
-    const next = new Set(favoriteSet);
-    next.delete(mid);
+    const next = deleteProviderModelFavorite(favoriteSet, providerId, mid);
     let nextDefault = pendingDefaultModel;
-    if (mid === pendingDefaultModel) {
+    if (matchesProviderModelRef(pendingDefaultModel, providerId, mid)) {
       nextDefault = [...next][0] || '';
       const partial: Record<string, any> = { models: { chat: nextDefault } };
       if (nextDefault) {
@@ -801,10 +811,12 @@ function ProviderModelList({ providerId, summary, providerConfig, onRefresh }: {
 
   const toggleFavorite = (mid: string) => {
     const next = new Set(favoriteSet);
-    if (next.has(mid)) {
+    const canonicalRef = toProviderModelRef(providerId, mid);
+    if (hasProviderModelFavorite(favoriteSet, providerId, mid)) {
+      next.delete(canonicalRef);
       next.delete(mid);
       let nextDefault = pendingDefaultModel;
-      if (mid === pendingDefaultModel) {
+      if (matchesProviderModelRef(pendingDefaultModel, providerId, mid)) {
         nextDefault = [...next][0] || '';
         const partial: Record<string, any> = { models: { chat: nextDefault } };
         if (nextDefault) {
@@ -815,12 +827,12 @@ function ProviderModelList({ providerId, summary, providerConfig, onRefresh }: {
       }
       useSettingsStore.setState({ pendingFavorites: next, pendingDefaultModel: nextDefault });
     } else {
-      next.add(mid);
+      next.add(canonicalRef);
       const wasEmpty = favoriteSet.size === 0;
       const updates: Partial<any> = { pendingFavorites: next };
       if (wasEmpty) {
-        updates.pendingDefaultModel = mid;
-        const partial: Record<string, any> = { models: { chat: mid } };
+        updates.pendingDefaultModel = canonicalRef;
+        const partial: Record<string, any> = { models: { chat: canonicalRef } };
         partial.api = { provider: providerId };
         autoSaveConfig(partial, { refreshModels: true });
       }
@@ -887,13 +899,12 @@ function ProviderModelList({ providerId, summary, providerConfig, onRefresh }: {
       const state = useSettingsStore.getState();
       const favoritesNow = toStringSet(state.pendingFavorites);
       const defaultNow = state.pendingDefaultModel;
-      if (favoritesNow.has(id) || defaultNow === id) {
-        const next = new Set(favoritesNow);
-        next.delete(id);
-        const nextDefault = defaultNow === id ? ([...next][0] || '') : defaultNow;
+      if (hasProviderModelFavorite(favoritesNow, providerId, id) || matchesProviderModelRef(defaultNow, providerId, id)) {
+        const next = deleteProviderModelFavorite(favoritesNow, providerId, id);
+        const nextDefault = matchesProviderModelRef(defaultNow, providerId, id) ? ([...next][0] || '') : defaultNow;
         useSettingsStore.setState({ pendingFavorites: next, pendingDefaultModel: nextDefault });
         autoSaveModels();
-        if (defaultNow === id) {
+        if (matchesProviderModelRef(defaultNow, providerId, id)) {
           const partial: Record<string, any> = { models: { chat: nextDefault } };
           if (nextDefault) {
             const prov = resolveProviderForModel(nextDefault);
@@ -1083,7 +1094,7 @@ function ProviderModelList({ providerId, summary, providerConfig, onRefresh }: {
           />
           <div className="pv-model-dropdown-list">
             {filtered.map(mid => {
-              const isFav = favoriteSet.has(mid);
+              const isFav = hasProviderModelFavorite(favoriteSet, providerId, mid);
               const meta = lookupModelMeta(mid) || {};
               const isCustom = customModelSet.has(mid);
               return (

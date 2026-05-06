@@ -188,9 +188,13 @@ export function syncFavoritesToModelsJson(configPath, opts = {}) {
   // ── 4. 按 provider 分组必须保留的模型 ──
   const providerModels = new Map(); // providerName → Set<modelId>
   for (const rawRef of mustKeepRefs) {
+    // favorites/shared/chat 中的跨 provider 引用统一按 canonical provider/model 解释。
+    // 这让 "minimax/minimax-m2.5:free" 稳定表示 minimax provider 下的
+    // "minimax-m2.5:free"，而 OpenRouter 的斜杠模型必须写成
+    // "openrouter/minimax/minimax-m2.5:free"。
     const { provider: providerHint, modelId } = splitModelRef(rawRef, providerNameSet);
     const mid = modelId || rawRef;
-    const prov = providerHint || modelToProvider.get(mid);
+    const prov = providerHint || modelToProvider.get(mid) || modelToProvider.get(rawRef);
     if (!prov) {
       console.warn(`\x1b[33m  [sync] 模型 "${rawRef}" 未绑定 provider，跳过\x1b[0m`);
       continue;

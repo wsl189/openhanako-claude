@@ -384,6 +384,12 @@ export function OnboardingApp({ preview, skipToTutorial }: OnboardingAppProps) {
 
   // ── Save model ──
   const saveModel = useCallback(async () => {
+    const toModelRef = (modelId: string) => {
+      const id = String(modelId || '').trim();
+      if (!id) return '';
+      return providerName ? `${providerName}/${id}` : id;
+    };
+
     // Save model list to provider first, then set chat model.
     // Fresh install 时若先写 chat，运行时可用模型列表可能还没刷新，导致首轮会话拿不到模型对象。
     const modelIds = fetchedModels.map(m => m.id);
@@ -399,13 +405,15 @@ export function OnboardingApp({ preview, skipToTutorial }: OnboardingAppProps) {
     await hanaFetch(`/api/agents/${AGENT_ID}/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ models: { chat: selectedModel } }),
+      body: JSON.stringify({ models: { chat: toModelRef(selectedModel) } }),
     });
 
     // Save favorites
-    const favs = [selectedModel];
-    if (selectedUtility && !favs.includes(selectedUtility)) favs.push(selectedUtility);
-    if (selectedUtilityLarge && !favs.includes(selectedUtilityLarge)) favs.push(selectedUtilityLarge);
+    const favs = [toModelRef(selectedModel)].filter(Boolean);
+    const utilityRef = toModelRef(selectedUtility);
+    const utilityLargeRef = toModelRef(selectedUtilityLarge);
+    if (utilityRef && !favs.includes(utilityRef)) favs.push(utilityRef);
+    if (utilityLargeRef && !favs.includes(utilityLargeRef)) favs.push(utilityLargeRef);
     await hanaFetch('/api/favorites', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -415,8 +423,8 @@ export function OnboardingApp({ preview, skipToTutorial }: OnboardingAppProps) {
     // Save utility models to global preferences
     if (selectedUtility || selectedUtilityLarge) {
       const utilityModels: Record<string, string> = {};
-      if (selectedUtility) utilityModels.utility = selectedUtility;
-      if (selectedUtilityLarge) utilityModels.utility_large = selectedUtilityLarge;
+      if (utilityRef) utilityModels.utility = utilityRef;
+      if (utilityLargeRef) utilityModels.utility_large = utilityLargeRef;
       await hanaFetch('/api/preferences/models', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

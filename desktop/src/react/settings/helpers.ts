@@ -33,6 +33,44 @@ export function normalizeFavoriteRefs(values: any): string[] {
   return out;
 }
 
+function getKnownProviderIds(): string[] {
+  const configuredProviders = Object.keys(useSettingsStore.getState().settingsConfig?.providers || {});
+  const presetProviders = PROVIDER_PRESETS
+    .map((preset) => String(preset.value || '').trim())
+    .filter(Boolean);
+  return [...new Set([...configuredProviders, ...presetProviders])];
+}
+
+export function splitProviderModelRef(value: any): { provider: string; modelId: string } {
+  const ref = normalizeModelRef(value);
+  if (!ref) return { provider: '', modelId: '' };
+  if (!ref.includes('/')) return { provider: '', modelId: ref };
+
+  const provider = getKnownProviderIds()
+    .filter((id) => ref.startsWith(`${id}/`))
+    .sort((a, b) => b.length - a.length)[0] || '';
+  if (!provider) return { provider: '', modelId: ref };
+  return { provider, modelId: ref.slice(provider.length + 1) };
+}
+
+export function toProviderModelRef(providerId: string, modelId: string): string {
+  const provider = String(providerId || '').trim();
+  const id = String(modelId || '').trim();
+  if (!id) return '';
+  if (!provider) return id;
+
+  const explicit = splitProviderModelRef(id);
+  if (explicit.provider === provider && explicit.modelId) return id;
+  return `${provider}/${id}`;
+}
+
+export function matchesProviderModelRef(value: any, providerId: string, modelId: string): boolean {
+  const ref = normalizeModelRef(value);
+  const bareId = String(modelId || '').trim();
+  if (!ref || !bareId) return false;
+  return ref === bareId || ref === toProviderModelRef(providerId, bareId);
+}
+
 export function t(key: string, params?: Record<string, any>): any {
   return (window as any).t?.(key, params) ?? key;
 }
@@ -57,14 +95,17 @@ export function formatContext(n: number): string {
 export function resolveProviderForModel(modelId: string): string | null {
   const config = useSettingsStore.getState().settingsConfig;
   if (!modelId || !config) return null;
+  const explicit = splitProviderModelRef(modelId);
+  if (explicit.provider) return explicit.provider;
   const providers = config.providers || {};
   for (const [name, p] of Object.entries(providers) as [string, any][]) {
     if ((p.models || []).includes(modelId)) return name;
+    if ((p.custom_models || []).includes(modelId)) return name;
   }
   return null;
 }
 
-function lookupReferenceModelMeta(modelId: string): any {
+function lookupReferenceModelMetaCandidate(modelId: string): any {
   if (!modelId) return null;
   const dict = knownModels as Record<string, any>;
 
@@ -79,6 +120,17 @@ function lookupReferenceModelMeta(modelId: string): any {
 
   if (candidates.length === 0) return null;
   return { ...candidates[0][1], _source: 'reference' };
+}
+
+function lookupReferenceModelMeta(modelId: string): any {
+  const direct = lookupReferenceModelMetaCandidate(modelId);
+  if (direct) return direct;
+
+  const explicit = splitProviderModelRef(modelId);
+  if (explicit.provider && explicit.modelId && explicit.modelId !== modelId) {
+    return lookupReferenceModelMetaCandidate(explicit.modelId);
+  }
+  return null;
 }
 
 export function lookupModelMeta(modelId: string): any {
