@@ -27,6 +27,22 @@
     --font-serif: 'Songti SC', 'Georgia', serif;
     --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
 
+    /* 主操作按钮 */
+    --primary-btn-bg: var(--accent);
+    --primary-btn-border: var(--accent);
+    --primary-btn-text: #FFFFFF;
+    --primary-btn-hover-bg: var(--accent-hover, var(--accent));
+    --primary-btn-hover-border: var(--accent-hover, var(--accent));
+    --primary-btn-hover-text: #FFFFFF;
+
+    /* 按钮 */
+    --send-btn-bg: var(--accent);
+    --send-btn-border: var(--accent);
+    --send-btn-text: #FFFFFF;
+    --send-btn-hover-bg: var(--accent-hover, var(--accent));
+    --send-btn-hover-border: var(--accent-hover, var(--accent));
+    --send-btn-hover-text: var(--send-btn-text);
+
     /* sidebar 宽度 */
     --sidebar-width: 240px;
     --jian-sidebar-width: 240px;
@@ -7453,9 +7469,9 @@ body.resizing .jian-sidebar-inner {
     padding: 0.35rem 0.65rem;
     font-family: inherit;
     font-size: 0.72rem;
-    background: var(--accent);
-    color: white;
-    border: 1px solid var(--accent);
+    background: var(--send-btn-bg);
+    color: var(--send-btn-text);
+    border: 1px solid var(--send-btn-border);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--duration) var(--ease-out);
@@ -7473,7 +7489,9 @@ body.resizing .jian-sidebar-inner {
 }
 
 .send-btn:hover:not(:disabled) {
-    filter: brightness(1.1);
+    background: var(--send-btn-hover-bg);
+    color: var(--send-btn-hover-text);
+    border-color: var(--send-btn-hover-border);
 }
 
 .send-btn:hover:not(:disabled) .send-enter-icon {
@@ -13464,6 +13482,42 @@ a.about-link:hover {
 .mdw-custom-confirm:hover {
     background: var(--accent);
     color: white;
+}
+
+.settings-btn-primary,
+.settings-save-btn-sm,
+.oauth-code-submit,
+.pv-add-form-btn.primary,
+.pv-setup-activate-btn,
+.pv-verify-btn,
+.pv-cred-save,
+.bridge-save-btn-primary,
+.agent-create-confirm,
+.memory-confirm-primary,
+.crop-btn-confirm {
+    background: var(--primary-btn-bg);
+    color: var(--primary-btn-text);
+    border-color: var(--primary-btn-border);
+}
+
+.settings-btn-primary:hover,
+.settings-save-btn-sm:hover,
+.oauth-code-submit:hover,
+.pv-add-form-btn.primary:hover,
+.pv-setup-activate-btn:hover,
+.pv-verify-btn:hover,
+.pv-verify-connection-btn:hover,
+.search-verify-btn:hover,
+.pv-cred-save:hover,
+.bridge-save-btn-primary:hover,
+.agent-create-confirm:hover,
+.memory-confirm-primary:hover,
+.crop-btn-confirm:hover,
+.mdw-custom-confirm:hover {
+    background: var(--primary-btn-hover-bg);
+    color: var(--primary-btn-hover-text);
+    border-color: var(--primary-btn-hover-border);
+    opacity: 1;
 }
 
 .mdw-empty {
