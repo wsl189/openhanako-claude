@@ -185,7 +185,7 @@ function AgentChips({ agents, selectedId }: {
     if (latest.selectedAgentId !== agentId) return;
 
     useStore.setState({ selectedFolder: folder });
-    loadDeskFiles('', folder || undefined);
+    loadDeskFiles('', folder);
   }, []);
 
   return (

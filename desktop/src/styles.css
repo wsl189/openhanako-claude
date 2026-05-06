@@ -5704,6 +5704,8 @@ html[data-platform="darwin"] .sv-topbar-title {
     position: absolute;
     bottom: 100%;
     right: 0;
+    --model-option-height: 2rem;
+    --model-group-header-height: 1.5rem;
     background: var(--bg-card);
     border: none;
     border-radius: var(--radius-md);
@@ -5719,12 +5721,44 @@ html[data-platform="darwin"] .sv-topbar-title {
     display: block;
 }
 
+.model-dropdown.scrollable {
+    max-height: calc(
+        (var(--model-visible-option-count, 8) * var(--model-option-height)) +
+        (var(--model-visible-header-count, 0) * var(--model-group-header-height)) +
+        (var(--space-xs) * 2)
+    );
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.model-dropdown.scrollable::-webkit-scrollbar {
+    width: 8px;
+}
+
+.model-dropdown.scrollable::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.model-dropdown.scrollable::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+}
+
+.model-dropdown.scrollable::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
 @keyframes dropdown-in {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
 .model-group-header {
+    display: flex;
+    align-items: flex-end;
+    min-height: var(--model-group-header-height);
     font-size: 0.65rem;
     color: var(--text-muted);
     padding: 6px 0.6rem 2px;
@@ -5733,8 +5767,10 @@ html[data-platform="darwin"] .sv-topbar-title {
 }
 
 .model-option {
-    display: block;
+    display: flex;
+    align-items: center;
     width: 100%;
+    min-height: var(--model-option-height);
     padding: 0.4rem 0.6rem;
     font-family: inherit;
     font-size: 0.8rem;

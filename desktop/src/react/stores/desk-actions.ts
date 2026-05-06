@@ -30,17 +30,47 @@ export function deskCurrentDir(): string | null {
     : s.deskBasePath;
 }
 
+function firstNonEmptyPath(...values: Array<string | null | undefined>): string | undefined {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+export function resolveDeskLoadBaseDir(opts: {
+  overrideDir?: string | null;
+  sessionPath?: string | null;
+  deskBasePath?: string | null;
+  selectedFolder?: string | null;
+  homeFolder?: string | null;
+}): string | undefined {
+  const explicitDir = firstNonEmptyPath(opts.overrideDir);
+  if (explicitDir) return explicitDir;
+  if (opts.overrideDir === null) return undefined;
+  if (firstNonEmptyPath(opts.sessionPath)) return undefined;
+  return firstNonEmptyPath(opts.deskBasePath, opts.selectedFolder, opts.homeFolder);
+}
+
 // ── 文件操作 ──
 
-export async function loadDeskFiles(subdir?: string, overrideDir?: string, sessionPath?: string): Promise<void> {
+export async function loadDeskFiles(subdir?: string, overrideDir?: string | null, sessionPath?: string): Promise<void> {
   const s = useStore.getState();
   if (!s.serverPort) return;
   if (subdir !== undefined) s.setDeskCurrentPath(subdir);
   try {
     const params = new URLSearchParams();
     const targetSessionPath = sessionPath || s.currentSessionPath || '';
+    const targetBaseDir = resolveDeskLoadBaseDir({
+      overrideDir,
+      sessionPath: targetSessionPath,
+      deskBasePath: s.deskBasePath,
+      selectedFolder: s.selectedFolder,
+      homeFolder: s.homeFolder,
+    });
     if (targetSessionPath) params.set('sessionPath', targetSessionPath);
-    if (overrideDir) params.set('dir', overrideDir);
+    if (targetBaseDir) params.set('dir', targetBaseDir);
     const curPath = subdir !== undefined ? subdir : s.deskCurrentPath;
     if (curPath) params.set('subdir', curPath);
     const qs = params.toString() ? `?${params}` : '';
@@ -258,5 +288,5 @@ export function initJian(): void {
   const savedJian = localStorage.getItem('hana-jian-chat');
   if (savedJian !== null) useStore.getState().setJianOpen(savedJian !== 'closed');
   const s = useStore.getState();
-  loadDeskFiles('', s.selectedFolder || s.homeFolder || undefined);
+  loadDeskFiles('', s.selectedFolder ?? s.homeFolder ?? null);
 }

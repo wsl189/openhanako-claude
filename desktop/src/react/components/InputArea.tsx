@@ -1665,6 +1665,27 @@ function ModelSelector({
 
   const groupKeys = Object.keys(grouped);
   const hasMultipleProviders = groupKeys.length > 1 || (groupKeys.length === 1 && groupKeys[0] !== '');
+  const totalRenderedModelCount = useMemo(
+    () => groupKeys.reduce((count, provider) => count + (grouped[provider]?.length || 0), 0),
+    [groupKeys, grouped],
+  );
+  const dropdownNeedsScroll = totalRenderedModelCount > 8;
+  const visibleHeaderCount = useMemo(() => {
+    if (!hasMultipleProviders || !dropdownNeedsScroll) return 0;
+
+    let remainingVisibleModels = 8;
+    let headerCount = 0;
+
+    for (const provider of groupKeys) {
+      const items = grouped[provider] || [];
+      if (!items.length || remainingVisibleModels <= 0) continue;
+      headerCount += 1;
+      remainingVisibleModels -= Math.min(items.length, remainingVisibleModels);
+      if (remainingVisibleModels <= 0) break;
+    }
+
+    return headerCount;
+  }, [dropdownNeedsScroll, groupKeys, grouped, hasMultipleProviders]);
 
   return (
     <div className={'model-selector' + (open ? ' open' : '') + (!canSelectModel ? ' locked' : '')} ref={ref}>
@@ -1681,7 +1702,13 @@ function ModelSelector({
         {canSelectModel && <span className="model-arrow">▾</span>}
       </button>
       {open && (
-        <div className="model-dropdown">
+        <div
+          className={'model-dropdown' + (dropdownNeedsScroll ? ' scrollable' : '')}
+          style={dropdownNeedsScroll ? {
+            ['--model-visible-option-count' as string]: '8',
+            ['--model-visible-header-count' as string]: String(visibleHeaderCount),
+          } : undefined}
+        >
           {groupKeys.map(provider => {
             const items = grouped[provider];
             return (
