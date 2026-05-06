@@ -312,6 +312,94 @@ describe('mergeDelta', () => {
     }
   });
 
+  it('keeps reused ollama-style tool ids in separate ordered blocks and renders final markdown', () => {
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '先确认桌面目录。' });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+
+    streamBufferManager.handle({
+      type: 'tool_start',
+      sessionPath,
+      name: 'Bash',
+      toolCallId: 'tc_0',
+      args: { command: 'ls -la /Users/tc/Desktop' },
+    });
+    streamBufferManager.handle({
+      type: 'tool_end',
+      sessionPath,
+      name: 'Bash',
+      toolCallId: 'tc_0',
+      success: true,
+    });
+
+    streamBufferManager.handle({ type: 'thinking_start', sessionPath });
+    streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '再兼容一下 ~/Desktop。' });
+    streamBufferManager.handle({ type: 'thinking_end', sessionPath });
+
+    streamBufferManager.handle({
+      type: 'tool_start',
+      sessionPath,
+      name: 'Bash',
+      toolCallId: 'tc_0',
+      args: { command: 'ls -la ~/Desktop 2>/dev/null' },
+    });
+    streamBufferManager.handle({
+      type: 'tool_end',
+      sessionPath,
+      name: 'Bash',
+      toolCallId: 'tc_0',
+      success: true,
+    });
+
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '| 类型 | 名称 | 大小 |\n| --- | --- | --- |\n| 文件夹 | Screenshots | 128B |',
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual([
+        'thinking',
+        'tool_group',
+        'thinking',
+        'tool_group',
+        'text',
+      ]);
+
+      const firstTool = blocks[1];
+      const secondTool = blocks[3];
+      expect(firstTool?.type).toBe('tool_group');
+      expect(secondTool?.type).toBe('tool_group');
+      if (firstTool?.type === 'tool_group') {
+        expect(firstTool.tools[0]).toMatchObject({
+          toolUseId: 'tc_0',
+          args: { command: 'ls -la /Users/tc/Desktop' },
+          done: true,
+        });
+      }
+      if (secondTool?.type === 'tool_group') {
+        expect(secondTool.tools[0]).toMatchObject({
+          toolUseId: 'tc_0',
+          args: { command: 'ls -la ~/Desktop 2>/dev/null' },
+          done: true,
+        });
+      }
+
+      const finalText = blocks[4];
+      expect(finalText?.type).toBe('text');
+      if (finalText?.type === 'text') {
+        expect(finalText.html).toContain('<table>');
+        expect(finalText.html).toContain('Screenshots');
+      }
+    }
+  });
+
   it('does not merge non-thinking text into the first thinking block when tool starts', () => {
     streamBufferManager.handle({ type: 'thinking_start', sessionPath });
     streamBufferManager.handle({ type: 'thinking_delta', sessionPath, delta: '先做背景分析。' });

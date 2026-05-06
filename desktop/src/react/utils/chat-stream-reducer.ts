@@ -208,7 +208,7 @@ export function applyChatStreamLiveEvent(
       const existing = findToolLocation(next, {
         toolCallId,
         name: msg.name,
-        onlyPending: false,
+        onlyPending: true,
       });
 
       if (existing) {

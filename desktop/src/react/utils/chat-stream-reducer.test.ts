@@ -139,6 +139,42 @@ describe('applyChatStreamLiveEvent', () => {
     });
   });
 
+  it('treats a reused completed tool id as a new invocation', () => {
+    let blocks: ContentBlock[] = [];
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'bash',
+      toolCallId: 'tc_0',
+      args: { command: 'ls -la /Users/tc/Desktop' },
+    });
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_end',
+      name: 'bash',
+      toolCallId: 'tc_0',
+      success: true,
+    });
+    blocks = applyChatStreamLiveEvent(blocks, {
+      type: 'tool_start',
+      name: 'bash',
+      toolCallId: 'tc_0',
+      args: { command: 'ls -la ~/Desktop 2>/dev/null' },
+    });
+
+    expect(blocks).toHaveLength(2);
+    const first = blocks[0] as Extract<ContentBlock, { type: 'tool_group' }>;
+    const second = blocks[1] as Extract<ContentBlock, { type: 'tool_group' }>;
+    expect(first.tools[0]).toMatchObject({
+      toolUseId: 'tc_0',
+      args: { command: 'ls -la /Users/tc/Desktop' },
+      done: true,
+    });
+    expect(second.tools[0]).toMatchObject({
+      toolUseId: 'tc_0',
+      args: { command: 'ls -la ~/Desktop 2>/dev/null' },
+      done: false,
+    });
+  });
+
   it('merges late tool_end output into already-done tool entry', () => {
     let blocks: ContentBlock[] = [];
     blocks = applyChatStreamLiveEvent(blocks, {
