@@ -86,6 +86,8 @@ contextBridge.exposeInMainWorld("hana", {
   startDrag: (filePaths) => ipcRenderer.send("start-drag", filePaths),
   // 系统通知
   showNotification: (title, body) => ipcRenderer.invoke("show-notification", title, body),
+  requestMicrophoneAccess: () => ipcRenderer.invoke("request-microphone-access"),
+  getMicrophoneAccessStatus: () => ipcRenderer.invoke("get-microphone-access-status"),
   // 窗口控制（Windows/Linux 自绘标题栏）
   getPlatform: () => ipcRenderer.invoke("get-platform"),
   windowMinimize: () => ipcRenderer.invoke("window-minimize"),

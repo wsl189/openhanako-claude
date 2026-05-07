@@ -5,11 +5,13 @@ export type PushToTalkState = 'idle' | 'warming' | 'recording' | 'processing';
 
 type KeyLikeEvent = {
   key: string;
+  code?: string;
   repeat?: boolean;
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;
   shiftKey?: boolean;
+  target?: EventTarget | null;
   preventDefault: () => void;
   stopPropagation?: () => void;
 };
@@ -17,6 +19,7 @@ type KeyLikeEvent = {
 type UsePushToTalkOptions = {
   enabled?: boolean;
   language?: string;
+  listenOnWindow?: boolean;
   onActivate?: () => void;
   onInterimTranscript?: (text: string) => void;
   onTranscript?: (text: string) => void;
@@ -42,8 +45,19 @@ const HOLD_REPEAT_THRESHOLD = 2;
 const HOLD_ACTIVATION_DELAY_MS = 220;
 const TRANSCRIBE_TIMEOUT_MS = 75_000;
 
-function isSpaceKey(key: string): boolean {
+function isSpaceEvent(key: string, code?: string): boolean {
+  if (code === 'Space') return true;
   return key === ' ' || key === 'Space' || key === 'Spacebar';
+}
+
+function isEditableElement(target: EventTarget | null | undefined): boolean {
+  const node = target as HTMLElement | null;
+  if (!node || typeof (node as any).tagName !== 'string') return false;
+  if (node.id === 'inputBox') return false;
+  const tag = node.tagName.toUpperCase();
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if ((node as any).isContentEditable) return true;
+  return false;
 }
 
 function stripLocaleToIso639(rawLanguage: string | undefined): string {
@@ -101,6 +115,7 @@ async function blobToBase64(blob: Blob): Promise<string> {
 export function usePushToTalk({
   enabled = true,
   language,
+  listenOnWindow = true,
   onActivate,
   onInterimTranscript,
   onTranscript,
@@ -390,6 +405,22 @@ export function usePushToTalk({
     onInterimTranscript?.('');
     setError(null);
 
+    // 打包态下显式触发一次系统授权请求，避免某些环境不弹权限框。
+    try {
+      const requestMic = (window as any)?.hana?.requestMicrophoneAccess;
+      if (typeof requestMic === 'function') {
+        const granted = await requestMic();
+        if (!granted) {
+          if (sessionRef.current !== mySession) return;
+          setState('idle');
+          emitError('MIC_PERMISSION_DENIED');
+          return;
+        }
+      }
+    } catch {
+      // Ignore and fallback to getUserMedia error path.
+    }
+
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -453,8 +484,9 @@ export function usePushToTalk({
 
   const handleKeyDown = useCallback((e: KeyLikeEvent): boolean => {
     if (!enabled || !supported) return false;
-    if (!isSpaceKey(e.key)) return false;
+    if (!isSpaceEvent(e.key, e.code)) return false;
     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
+    if (isEditableElement(e.target)) return false;
 
     if (state === 'processing') {
       e.preventDefault();
@@ -498,7 +530,8 @@ export function usePushToTalk({
 
   const handleKeyUp = useCallback((e: KeyLikeEvent): boolean => {
     if (!enabled || !supported) return false;
-    if (!isSpaceKey(e.key)) return false;
+    if (!isSpaceEvent(e.key, e.code)) return false;
+    if (isEditableElement(e.target)) return false;
     if (!holdRef.current.isDown) return false;
     clearHoldActivationTimer();
 
@@ -554,6 +587,25 @@ export function usePushToTalk({
       cleanupStream();
     };
   }, [cleanupStream, clearHoldActivationTimer, stopSpeechRecognition]);
+
+  useEffect(() => {
+    if (!listenOnWindow) return;
+    if (!enabled || !supported) return;
+
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      handleKeyDown(event as unknown as KeyLikeEvent);
+    };
+    const onWindowKeyUp = (event: KeyboardEvent) => {
+      handleKeyUp(event as unknown as KeyLikeEvent);
+    };
+
+    window.addEventListener('keydown', onWindowKeyDown, true);
+    window.addEventListener('keyup', onWindowKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', onWindowKeyDown, true);
+      window.removeEventListener('keyup', onWindowKeyUp, true);
+    };
+  }, [enabled, handleKeyDown, handleKeyUp, listenOnWindow, supported]);
 
   return {
     supported,

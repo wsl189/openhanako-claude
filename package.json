@@ -120,6 +120,8 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "desktop/src/icon.icns",
+      "entitlements": "desktop/entitlements.mac.plist",
+      "entitlementsInherit": "desktop/entitlements.mac.inherit.plist",
       "artifactName": "${productName}-${version}-macOS-${arch}.${ext}"
     },
     "dmg": {

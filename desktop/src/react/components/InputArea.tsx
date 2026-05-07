@@ -266,8 +266,6 @@ function InputAreaInner() {
     error: voiceErrorRaw,
     volumeLevel: voiceVolumeLevel,
     clearError: clearVoiceError,
-    handleKeyDown: handleVoiceKeyDown,
-    handleKeyUp: handleVoiceKeyUp,
   } = usePushToTalk({
     enabled: true,
     language: voiceLanguage,
@@ -814,8 +812,6 @@ function InputAreaInner() {
 
   // ── Key handler ──
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (handleVoiceKeyDown(e)) return;
-
     // 斜杠菜单导航
     if (slashMenuOpen && filteredCommands.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -844,11 +840,7 @@ function InputAreaInner() {
       e.preventDefault();
       handleSend();
     }
-  }, [handleSend, slashMenuOpen, filteredCommands, slashSelected, handleVoiceKeyDown]);
-
-  const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
-    handleVoiceKeyUp(e);
-  }, [handleVoiceKeyUp]);
+  }, [handleSend, slashMenuOpen, filteredCommands, slashSelected]);
 
   return (
     <>
@@ -917,7 +909,6 @@ function InputAreaInner() {
           value={inputText}
           onChange={e => handleInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          onKeyUp={handleKeyUp}
           onPaste={handlePaste}
           onCompositionStart={() => { isComposing.current = true; }}
           onCompositionEnd={() => { isComposing.current = false; }}

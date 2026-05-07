@@ -2907,6 +2907,27 @@ ipcMain.handle("show-notification", (_event, title, body) => {
   }
 });
 
+// 显式请求麦克风权限（打包态有时不会自动弹系统授权框）
+ipcMain.handle("request-microphone-access", async () => {
+  try {
+    if (process.platform !== "darwin") return true;
+    const status = systemPreferences.getMediaAccessStatus?.("microphone");
+    if (status === "granted") return true;
+    return await systemPreferences.askForMediaAccess("microphone");
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("get-microphone-access-status", () => {
+  try {
+    if (process.platform !== "darwin") return "granted";
+    return systemPreferences.getMediaAccessStatus?.("microphone") || "not-determined";
+  } catch {
+    return "unknown";
+  }
+});
+
 // ── 窗口控制 IPC（Windows/Linux 自绘标题栏用）──
 ipcMain.handle("get-platform", () => process.platform);
 ipcMain.handle("window-minimize", (event) => {
