@@ -1883,7 +1883,7 @@ export function ChannelCreate() {
   const [membersError, setMembersError] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
 
-  // When modal becomes visible, reset form and select all agents
+  // When modal becomes visible, reset form and keep members unselected by default
   useEffect(() => {
     const overlay = document.getElementById('channelCreateOverlay');
     if (!overlay) return;
@@ -1894,7 +1894,7 @@ export function ChannelCreate() {
         setIntro('');
         setChannelMode('discussion');
         setDiscussionMaxRounds(3);
-        setSelectedMembers(agents.map((a) => a.id));
+        setSelectedMembers([]);
         setSelectedLeaders([]);
         setNameError(false);
         setMembersError(false);
