@@ -22,6 +22,7 @@ import { SVG_ICONS } from '../utils/icons';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const CHANNEL_MESSAGE_ANCHOR_RATIO = 0.65;
+const CHANNEL_MENTION_MAX_MEMBERS = 8;
 
 // ── 稳定头像时间戳（避免每次渲染生成新 URL） ──
 let _avatarTs = Date.now();
@@ -50,6 +51,7 @@ interface CommandItem {
   id: string;
   label: string;
   desc: string;
+  icon: string;
 }
 
 // ── 辅助函数 ──
@@ -989,6 +991,7 @@ export function ChannelMessages() {
   const contentRef = useRef<HTMLDivElement>(null);
   const anchoredUserKeyRef = useRef<string | null>(null);
   const followReplyRef = useRef(false);
+  const channelSwitchPendingRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedMsgKey, setCopiedMsgKey] = useState<string | null>(null);
   const ch = channels.find((c) => c.id === currentChannel);
@@ -1092,6 +1095,15 @@ export function ChannelMessages() {
     const lastMsgEl = findMessageElement(el, lastMsgKey);
     if (!lastMsgEl) return;
 
+    if (channelSwitchPendingRef.current) {
+      channelSwitchPendingRef.current = false;
+      anchoredUserKeyRef.current = null;
+      followReplyRef.current = true;
+      if (spacer) spacer.style.height = '0px';
+      showChannelBottomImmediately();
+      return;
+    }
+
     if (isSelfChannelMessage(lastMsg)) {
       if (anchoredUserKeyRef.current === lastMsgKey && !followReplyRef.current) return;
       anchoredUserKeyRef.current = lastMsgKey;
@@ -1120,6 +1132,7 @@ export function ChannelMessages() {
   useEffect(() => {
     anchoredUserKeyRef.current = null;
     followReplyRef.current = false;
+    channelSwitchPendingRef.current = !!currentChannel;
   }, [currentChannel]);
 
   useEffect(() => {
@@ -1542,12 +1555,19 @@ export function ChannelInput() {
         )
       : mentionItemsAll;
 
-    if (filtered.length === 0) {
+    const hasMentionAll = filtered.some((m) => m.id === '__all_members__');
+    const memberItems = filtered.filter((m) => m.id !== '__all_members__');
+    const limitedMembers = memberItems.slice(0, CHANNEL_MENTION_MAX_MEMBERS);
+    const limitedItems = hasMentionAll
+      ? [mentionItemsAll[0], ...limitedMembers]
+      : limitedMembers;
+
+    if (limitedItems.length === 0) {
       setMentionActive(false);
       return;
     }
 
-    setMentionItems(filtered);
+    setMentionItems(limitedItems);
     setMentionSelectedIdx(0);
     setMentionActive(true);
     setCommandActive(false);
@@ -1578,16 +1598,19 @@ export function ChannelInput() {
         id: 'new',
         label: '/new',
         desc: t('channel.commandNewDesc'),
+        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
       },
       {
         id: 'clear',
         label: '/clear',
         desc: t('channel.commandClearDesc'),
+        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
       },
       {
         id: 'stop',
         label: '/stop',
         desc: t('channel.commandStopDesc'),
+        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2" ry="2"/></svg>',
       },
     ];
     const filtered = keyword
@@ -1739,19 +1762,21 @@ export function ChannelInput() {
         </div>
       )}
       {commandActive && commandItems.length > 0 && (
-        <div className="channel-mention-dropdown channel-command-dropdown">
+        <div className="channel-mention-dropdown channel-command-dropdown slash-menu">
           {commandItems.map((cmd, idx) => (
-            <div
+            <button
               key={cmd.id}
-              className={`channel-mention-item${idx === commandSelectedIdx ? ' active' : ''}`}
+              type="button"
+              className={`slash-menu-item${idx === commandSelectedIdx ? ' selected' : ''}`}
               onMouseDown={(e) => {
                 e.preventDefault();
                 insertCommand(cmd.label);
               }}
             >
-              <span className="channel-command-item-main">{cmd.label}</span>
-              <span className="channel-command-item-desc">{cmd.desc}</span>
-            </div>
+              <span className="slash-menu-icon" dangerouslySetInnerHTML={{ __html: cmd.icon }} />
+              <span className="slash-menu-label">{cmd.label}</span>
+              <span className="slash-menu-desc">{cmd.desc}</span>
+            </button>
           ))}
         </div>
       )}

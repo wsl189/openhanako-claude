@@ -13931,7 +13931,6 @@ a.about-link:hover {
     min-height: 0;       /* 关键：允许 flex 项被约束，overflow-y 才能生效 */
     overflow-y: auto;
     padding: var(--space-sm) var(--conversation-side-gap);
-    scroll-behavior: smooth;
 }
 
 .channel-messages-content {
@@ -14188,7 +14187,7 @@ a.about-link:hover {
     border: 1px solid var(--overlay-medium);
     border-radius: var(--radius-md);
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.08);
-    max-height: 160px;
+    max-height: min(320px, 50vh);
     overflow-y: auto;
     z-index: 50;
 }
@@ -14211,6 +14210,19 @@ a.about-link:hover {
 .channel-mention-item:hover,
 .channel-mention-item.active {
     background: var(--overlay-light);
+}
+
+.channel-command-dropdown.slash-menu {
+    right: auto;
+    width: min(360px, calc(100% - 60px));
+    padding: 4px;
+    margin-bottom: 6px;
+    background: var(--bg-card);
+    border: 1px solid rgba(var(--accent-rgb), 0.12);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 16px var(--shadow);
+    max-height: none;
+    overflow: hidden;
 }
 
 .channel-command-item-main {
