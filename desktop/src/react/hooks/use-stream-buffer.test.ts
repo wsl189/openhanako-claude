@@ -923,6 +923,161 @@ describe('mergeDelta', () => {
     }
   });
 
+  it('upgrades no-tool streamed text to a richer final snapshot when markdown structure improves', () => {
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '外盘联动分析师 · 观点原文要点\n隔夜美股（5月6日）全线大涨：\n指数 涨跌幅 关键信息\n纳斯达克 +2.02% 连续创历史新高',
+    });
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        {
+          type: 'text',
+          text: '## 外盘联动分析师 · 观点原文要点\n\n**隔夜美股（5月6日）全线大涨：**\n\n| 指数 | 涨跌幅 | 关键信息 |\n|---|---|---|\n| 纳斯达克 | **+2.02%** | 连续创历史新高 |',
+        },
+      ],
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['text']);
+      const text = blocks[0];
+      expect(text?.type).toBe('text');
+      if (text?.type === 'text') {
+        expect(text.raw).toBe('## 外盘联动分析师 · 观点原文要点\n\n**隔夜美股（5月6日）全线大涨：**\n\n| 指数 | 涨跌幅 | 关键信息 |\n|---|---|---|\n| 纳斯达克 | **+2.02%** | 连续创历史新高 |');
+        expect(text.html).toContain('<table>');
+        expect(text.html).toContain('<h2>');
+      }
+    }
+  });
+
+  it('does not downgrade richer streamed markdown to a flatter final snapshot', () => {
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '## 外盘联动分析师 · 观点原文要点\n\n| 指数 | 涨跌幅 |\n|---|---|\n| 纳斯达克 | +2.02% |',
+    });
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        {
+          type: 'text',
+          text: '外盘联动分析师 观点原文要点 指数 涨跌幅 纳斯达克 +2.02%',
+        },
+      ],
+    });
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    const items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    const only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['text']);
+      const text = blocks[0];
+      expect(text?.type).toBe('text');
+      if (text?.type === 'text') {
+        expect(text.raw).toBe('## 外盘联动分析师 · 观点原文要点\n\n| 指数 | 涨跌幅 |\n|---|---|\n| 纳斯达克 | +2.02% |');
+        expect(text.html).toContain('<table>');
+        expect(text.html).toContain('<h2>');
+      }
+    }
+  });
+
+  it('upgrades the live final markdown block from snapshot while preserving tool ordering', async () => {
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '我先查了一下定义。',
+    });
+    streamBufferManager.handle({
+      type: 'tool_start',
+      sessionPath,
+      name: 'WebSearch',
+      toolCallId: 'tool-win-rate',
+      args: { q: 'win rate meaning' },
+    });
+    streamBufferManager.handle({
+      type: 'tool_end',
+      sessionPath,
+      name: 'WebSearch',
+      toolCallId: 'tool-win-rate',
+      success: true,
+    });
+    streamBufferManager.handle({
+      type: 'text_delta',
+      sessionPath,
+      delta: '胜率（Win Rate）\n\n公式```\n胜率 = 盈利交易次数 / 总交易次数 × 100%\n\n| 胜率 | 盈亏比 |\n| --- | --- |\n| 60% | 1:1 |',
+    });
+
+    streamBufferManager.handle({
+      type: 'assistant_snapshot',
+      sessionPath,
+      content: [
+        { type: 'text', text: '我先查了一下定义。' },
+        {
+          type: 'tool_use',
+          id: 'tool-win-rate',
+          name: 'WebSearch',
+          input: { q: 'win rate meaning' },
+        },
+        {
+          type: 'text',
+          text: '## 胜率（Win Rate）\n\n公式：\n```text\n胜率 = 盈利交易次数 / 总交易次数 × 100%\n```\n\n| 胜率 | 盈亏比 |\n| --- | --- |\n| 60% | 1:1 |',
+        },
+      ],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    let items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    expect(items).toHaveLength(1);
+    let only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const blocks = only.data.blocks || [];
+      expect(blocks.map((b) => b.type)).toEqual(['text', 'tool_group', 'text']);
+
+      const firstText = blocks[0];
+      expect(firstText?.type).toBe('text');
+      if (firstText?.type === 'text') {
+        expect(firstText.raw).toBe('我先查了一下定义。');
+      }
+
+      const finalText = blocks[2];
+      expect(finalText?.type).toBe('text');
+      if (finalText?.type === 'text') {
+        expect(finalText.raw).toBe('## 胜率（Win Rate）\n\n公式：\n```text\n胜率 = 盈利交易次数 / 总交易次数 × 100%\n```\n\n| 胜率 | 盈亏比 |\n| --- | --- |\n| 60% | 1:1 |');
+        expect(finalText.html).toContain('<h2>');
+        expect(finalText.html).toContain('<pre><code');
+        expect(finalText.html).toContain('<table>');
+      }
+    }
+
+    streamBufferManager.handle({ type: 'turn_end', sessionPath });
+
+    items = useStore.getState().chatSessions[sessionPath]?.items || [];
+    only = items[0];
+    expect(only?.type).toBe('message');
+    if (only?.type === 'message') {
+      const finalText = only.data.blocks?.[2];
+      expect(finalText?.type).toBe('text');
+      if (finalText?.type === 'text') {
+        expect(finalText.html).toContain('<pre><code');
+        expect(finalText.html).toContain('<table>');
+      }
+    }
+  });
+
   it('starts a new assistant message after compaction divider', () => {
     streamBufferManager.handle({
       type: 'text_delta',

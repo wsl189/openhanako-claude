@@ -84,6 +84,8 @@ interface Buffer {
   textAnchorIndex: number | null;
   textAccSource: 'none' | 'snapshot' | 'stream';
   assistantTextUsesStream: boolean;
+  latestAssistantSnapshotText: string;
+  latestAssistantSnapshotContent: any[];
   thinkingAcc: string;
   hadThinking: boolean;
   sawThinkingStreamEvent: boolean;
@@ -233,6 +235,8 @@ function createBuffer(sessionPath: string): Buffer {
     textAnchorIndex: null,
     textAccSource: 'none',
     assistantTextUsesStream: false,
+    latestAssistantSnapshotText: '',
+    latestAssistantSnapshotContent: [],
     thinkingAcc: '',
     hadThinking: false,
     sawThinkingStreamEvent: false,
@@ -367,6 +371,221 @@ function buildTextBlockFromBufferedText(text: string): Extract<ContentBlock, { t
   const displayText = sanitizeBufferedStreamText(text);
   if (!displayText.trim()) return null;
   return { type: 'text', html: renderMarkdown(displayText), raw: displayText };
+}
+
+function getLastTextBlockIndex(blocks: ContentBlock[]): number {
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    if (blocks[i]?.type === 'text') return i;
+  }
+  return -1;
+}
+
+function buildOrderedLiveBlocksWithBufferedText(buf: Buffer): ContentBlock[] {
+  const orderedLiveBlocks = [...buf.liveBlocks];
+  if (!buf.textAcc) return orderedLiveBlocks;
+
+  const currentTextBlock = buildTextBlockFromBufferedText(buf.textAcc);
+  if (!currentTextBlock) return orderedLiveBlocks;
+
+  const insertAt = Number.isInteger(buf.textAnchorIndex)
+    ? Math.max(0, Math.min(Number(buf.textAnchorIndex), orderedLiveBlocks.length))
+    : orderedLiveBlocks.length;
+  orderedLiveBlocks.splice(insertAt, 0, currentTextBlock);
+  return orderedLiveBlocks;
+}
+
+function collectBufferedText(blocks: ContentBlock[]): string {
+  let text = '';
+  for (const block of blocks) {
+    if (block.type !== 'text') continue;
+    text += String(block.raw || '');
+  }
+  return text;
+}
+
+function normalizeComparableBufferedText(text: string): string {
+  return String(text || '')
+    .replace(/\u200B/g, '')
+    .replace(/\s+/g, '');
+}
+
+function buildCanonicalAssistantBlocksFromSnapshotContent(content: any[]): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+
+    if (block.type === 'tool_use') {
+      const tool = {
+        name: String(block.name || ''),
+        toolUseId: String(block.id || '') || undefined,
+        args: (block.input && typeof block.input === 'object') ? block.input : undefined,
+        done: true,
+        success: true,
+      };
+      const prev = blocks[blocks.length - 1];
+      if (prev?.type === 'tool_group') {
+        prev.tools = [...prev.tools, tool];
+        prev.collapsed = false;
+      } else {
+        blocks.push({
+          type: 'tool_group',
+          tools: [tool],
+          collapsed: false,
+        });
+      }
+      continue;
+    }
+
+    const part = pickSnapshotText(block);
+    if (!part) continue;
+
+    if (block.type === 'thinking' || isReasoningLikeType(block.type)) {
+      const thinking = sanitizeBufferedThinkingText(part);
+      if (!thinking.trim()) continue;
+      blocks.push({
+        type: 'thinking',
+        content: thinking,
+        sealed: true,
+      });
+      continue;
+    }
+
+    const textBlock = buildTextBlockFromBufferedText(part);
+    if (textBlock) blocks.push(textBlock);
+  }
+
+  return blocks;
+}
+
+function findFinalReplyInsertIndex(blocks: ContentBlock[]): number {
+  const firstTrailingMetaIndex = blocks.findIndex((block) => (
+    block.type !== 'thinking'
+    && block.type !== 'tool_group'
+    && block.type !== 'text'
+  ));
+  return firstTrailingMetaIndex >= 0 ? firstTrailingMetaIndex : blocks.length;
+}
+
+function sameToolArgs(
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined,
+): boolean {
+  return JSON.stringify(left || null) === JSON.stringify(right || null);
+}
+
+function hasReplayedSnapshotToolUse(
+  blocks: ContentBlock[],
+  toolUse: { id: string; name: string; args?: Record<string, unknown> },
+): boolean {
+  if (!toolUse.id) return false;
+  for (const block of blocks) {
+    if (block.type !== 'tool_group') continue;
+    const matched = block.tools.some((tool) => (
+      String(tool.toolUseId || '') === toolUse.id
+      && tool.name === toolUse.name
+      && sameToolArgs(tool.args, toolUse.args)
+    ));
+    if (matched) return true;
+  }
+  return false;
+}
+
+function scoreRenderedMarkdownHtml(html: string): number {
+  const text = String(html || '');
+  if (!text) return 0;
+  const count = (re: RegExp): number => {
+    const matches = text.match(re);
+    return matches ? matches.length : 0;
+  };
+
+  return (
+    count(/<table\b/gi) * 120
+    + count(/<h[1-6]\b/gi) * 36
+    + count(/<(?:ul|ol)\b/gi) * 28
+    + count(/<blockquote\b/gi) * 24
+    + count(/<pre\b/gi) * 24
+    + count(/<hr\b/gi) * 16
+    + count(/<strong\b/gi) * 6
+    + count(/<em\b/gi) * 4
+    + count(/<br\s*\/?>/gi)
+    + count(/<p\b/gi)
+  );
+}
+
+function maybeUpgradeBufferedTextFromSnapshot(buf: Buffer): void {
+  const snapshotBlocks = buf.latestAssistantSnapshotContent.length > 0
+    ? buildCanonicalAssistantBlocksFromSnapshotContent(buf.latestAssistantSnapshotContent)
+    : [];
+  const fallbackSnapshotBlock = buildTextBlockFromBufferedText(buf.latestAssistantSnapshotText);
+  const canonicalBlocks = snapshotBlocks.length > 0
+    ? snapshotBlocks
+    : (fallbackSnapshotBlock ? [fallbackSnapshotBlock] : []);
+  if (canonicalBlocks.length === 0) return;
+
+  const canonicalFinalTextIndex = getLastTextBlockIndex(canonicalBlocks);
+  if (canonicalFinalTextIndex < 0) return;
+  const canonicalFinalText = canonicalBlocks[canonicalFinalTextIndex] as Extract<ContentBlock, { type: 'text' }>;
+  const canonicalFinalRaw = String(canonicalFinalText.raw || '');
+  if (!canonicalFinalRaw.trim()) return;
+
+  const currentBlocks = buildOrderedLiveBlocksWithBufferedText(buf);
+  const currentFinalTextIndex = getLastTextBlockIndex(currentBlocks);
+  const currentFullText = collectBufferedText(currentBlocks);
+  const canonicalFullText = collectBufferedText(canonicalBlocks);
+  if (!canonicalFullText.trim()) return;
+
+  const currentFinalScore = (
+    currentFinalTextIndex >= 0
+    && currentBlocks[currentFinalTextIndex]?.type === 'text'
+  )
+    ? scoreRenderedMarkdownHtml(currentBlocks[currentFinalTextIndex].html)
+    : 0;
+  const canonicalFinalScore = scoreRenderedMarkdownHtml(canonicalFinalText.html);
+  const currentComparable = normalizeComparableBufferedText(currentFullText);
+  const canonicalComparable = normalizeComparableBufferedText(canonicalFullText);
+
+  let shouldReplace = false;
+  if (!currentFullText.trim()) {
+    shouldReplace = true;
+  } else if (currentComparable === canonicalComparable) {
+    shouldReplace = canonicalFinalScore > currentFinalScore;
+  } else if (
+    currentComparable.startsWith(canonicalComparable)
+    && currentComparable.length > canonicalComparable.length
+  ) {
+    shouldReplace = false;
+  } else if (
+    canonicalComparable.startsWith(currentComparable)
+    && canonicalComparable.length > currentComparable.length
+  ) {
+    shouldReplace = true;
+  } else {
+    shouldReplace = canonicalFinalScore > currentFinalScore;
+  }
+
+  if (!shouldReplace) return;
+
+  if (buf.textAcc) {
+    if (buf.textAnchorIndex == null) {
+      buf.textAnchorIndex = currentFinalTextIndex >= 0
+        ? currentFinalTextIndex
+        : findFinalReplyInsertIndex(buf.liveBlocks);
+    }
+    buf.textAcc = canonicalFinalRaw;
+    buf.textAccSource = 'snapshot';
+    return;
+  }
+
+  if (currentFinalTextIndex >= 0) {
+    currentBlocks[currentFinalTextIndex] = canonicalFinalText;
+    buf.liveBlocks = currentBlocks;
+    return;
+  }
+
+  buf.textAcc = canonicalFinalRaw;
+  buf.textAnchorIndex = findFinalReplyInsertIndex(buf.liveBlocks);
+  buf.textAccSource = 'snapshot';
 }
 
 function appendSealedThinkingBlock(buf: Buffer, rawThinking: string): void {
@@ -517,6 +736,8 @@ function resetBufferTurnState(buf: Buffer): void {
   buf.textAnchorIndex = null;
   buf.textAccSource = 'none';
   buf.assistantTextUsesStream = false;
+  buf.latestAssistantSnapshotText = '';
+  buf.latestAssistantSnapshotContent = [];
   buf.thinkingAcc = '';
   buf.hadThinking = false;
   buf.sawThinkingStreamEvent = false;
@@ -679,6 +900,8 @@ class StreamBufferManager {
           const snapshotText = stripStreamToolMarkup(
             stripSdkDiagnosticLines(extractSnapshotTextContent(content)),
           );
+          if (content.length > 0) buf.latestAssistantSnapshotContent = content;
+          if (snapshotText) buf.latestAssistantSnapshotText = snapshotText;
           const toolUses = extractSnapshotToolUses(content);
 
           if (!hasRenderableAssistantSnapshot(content) && !buf.messageAppended) break;
@@ -714,6 +937,7 @@ class StreamBufferManager {
 
           if (toolUses.length > 0) finalizeBufferedTextSegment(buf);
           for (const toolUse of toolUses) {
+            if (hasReplayedSnapshotToolUse(buf.liveBlocks, toolUse)) continue;
             buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
               type: 'tool_start',
               name: toolUse.name,
@@ -721,6 +945,7 @@ class StreamBufferManager {
               args: toolUse.args,
             });
           }
+          maybeUpgradeBufferedTextFromSnapshot(buf);
           buf.lastSdkAssistantMessageKey = sdkMessageKey;
         } else if (role === 'user') {
           const toolResults = extractSdkToolResults(content);
@@ -756,6 +981,8 @@ class StreamBufferManager {
         const snapshotText = stripStreamToolMarkup(
           stripSdkDiagnosticLines(extractSnapshotTextContent(content)),
         );
+        if (content.length > 0) buf.latestAssistantSnapshotContent = content;
+        if (snapshotText) buf.latestAssistantSnapshotText = snapshotText;
         if (snapshotText && !buf.assistantTextUsesStream) {
           if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
           buf.textAccSource = 'snapshot';
@@ -765,6 +992,7 @@ class StreamBufferManager {
         const toolUses = extractSnapshotToolUses(content);
         if (toolUses.length > 0) finalizeBufferedTextSegment(buf);
         for (const toolUse of toolUses) {
+          if (hasReplayedSnapshotToolUse(buf.liveBlocks, toolUse)) continue;
           buf.liveBlocks = applyChatStreamLiveEvent(buf.liveBlocks, {
             type: 'tool_start',
             name: toolUse.name,
@@ -772,6 +1000,7 @@ class StreamBufferManager {
             args: toolUse.args,
           });
         }
+        maybeUpgradeBufferedTextFromSnapshot(buf);
 
         this.scheduleFlush(buf);
         break;
@@ -781,15 +1010,26 @@ class StreamBufferManager {
         closeOpenThinkingIfNeeded(buf);
         this.ensureMessage(buf);
         if (buf.textAnchorIndex == null) buf.textAnchorIndex = buf.liveBlocks.length;
-        if (buf.textAccSource === 'snapshot') {
-          buf.textAcc = '';
+        {
+          const sanitizedDelta = stripSdkDiagnosticLines(msg.delta || '');
+          if (buf.textAccSource === 'snapshot' && buf.textAcc) {
+            const currentComparable = normalizeComparableBufferedText(buf.textAcc);
+            const deltaComparable = normalizeComparableBufferedText(sanitizedDelta);
+            if (
+              deltaComparable
+              && (deltaComparable.startsWith(currentComparable)
+                || currentComparable.startsWith(deltaComparable))
+            ) {
+              buf.textAcc = sanitizedDelta;
+            } else {
+              buf.textAcc = mergeDelta(buf.textAcc, sanitizedDelta);
+            }
+          } else {
+            buf.textAcc = mergeDelta(buf.textAcc, sanitizedDelta);
+          }
         }
         buf.textAccSource = 'stream';
         buf.assistantTextUsesStream = true;
-        buf.textAcc = mergeDelta(
-          buf.textAcc,
-          stripSdkDiagnosticLines(msg.delta || ''),
-        );
         this.scheduleFlush(buf);
         break;
 
@@ -954,6 +1194,7 @@ class StreamBufferManager {
 
       case 'turn_end':
         buf.textAcc = stripStreamToolMarkup(stripSdkDiagnosticLines(buf.textAcc));
+        maybeUpgradeBufferedTextFromSnapshot(buf);
         if (hasBufferedRenderableState(buf)) {
           this.flush(buf);
         } else if (buf.messageAppended) {

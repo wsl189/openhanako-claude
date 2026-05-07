@@ -73,7 +73,7 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     });
   });
 
-  it("does not emit content_block_start text when text deltas follow", () => {
+  it("merges content_block_start text into the first text delta", () => {
     const coordinator = new SessionCoordinator({});
     const sessionPath = "/tmp/session-text-start-plus-delta";
 
@@ -93,11 +93,48 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
       event: {
         type: "content_block_delta",
         index: 0,
-        delta: { type: "text_delta", text: "完整" },
+        delta: { type: "text_delta", text: "正文" },
       },
     }, sessionPath);
 
-    expect(translated).toEqual([{ type: "text_delta", delta: "完整" }]);
+    expect(translated).toEqual([{ type: "text_delta", delta: "完整正文" }]);
+
+    translated = coordinator._translateClaudeEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_stop",
+        index: 0,
+      },
+    }, sessionPath);
+
+    expect(translated).toEqual([]);
+  });
+
+  it("dedupes cumulative first text delta that already includes content_block_start text", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-text-start-cumulative-delta";
+
+    let translated = coordinator._translateClaudeEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "完整" },
+      },
+    }, sessionPath);
+
+    expect(translated).toEqual([]);
+
+    translated = coordinator._translateClaudeEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "完整正文" },
+      },
+    }, sessionPath);
+
+    expect(translated).toEqual([{ type: "text_delta", delta: "完整正文" }]);
 
     translated = coordinator._translateClaudeEvent({
       type: "stream_event",

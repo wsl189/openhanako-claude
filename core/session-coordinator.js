@@ -118,6 +118,25 @@ function extractAssistantTextFromSdkMessage(message) {
     .join("");
 }
 
+function mergeStreamTextChunk(acc, rawDelta) {
+  const base = typeof acc === "string" ? acc : "";
+  const delta = typeof rawDelta === "string" ? rawDelta : "";
+  if (!base) return delta;
+  if (!delta) return base;
+
+  if (base.endsWith(delta)) return base;
+  if (delta.startsWith(base)) return delta;
+
+  const maxOverlap = Math.min(base.length, delta.length);
+  for (let k = maxOverlap; k > 0; k -= 1) {
+    if (base.slice(-k) === delta.slice(0, k)) {
+      return base + delta.slice(k);
+    }
+  }
+
+  return base + delta;
+}
+
 function extractToolUsesFromAssistantContent(content = []) {
   return (Array.isArray(content) ? content : [])
     .filter((block) => block?.type === "tool_use" && block.id)
@@ -498,14 +517,20 @@ export class SessionCoordinator {
         }
       } else if (raw?.type === "content_block_delta") {
         if (raw?.delta?.type === "text_delta") {
-          if (TEXT_TOOL_MARKUP_RE.test(raw.delta.text || "")) {
+          const rawTextDelta = raw.delta.text || "";
+          if (TEXT_TOOL_MARKUP_RE.test(rawTextDelta)) {
             state.turnSawTextToolMarkup = true;
           }
+          let nextTextDelta = rawTextDelta;
           if (Number.isInteger(raw.index)) {
             state.textDeltaSeenByIndex.add(raw.index);
+            const pendingStartText = state.pendingTextBlockStartByIndex.get(raw.index);
+            if (pendingStartText) {
+              nextTextDelta = mergeStreamTextChunk(pendingStartText, rawTextDelta);
+            }
             state.pendingTextBlockStartByIndex.delete(raw.index);
           }
-          translated.push({ type: "text_delta", delta: raw.delta.text || "" });
+          translated.push({ type: "text_delta", delta: nextTextDelta });
         } else if (raw?.delta?.type === "thinking_delta") {
           if (TEXT_TOOL_MARKUP_RE.test(raw.delta.thinking || "")) {
             state.turnSawTextToolMarkup = true;
