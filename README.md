@@ -1,0 +1,17 @@
+# Hanako (Modified from openhanako)
+
+基于 [liliMozi/openhanako](https://github.com/liliMozi/openhanako) 使用claude-agent-sdk进行了二次开发，面向我自己的使用场景持续迭代。
+
+
+## 致谢
+
+感谢原项目作者与贡献者提供优秀的基础工程：  
+[liliMozi/openhanako](https://github.com/liliMozi/openhanako)
+
+本项目在其基础上进行二次开发，特此致谢。
+
+## 许可证
+
+本项目遵循 **Apache License 2.0**。  
+请参阅仓库内 [LICENSE](./LICENSE) 文件。
+
