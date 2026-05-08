@@ -1058,7 +1058,8 @@ function TodoDisplay({ todos, isStreaming }: { todos: TodoDisplayItem[]; isStrea
   ), [todos]);
   const done = visibleTodos.filter(td => td.done).length;
   const allDone = visibleTodos.length > 0 && done === visibleTodos.length;
-  const shouldHide = visibleTodos.length === 0 || (allDone && !isStreaming);
+  // 全部完成后直接隐藏，避免后续每轮流式回复又把旧清单弹出来。
+  const shouldHide = visibleTodos.length === 0 || allDone;
 
   useEffect(() => {
     if (shouldHide) {
@@ -1076,7 +1077,7 @@ function TodoDisplay({ todos, isStreaming }: { todos: TodoDisplayItem[]; isStrea
         <button className="todo-trigger" onClick={() => setOpen(!open)}>
           <span className="todo-trigger-icon">☑</span>
           <span className="todo-trigger-label">To Do</span>
-          <span className="todo-trigger-count">{done}/{todos.length}</span>
+          <span className="todo-trigger-count">{done}/{visibleTodos.length}</span>
         </button>
         {open && (
           <div className="todo-list">

@@ -191,6 +191,7 @@ export async function createNewSession(): Promise<void> {
     isStreaming: false,
     welcomeVisible: true,
     currentSessionPath: null,
+    sessionTodos: [],
     selectedFolder: s.homeFolder || null,
     selectedAgentId: null,
     sessionAgent: null,
