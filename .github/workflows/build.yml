@@ -91,9 +91,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          repository: wsl189/openhanako-claude
-          token: ${{ secrets.RELEASES_TOKEN }}
-          target_commitish: main
+          token: ${{ github.token }}
+          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
           make_latest: true
