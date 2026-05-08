@@ -11,13 +11,11 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useStore } from '../stores';
 import { resolveInputSessionKey } from '../stores/misc-slice';
 import {
-  loadMessages as loadMessagesAction,
   loadSessions as loadSessionsAction,
 } from '../stores/session-actions';
 import { handleArtifact } from '../stores/artifact-actions';
 import { loadDeskFiles } from '../stores/desk-actions';
 import { showError } from '../utils/ui-helpers';
-import { mergeCanonicalTurnItems } from '../utils/ollama-turn-canonicalize';
 import { getWebSocket } from './websocket';
 import {
   replayStreamResume,
@@ -49,46 +47,6 @@ function resolvePromptSessionKey(sessionPath: string | null | undefined): string
     sessionPath || state.currentSessionPath || null,
     !!state.pendingNewSession,
   );
-}
-
-function shouldCanonicalizeCompletedTurn(sessionPath: string | null | undefined): boolean {
-  const state = useStore.getState();
-  const targetPath = String(sessionPath || state.currentSessionPath || '').trim();
-  if (!targetPath || targetPath !== state.currentSessionPath) return false;
-
-  const currentModelId = String(state.currentModel || '').trim().toLowerCase();
-  const currentModel = (Array.isArray(state.models) ? state.models : []).find((model: any) => (
-    model?.isCurrent === true || String(model?.id || '').trim() === state.currentModel
-  ));
-  const provider = String((currentModel as any)?.provider || '').trim().toLowerCase();
-
-  return provider === 'ollama' || currentModelId.startsWith('ollama/');
-}
-
-async function canonicalizeCompletedTurn(sessionPath: string | null | undefined): Promise<void> {
-  const targetPath = String(sessionPath || useStore.getState().currentSessionPath || '').trim();
-  if (!targetPath) return;
-
-  const liveItems = useStore.getState().chatSessions?.[targetPath]?.items;
-  await loadMessagesAction(targetPath);
-
-  const canonicalItems = useStore.getState().chatSessions?.[targetPath]?.items;
-  const mergedItems = mergeCanonicalTurnItems(liveItems, canonicalItems);
-  if (!mergedItems) return;
-
-  useStore.setState((state: any) => {
-    const session = state.chatSessions?.[targetPath];
-    if (!session) return {};
-    return {
-      chatSessions: {
-        ...state.chatSessions,
-        [targetPath]: {
-          ...session,
-          items: mergedItems,
-        },
-      },
-    };
-  });
 }
 
 function isTodoToolName(name: unknown): boolean {
@@ -271,9 +229,6 @@ export function handleServerMessage(msg: any): void {
     if (msg.type === 'turn_end') {
       loadSessionsAction();
       requestContextUsage(msg.sessionPath || useStore.getState().currentSessionPath);
-      if (!msg.__fromReplay && shouldCanonicalizeCompletedTurn(msg.sessionPath)) {
-        canonicalizeCompletedTurn(msg.sessionPath || useStore.getState().currentSessionPath).catch(() => {});
-      }
     }
     // tool_end 后更新 todo。兼容旧 Hanako custom tool 名 todo 与 Claude builtin TodoWrite。
     if (msg.type === 'tool_end' && isTodoToolName(msg.name) && msg.details?.todos) {
