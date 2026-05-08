@@ -714,6 +714,7 @@
       "tagline": "一个住在你电脑里的助手，记性很好。",
       "license": "许可证",
       "copyright": "版权",
+      "originGithub": "原项目 GitHub",
       "licenseToggle": "许可证全文",
       "permissions": "权限",
       "fullAccess": "全权模式",

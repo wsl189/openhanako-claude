@@ -714,6 +714,7 @@
       "tagline": "An assistant that lives in your computer, with a good memory.",
       "license": "License",
       "copyright": "Copyright",
+      "originGithub": "Original GitHub",
       "licenseToggle": "License full text",
       "permissions": "Permissions",
       "fullAccess": "Full Access Mode",

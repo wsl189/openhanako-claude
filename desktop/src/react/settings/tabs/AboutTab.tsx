@@ -3,8 +3,8 @@ import { t } from '../helpers';
 import iconUrl from '../../../assets/Hanako.png';
 
 const hana = (window as any).hana;
-const RELEASE_REPO_URL = 'https://github.com/wsl189/myagent-releases';
-const RELEASE_REPO_LABEL = 'github.com/wsl189/myagent-releases';
+const ORIGIN_REPO_URL = 'https://github.com/liliMozi/openhanako';
+const ORIGIN_REPO_LABEL = 'github.com/liliMozi/openhanako';
 
 export function AboutTab() {
   const [version, setVersion] = useState('');
@@ -71,16 +71,16 @@ export function AboutTab() {
           <span className="about-value">&copy; 2026 liliMozi</span>
         </div>
         <div className="about-row">
-          <span className="about-label">GitHub</span>
+          <span className="about-label">{t('settings.about.originGithub')}</span>
           <a
             className="about-value about-link"
             href="#"
             onClick={(e) => {
               e.preventDefault();
-              hana?.openExternal?.(RELEASE_REPO_URL);
+              hana?.openExternal?.(ORIGIN_REPO_URL);
             }}
           >
-            {RELEASE_REPO_LABEL}
+            {ORIGIN_REPO_LABEL}
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
               <polyline points="15 3 21 3 21 9" />

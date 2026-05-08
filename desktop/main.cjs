@@ -73,7 +73,7 @@ let _browserBackend = null; // "embedded" | "external"
 const EXTERNAL_CHROME_MODE = String(process.env.HANA_BROWSER_EXTERNAL_CHROME || "off").toLowerCase();
 const EXTERNAL_CHROME_HOST = process.env.HANA_BROWSER_EXTERNAL_CHROME_HOST || "127.0.0.1";
 const EXTERNAL_CHROME_PORT = Number(process.env.HANA_BROWSER_EXTERNAL_CHROME_PORT || 9222);
-const UPDATE_RELEASES_URL = process.env.HANA_UPDATE_RELEASES_URL || "https://github.com/wsl189/myagent-releases/releases/latest";
+const UPDATE_RELEASES_URL = process.env.HANA_UPDATE_RELEASES_URL || "https://github.com/wsl189/openhanako-claude/releases/latest";
 const UPDATE_CACHE_DIR_NAME = "hanako-updater";
 
 const _externalChrome = {
@@ -1986,7 +1986,7 @@ async function resolveManualInstallerInfo() {
 }
 
 async function fetchLatestReleaseInfo() {
-  const res = await fetch("https://api.github.com/repos/wsl189/myagent-releases/releases/latest", {
+  const res = await fetch("https://api.github.com/repos/wsl189/openhanako-claude/releases/latest", {
     headers: { "User-Agent": "Hanako" },
     signal: AbortSignal.timeout(15000),
   });
