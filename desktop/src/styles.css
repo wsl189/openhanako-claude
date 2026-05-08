@@ -6830,18 +6830,28 @@ body.resizing .jian-sidebar-inner {
     left: 50%;
     transform: translateX(-50%) translateY(-10px);
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
     background: var(--bg-secondary);
     color: var(--text-primary);
     padding: 8px 12px 8px 20px;
     border-radius: 8px;
     font-size: 13px;
+    line-height: 1.6;
+    max-width: min(96vw, 1320px);
     opacity: 0;
     transition: opacity 0.3s, transform 0.3s;
     z-index: 9999;
     pointer-events: none;
     box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+}
+.hana-toast-content {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.hana-toast-content.md-content {
+    margin-top: 1px;
+    line-height: inherit;
 }
 .hana-toast.show {
     opacity: 1;
@@ -6862,6 +6872,7 @@ body.resizing .jian-sidebar-inner {
     display: flex;
     align-items: center;
     justify-content: center;
+    flex: 0 0 auto;
     background: none;
     border: none;
     color: inherit;

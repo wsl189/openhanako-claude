@@ -419,7 +419,8 @@ export function handleServerMessage(msg: any): void {
       const body = typeof msg.body === 'string' ? msg.body.trim() : '';
 
       // 提醒类弹窗常驻显示（duration=0），并使用高对比样式增强可见性。
-      useStore.getState().addToast(body ? `${title} ${body}` : title, 'reminder', 0);
+      // 标题与正文默认分两行，标题加粗提升可读性。
+      useStore.getState().addToast(body ? `**${title}**\n${body}` : title, 'reminder', 0);
 
       const showNotification = (window as any).platform?.showNotification || (window as any).hana?.showNotification;
       if (typeof showNotification === 'function') {
