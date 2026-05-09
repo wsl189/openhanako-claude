@@ -140,13 +140,19 @@ export class Agent {
     // 4. 记忆 v2：FactStore + SessionSummaryManager + ticker
     log(`  [agent] 4. FactStore...`);
     fs.mkdirSync(path.join(this.agentDir, "memory", "summaries"), { recursive: true });
-    this._factStore = new FactStore(this.factsDbPath);
     this._summaryManager = new SessionSummaryManager(this.summariesDir);
+    try {
+      this._factStore = new FactStore(this.factsDbPath);
+    } catch (err) {
+      this._factStore = null;
+      console.error(`[agent] FactStore 初始化失败，已禁用本次启动的记忆库: ${err.message}`);
+      log(`  [agent] FactStore 初始化失败，记忆库已降级`);
+    }
 
     // v1 → v2 迁移：仅当迁移标记不存在且旧 memories.db 存在时执行一次
     const oldMemoriesPath = path.join(this.agentDir, "memory", "memories.db");
     const migrationDone = path.join(this.agentDir, "memory", ".v2-migrated");
-    if (!fs.existsSync(migrationDone) && fs.existsSync(oldMemoriesPath)) {
+    if (this._factStore && !fs.existsSync(migrationDone) && fs.existsSync(oldMemoriesPath)) {
       try {
         log(`  [agent] 4. v1→v2 迁移: 发现旧 memories.db，开始迁移...`);
         const Database = (await import("better-sqlite3")).default;
@@ -189,7 +195,7 @@ export class Agent {
       }
     }
 
-    if (this._resolvedMemoryModel) {
+    if (this._factStore && this._resolvedMemoryModel) {
       log(`  [agent] 4. memoryTicker...`);
       this._memoryTicker = createMemoryTicker({
         summaryManager: this._summaryManager,
@@ -223,13 +229,15 @@ export class Agent {
 
       // 6. 启动定时调度
       this._memoryTicker.start();
+    } else if (!this._factStore) {
+      console.warn(`[agent] ⚠ FactStore 不可用，记忆库已降级为关闭状态`);
     } else {
       console.warn(`[agent] ⚠ 未配置 utility 模型，记忆系统暂不可用（用户可在设置中配置后重启）`);
     }
 
     // 7. 创建工具（记忆 + 通用）
     log(`  [agent] 7. 创建工具...`);
-    this._memorySearchTool = createMemorySearchTool(this._factStore);
+    this._memorySearchTool = this._factStore ? createMemorySearchTool(this._factStore) : null;
     this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir);
     this._experienceTools = createExperienceTools(this.agentDir);
 

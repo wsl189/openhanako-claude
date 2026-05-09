@@ -20,6 +20,9 @@ jobs:
           - os: windows-latest
             target: nsis
             arch: x64
+          - os: windows-latest
+            target: nsis
+            arch: arm64
 
     runs-on: ${{ matrix.os }}
 
@@ -52,7 +55,7 @@ jobs:
       # Windows 打包
       - name: Build Windows installer
         if: runner.os == 'Windows'
-        run: npx electron-builder --win nsis --publish never
+        run: npx electron-builder --win nsis --${{ matrix.arch }} --publish never
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
