@@ -232,7 +232,21 @@ export function handleServerMessage(msg: any): void {
     }
     // tool_end 后更新 todo。兼容旧 Hanako custom tool 名 todo 与 Claude builtin TodoWrite。
     if (msg.type === 'tool_end' && isTodoToolName(msg.name) && msg.details?.todos) {
-      useStore.setState({ sessionTodos: msg.details.todos });
+      const nextTodos = Array.isArray(msg.details.todos) ? msg.details.todos : [];
+      const todoSessionPath = typeof msg.sessionPath === 'string' && msg.sessionPath.trim()
+        ? msg.sessionPath
+        : useStore.getState().currentSessionPath;
+      if (!todoSessionPath) {
+        useStore.setState({ sessionTodos: nextTodos });
+      } else {
+        useStore.setState((prev: any) => ({
+          sessionTodos: todoSessionPath === prev.currentSessionPath ? nextTodos : prev.sessionTodos,
+          sessionTodosByPath: {
+            ...(prev.sessionTodosByPath || {}),
+            [todoSessionPath]: nextTodos,
+          },
+        }));
+      }
     }
     // compaction_end 后更新 token
     if (msg.type === 'compaction_end') {

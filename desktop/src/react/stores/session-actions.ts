@@ -28,8 +28,15 @@ export async function loadMessages(forPath?: string): Promise<void> {
   try {
     const res = await hanaFetch(`/api/sessions/messages?path=${encodeURIComponent(targetPath)}`);
     const data = await res.json();
-    // 总是更新 todos（包括清空），避免残留上一个 session 的 todo
-    useStore.setState({ sessionTodos: data.todos || [] });
+    // 总是更新 todos（包括清空），并按 session 维度缓存，避免跨会话残留。
+    const nextTodos = Array.isArray(data.todos) ? data.todos : [];
+    useStore.setState((prev: any) => ({
+      sessionTodos: targetPath === prev.currentSessionPath ? nextTodos : prev.sessionTodos,
+      sessionTodosByPath: {
+        ...(prev.sessionTodosByPath || {}),
+        [targetPath]: nextTodos,
+      },
+    }));
     const items = buildItemsFromHistory(data);
     if (items.length > 0) {
       useStore.getState().initSession(targetPath, items, data.hasMore ?? false);
@@ -126,6 +133,7 @@ export async function switchSession(path: string): Promise<void> {
       pendingNewSession: false,
       pendingSessionModel: null,
       welcomeVisible: false,
+      sessionTodos: state.sessionTodosByPath?.[path] || [],
       selectedFolder: null,
       selectedAgentId: null,
       ...(nextAgentId ? { currentAgentId: nextAgentId } : {}),

@@ -28,6 +28,12 @@ export function clearChat(): void {
     welcomeVisible: true,
     memoryEnabled: true,
     sessionTodos: [],
+    sessionTodosByPath: sessionPath
+      ? {
+        ...(s.sessionTodosByPath || {}),
+        [sessionPath]: [],
+      }
+      : s.sessionTodosByPath,
     artifacts: [],
   });
 

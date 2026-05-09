@@ -7,6 +7,7 @@ export interface SessionSlice {
   pendingNewSession: boolean;
   memoryEnabled: boolean;
   sessionTodos: TodoItem[];
+  sessionTodosByPath: Record<string, TodoItem[]>;
   setSessions: (sessions: Session[]) => void;
   setCurrentSessionPath: (path: string | null) => void;
   setSessionStream: (sessionPath: string, stream: SessionStream) => void;
@@ -25,6 +26,7 @@ export const createSessionSlice = (
   pendingNewSession: false,
   memoryEnabled: true,
   sessionTodos: [],
+  sessionTodosByPath: {},
   setSessions: (sessions) => set({ sessions }),
   setCurrentSessionPath: (path) => set({ currentSessionPath: path }),
   setSessionStream: (sessionPath, stream) =>
