@@ -3,8 +3,17 @@
  */
 import { t } from "../i18n.js";
 import { createRequire } from "module";
+import {
+  buildAnthropicMessagesEndpoint,
+  buildModelEndpointCandidates,
+  isAnthropicProbeAuthenticated,
+} from "./providers.js";
 const _require = createRequire(import.meta.url);
 const _knownModels = _require("../../lib/known-models.json");
+
+function isLocalBaseUrl(url) {
+  return /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|::1)(?::\d+)?(?:\/|$)/i.test(String(url || ""));
+}
 
 function isModelSwitchConflict(err) {
   const message = String(err?.message || "");
@@ -192,23 +201,28 @@ export default async function modelsRoute(app, { engine }) {
       if (!apiKey) {
         try { apiKey = await engine.authStorage.getApiKey(model.provider); } catch {}
       }
-      if (!apiKey) return { ok: false, error: "no api_key" };
+      const allowMissingApiKey = isLocalBaseUrl(baseUrl);
+      if (!apiKey && !allowMissingApiKey) return { ok: false, error: "no api_key" };
 
       const { buildProviderAuthHeaders } = await import("../../lib/llm/provider-client.js");
       const api = creds.api || model.api || "openai-completions";
 
       // Anthropic 兼容 API：发最小 messages 请求
       if (api === "anthropic-messages") {
-        const url = baseUrl.replace(/\/+$/, "") + "/v1/messages";
-        const headers = buildProviderAuthHeaders(api, apiKey);
+        const url = buildAnthropicMessagesEndpoint(baseUrl);
+        const headers = buildProviderAuthHeaders(api, apiKey, { allowMissingApiKey });
         const res = await fetch(url, {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify({ model: model.id, max_tokens: 1, messages: [{ role: "user", content: "." }] }),
           signal: AbortSignal.timeout(10000),
         });
-        // 200 或 400（参数错误但连通）都算健康
-        return { ok: res.ok || res.status === 400, status: res.status, provider: model.provider };
+        const raw = await res.text();
+        return {
+          ok: isAnthropicProbeAuthenticated(res.status, raw),
+          status: res.status,
+          provider: model.provider,
+        };
       }
 
       // OpenAI Codex Responses API：无法通过简单请求检测（Cloudflare 反爬），跳过
@@ -216,11 +230,25 @@ export default async function modelsRoute(app, { engine }) {
         return { ok: true, status: 0, provider: model.provider, skipped: t("error.codexNoHealthCheck") };
       }
 
-      // OpenAI 兼容 API：用 /models 端点
-      const url = baseUrl.replace(/\/+$/, "") + "/models";
-      const headers = buildProviderAuthHeaders(api, apiKey);
-      const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
-      return { ok: res.ok, status: res.status, provider: model.provider };
+      // OpenAI 兼容 API：用 /models 端点；base_url 可能是根路径或 /v1。
+      const headers = buildProviderAuthHeaders(api, apiKey, { allowMissingApiKey });
+      let lastStatus = 0;
+      let lastError = "";
+      for (const url of buildModelEndpointCandidates(baseUrl, api)) {
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+        lastStatus = res.status;
+        if (res.ok) return { ok: true, status: res.status, provider: model.provider };
+        try {
+          const text = await res.text();
+          if (text) lastError = text.slice(0, 200);
+        } catch {}
+      }
+      return {
+        ok: false,
+        status: lastStatus || undefined,
+        provider: model.provider,
+        error: lastError || undefined,
+      };
     } catch (err) {
       return { ok: false, error: err.message };
     }

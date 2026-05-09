@@ -20,7 +20,7 @@ function normalizeApiKey(value) {
   return String(value || "").replace(/[^\x20-\x7E]/g, "").trim();
 }
 
-function buildModelEndpointCandidates(baseUrl, api) {
+export function buildModelEndpointCandidates(baseUrl, api) {
   const normalized = String(baseUrl || "").replace(/\/+$/, "");
   const candidates = [];
   const push = (url) => {

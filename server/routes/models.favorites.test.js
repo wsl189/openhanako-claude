@@ -192,4 +192,86 @@ describe("/api/models/favorites", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true, status: 200, provider: "minimax" });
   });
+
+  it("allows local OpenAI-compatible health checks without an API key", async () => {
+    const engine = createEngine({
+      availableModels: [
+        { id: "qwen3", name: "Qwen 3", provider: "ollama", api: "openai-completions" },
+      ],
+      _resolveProviderCredentials: () => ({
+        api_key: "",
+        base_url: "http://localhost:11434/v1",
+        api: "openai-completions",
+      }),
+    });
+
+    const originalFetch = global.fetch;
+    const seen = [];
+    global.fetch = async (url) => {
+      seen.push(String(url));
+      return { ok: true, status: 200 };
+    };
+
+    const app = Fastify();
+    apps.push(app);
+    await app.register(modelsRoute, { engine });
+
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/models/health",
+        payload: { modelId: "ollama/qwen3" },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ ok: true, status: 200, provider: "ollama" });
+      expect(seen).toEqual(["http://localhost:11434/v1/models"]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("tries /v1/models when provider base_url is an API root", async () => {
+    const engine = createEngine({
+      availableModels: [
+        { id: "gpt-test", name: "GPT Test", provider: "openai", api: "openai-completions" },
+      ],
+      _resolveProviderCredentials: () => ({
+        api_key: "test-key",
+        base_url: "https://gateway.example.com",
+        api: "openai-completions",
+      }),
+    });
+
+    const originalFetch = global.fetch;
+    const seen = [];
+    global.fetch = async (url) => {
+      seen.push(String(url));
+      if (String(url) === "https://gateway.example.com/models") {
+        return { ok: false, status: 404, text: async () => "not found" };
+      }
+      return { ok: true, status: 200 };
+    };
+
+    const app = Fastify();
+    apps.push(app);
+    await app.register(modelsRoute, { engine });
+
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/models/health",
+        payload: { modelId: "openai/gpt-test" },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ ok: true, status: 200, provider: "openai" });
+      expect(seen).toEqual([
+        "https://gateway.example.com/models",
+        "https://gateway.example.com/v1/models",
+      ]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });
