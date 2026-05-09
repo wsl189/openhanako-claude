@@ -36,6 +36,7 @@ import { CLAUDE_BUILTIN_TOOL_NAMES, HANAKO_TO_CLAUDE_BUILTIN } from "./claude-ru
 import { createSandboxedTools } from "../lib/sandbox/index.js";
 import { normalizeModelRef } from "./model-ref.js";
 import { cleanupStartupArtifacts } from "./session-env-cleanup.js";
+import { resolveClaudeInChromeExternalServer } from "./browser-provider.js";
 
 const REQUIRED_BUILTIN_TOOLS = ["Read", "Glob", "Grep"];
 const DISABLED_BUILTIN_TOOLS = new Set(["RemoteTrigger"]);
@@ -98,6 +99,7 @@ export class HanaEngine {
 
     // ── Core managers ──
     this._prefs = new PreferencesManager({ userDir: this.userDir, agentsDir: this.agentsDir });
+    this._migrateClaudeInChromeExternalMcp();
     this._models = new ModelManager({ hanakoHome });
 
     // 确定启动时焦点 agent（优先：显式参数 > 上次使用 > 默认首个）
@@ -203,6 +205,27 @@ export class HanaEngine {
 
     // 设置起始 agentId
     this._agentMgr.activeAgentId = startId;
+  }
+
+  _migrateClaudeInChromeExternalMcp() {
+    const resolved = resolveClaudeInChromeExternalServer(process.env);
+    if (!resolved?.name || !resolved?.server) return;
+    const prefs = this._prefs.getPreferences();
+    const mcp = (prefs && typeof prefs.mcp === "object" && !Array.isArray(prefs.mcp))
+      ? prefs.mcp
+      : {};
+    const migrationFlag = Boolean(mcp._claude_in_chrome_external_migrated);
+    const current = (mcp.external_servers && typeof mcp.external_servers === "object" && !Array.isArray(mcp.external_servers))
+      ? { ...mcp.external_servers }
+      : {};
+    if (migrationFlag) return;
+    if (current[resolved.name] === undefined) {
+      current[resolved.name] = resolved.server;
+    }
+    mcp.external_servers = current;
+    mcp._claude_in_chrome_external_migrated = true;
+    prefs.mcp = mcp;
+    this._prefs.savePreferences(prefs);
   }
 
   // ════════════════════════════

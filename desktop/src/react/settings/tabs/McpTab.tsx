@@ -15,20 +15,6 @@ type ExternalMcpServer = {
   headers?: Record<string, string>;
   disabled?: boolean;
 };
-const MANAGED_EXTERNAL_MCP_TOOLS: Array<{
-  name: string;
-  serverName: string;
-  prefix: string;
-  labelKey: string;
-  label?: string;
-}> = [
-  {
-    name: 'claude_in_chrome',
-    serverName: 'claude_in_chrome',
-    prefix: 'mcp__claude_in_chrome__*',
-    labelKey: 'toolDef.claudeInChrome.label',
-  },
-];
 
 function normalizeName(name: string): string {
   return name.trim().replace(/[^A-Za-z0-9_]/g, '_');
@@ -63,15 +49,6 @@ function parseStringMap(raw: string, errorKey: string): Record<string, string> |
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function serverSummary(server: ExternalMcpServer): string {
-  const type = server.type || (server.url ? 'sse' : 'stdio');
-  if (type === 'stdio') {
-    const args = Array.isArray(server.args) && server.args.length > 0 ? ` ${server.args.join(' ')}` : '';
-    return `${server.command || ''}${args}`.trim();
-  }
-  return server.url || '';
-}
-
 export function McpTab() {
   const store = useSettingsStore();
   const { settingsConfig, showToast } = store;
@@ -83,14 +60,6 @@ export function McpTab() {
   const serverEntries = Object.entries(servers)
     .filter(([, value]) => value && typeof value === 'object')
     .sort(([a], [b]) => a.localeCompare(b));
-  const toolCatalogCustom = Array.isArray(settingsConfig?._toolCatalog?.custom)
-    ? settingsConfig._toolCatalog.custom.map(String)
-    : [];
-  const customEnabled: string[] = Array.isArray(settingsConfig?.tools?.custom_enabled)
-    ? settingsConfig.tools.custom_enabled.map(String)
-    : [];
-  const managedMcpEntries = MANAGED_EXTERNAL_MCP_TOOLS
-    .filter(tool => toolCatalogCustom.includes(tool.name) && customEnabled.includes(tool.name));
 
   const [name, setName] = useState('');
   const [type, setType] = useState<McpServerType>('stdio');
@@ -102,7 +71,6 @@ export function McpTab() {
   const [saving, setSaving] = useState(false);
   const [deletingName, setDeletingName] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{
-    kind: 'external' | 'managed';
     name: string;
     label: string;
   } | null>(null);
@@ -114,26 +82,6 @@ export function McpTab() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mcp: { external_servers: externalServersPatch } }),
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    const refresh = await hanaFetch(`/api/agents/${agentId}/config`);
-    const nextConfig = await refresh.json();
-    const prevConfig = useSettingsStore.getState().settingsConfig || {};
-    for (const key of ['_identity', '_ishiki', '_userProfile', '_experience']) {
-      if (key in prevConfig && !(key in nextConfig)) nextConfig[key] = (prevConfig as any)[key];
-    }
-    useSettingsStore.setState({ settingsConfig: nextConfig });
-    platform?.settingsChanged?.('agent-updated', { agentId });
-  }
-
-  async function patchAgentConfig(partial: Record<string, any>) {
-    const agentId = store.getSettingsAgentId();
-    if (!agentId) throw new Error('agent not found');
-    const res = await hanaFetch(`/api/agents/${agentId}/config`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(partial),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
@@ -198,28 +146,11 @@ export function McpTab() {
     }
   }
 
-  async function deleteManagedServer(toolName: string) {
-    try {
-      setDeletingName(toolName);
-      const nextCustomEnabled = customEnabled.filter((name: string) => name !== toolName);
-      await patchAgentConfig({ tools: { custom_enabled: nextCustomEnabled } });
-      showToast(t('settings.mcp.deleted'), 'success');
-    } catch (err: any) {
-      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
-    } finally {
-      setDeletingName(null);
-    }
-  }
-
   async function confirmPendingDelete() {
     if (!pendingDelete) return;
     const target = pendingDelete;
     setPendingDelete(null);
-    if (target.kind === 'managed') {
-      await deleteManagedServer(target.name);
-    } else {
-      await deleteServer(target.name);
-    }
+    await deleteServer(target.name);
   }
 
   return (
@@ -312,25 +243,10 @@ export function McpTab() {
 
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.mcp.added')}</h2>
-        {managedMcpEntries.length + serverEntries.length === 0 ? (
+        {serverEntries.length === 0 ? (
           <div className="pin-empty">{t('settings.mcp.empty')}</div>
         ) : (
           <div className="mcp-server-list">
-            {managedMcpEntries.map((tool) => {
-              const label = tool.label || t(tool.labelKey);
-              return (
-                <div className="mcp-server-item" key={`managed-${tool.name}`}>
-                  <div className="mcp-server-main">
-                    <div className="mcp-server-head">
-                      <span className="mcp-server-name">{label === tool.labelKey ? tool.serverName : label}</span>
-                      <span className="mcp-server-type builtin">
-                        {t('settings.mcp.builtinMcp')}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
             {serverEntries.map(([serverName, server]) => (
               <div className="mcp-server-item" key={serverName}>
                 <div className="mcp-server-main">
@@ -344,7 +260,6 @@ export function McpTab() {
                 <button
                   className="provider-item-action delete"
                   onClick={() => setPendingDelete({
-                    kind: 'external',
                     name: serverName,
                     label: serverName,
                   })}

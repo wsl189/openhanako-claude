@@ -1039,7 +1039,7 @@
       "delete": "删除 MCP",
       "deleteConfirm": "确定删除 MCP「{name}」？新对话将不再加载它。",
       "deleteTitle": "删除 {name}？",
-      "deleteDesc": "这会从当前助手移除此 MCP，新对话将不再加载它。",
+      "deleteDesc": "这会从全局配置移除此 MCP，新对话将不再加载它。",
       "deleted": "已删除 MCP",
       "nameRequired": "请输入 MCP 名称",
       "commandRequired": "请输入启动命令",

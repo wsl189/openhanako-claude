@@ -1,7 +1,6 @@
 import fs from "fs";
 import { describe, expect, it } from "vitest";
 import { buildClaudeRuntimeConfig } from "./claude-runtime-config.js";
-import { CLAUDE_IN_CHROME_SWITCH } from "../lib/tools/claude-in-chrome-tool.js";
 
 function createConfig(overrides = {}) {
   const { env: envOverride = {}, ...rest } = overrides;
@@ -546,81 +545,49 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.allowedTools).toEqual([]);
   });
 
-  it("auto-attaches claude-in-chrome MCP server when extension is installed", () => {
+  it("allows a user-configured claude_in_chrome external MCP server", () => {
     const config = createConfig({
-      env: {
-        HANAKO_BROWSER_PROVIDER: "auto",
-        HANAKO_CLAUDE_IN_CHROME_INSTALLED: "1",
-      },
-      toolProfile: {
-        tools: {
-          custom_enabled: [CLAUDE_IN_CHROME_SWITCH],
+      agent: {
+        config: {
+          mcp: {
+            external_servers: {
+              claude_in_chrome: {
+                type: "stdio",
+                command: "node",
+                args: ["/tmp/custom-browser-mcp.js", "--claude-in-chrome-mcp"],
+              },
+            },
+          },
         },
       },
-    });
-
-    expect(config.options.mcpServers.claude_in_chrome?.type).toBe("stdio");
-    expect(config.options.mcpServers.claude_in_chrome?.command).toBe(process.execPath);
-    expect(config.options.mcpServers.claude_in_chrome?.args?.[0]).toContain("/lib/claude-in-chrome/entry.js");
-    expect(config.options.mcpServers.claude_in_chrome?.args?.[1]).toBe("--claude-in-chrome-mcp");
-    expect(config.options.allowedTools).toContain("mcp__claude_in_chrome__*");
-    expect(config.diagnostics?.browserProvider?.activeProvider).toBe("claude-in-chrome");
-  });
-
-  it("respects explicit claude-in-chrome command override", () => {
-    const config = createConfig({
-      env: {
-        HANAKO_BROWSER_PROVIDER: "claude-in-chrome",
-        HANAKO_CLAUDE_IN_CHROME_COMMAND: "bun",
-        HANAKO_CLAUDE_IN_CHROME_ARGS:
-          "[\"/tmp/custom-browser-mcp.js\",\"--claude-in-chrome-mcp\"]",
-      },
       toolProfile: {
         tools: {
-          custom_enabled: [CLAUDE_IN_CHROME_SWITCH],
+          builtin_enabled: ["Read"],
+          custom_enabled: [],
         },
       },
     });
 
     expect(config.options.mcpServers.claude_in_chrome).toEqual({
       type: "stdio",
-      command: "bun",
+      command: "node",
       args: ["/tmp/custom-browser-mcp.js", "--claude-in-chrome-mcp"],
     });
     expect(config.options.allowedTools).toContain("mcp__claude_in_chrome__*");
+    expect(config.options.allowedTools).toContain("Read");
+    expect(config.diagnostics?.externalMcpServers).toContain("claude_in_chrome");
   });
 
-  it("does not attach claude-in-chrome when its switch tool is disabled", () => {
+  it("does not auto-attach claude_in_chrome MCP without external config", () => {
     const config = createConfig({
       env: {
-        HANAKO_BROWSER_PROVIDER: "claude-in-chrome",
-      },
-      toolProfile: {
-        tools: {
-          custom_enabled: [],
-        },
+        HANAKO_BROWSER_PROVIDER: "auto",
+        HANAKO_CLAUDE_IN_CHROME_INSTALLED: "1",
       },
     });
 
     expect(config.options.mcpServers.claude_in_chrome).toBeUndefined();
     expect(config.options.allowedTools || []).not.toContain("mcp__claude_in_chrome__*");
-    expect(config.diagnostics?.useClaudeInChrome).toBe(false);
-  });
-
-  it("does not attach claude-in-chrome tools in noTools mode", () => {
-    const config = createConfig({
-      noTools: true,
-      env: {
-        HANAKO_BROWSER_PROVIDER: "claude-in-chrome",
-        HANAKO_CLAUDE_IN_CHROME_COMMAND: "bun",
-        HANAKO_CLAUDE_IN_CHROME_ARGS:
-          "[\"/tmp/custom-browser-mcp.js\",\"--claude-in-chrome-mcp\"]",
-      },
-    });
-
-    expect(config.options.mcpServers.claude_in_chrome).toBeUndefined();
-    expect(config.options.allowedTools).toEqual([]);
-    expect(config.diagnostics?.useClaudeInChrome).toBe(false);
   });
 
   it("installs canUseTool handler by default to avoid permission prompt deadlocks", async () => {

@@ -6,9 +6,7 @@ import {
   MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
   MINIMAX_MCP_WEB_SEARCH_SWITCH,
 } from "../lib/tools/minimax-mcp-tools.js";
-import { CLAUDE_IN_CHROME_SWITCH } from "../lib/tools/claude-in-chrome-tool.js";
 import { extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
-import { resolveBrowserProvider } from "./browser-provider.js";
 
 const require = createRequire(import.meta.url);
 
@@ -56,7 +54,6 @@ export const CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES = [
 const MINIMAX_MCP_SERVER_KEY = "MiniMax";
 const RESERVED_MCP_SERVER_KEYS = new Set([
   "hanako",
-  "claude_in_chrome",
 ]);
 const MINIMAX_MCP_TOOL_BY_SWITCH = {
   [MINIMAX_MCP_WEB_SEARCH_SWITCH]: "web_search",
@@ -971,10 +968,6 @@ export function buildClaudeRuntimeConfig({
   const customEnabled = noTools
     ? []
     : uniq(customEnabledOverride || toolProfile?.tools?.custom_enabled || []);
-  const browserProvider = resolveBrowserProvider(runtimeEnv, { cwd, workspace });
-  const useClaudeInChrome = !noTools
-    && customEnabled.includes(CLAUDE_IN_CHROME_SWITCH)
-    && browserProvider.useClaudeInChrome === true;
   const enabledMiniMaxMcpTools = !noTools
     ? uniq(
       customEnabled
@@ -986,17 +979,11 @@ export function buildClaudeRuntimeConfig({
   const filteredCustomTools = (customTools || [])
     .filter((toolDef) => customEnabled.includes(toolDef?.name))
     .filter((toolDef) => ![
-      CLAUDE_IN_CHROME_SWITCH,
       MINIMAX_MCP_WEB_SEARCH_SWITCH,
       MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
     ].includes(String(toolDef?.name || "")));
   const mcpServerKey = "hanako";
   const mcpServerName = "hanako";
-  // IMPORTANT: Claude Agent SDK can crash the Claude subprocess when an MCP
-  // server key contains '-' (e.g. "claude-in-chrome"), leading to:
-  // "Claude Code process exited with code 1".
-  // Use an underscore-only key and expose matching tool prefixes.
-  const claudeInChromeServerKey = "claude_in_chrome";
   // Claude Agent SDK MCP docs recommend allowing MCP tools via server-level
   // wildcard (mcp__<server>__*). Keep both key/name prefixes for compatibility
   // across SDK variants that may resolve server names differently.
@@ -1005,9 +992,6 @@ export function buildClaudeRuntimeConfig({
       toMcpAllowedPrefix(mcpServerKey),
       toMcpAllowedPrefix(mcpServerName),
     ].filter(Boolean))
-    : [];
-  const claudeInChromeAllowedTools = useClaudeInChrome
-    ? [toMcpAllowedPrefix(claudeInChromeServerKey)].filter(Boolean)
     : [];
   const minimaxMcpAllowedTools = useMiniMaxMcp
     ? buildMcpExactAllowedTools(MINIMAX_MCP_SERVER_KEY, enabledMiniMaxMcpTools)
@@ -1020,7 +1004,6 @@ export function buildClaudeRuntimeConfig({
   const allowedTools = uniq([
     ...builtinEnabled,
     ...customAllowedTools,
-    ...claudeInChromeAllowedTools,
     ...minimaxMcpAllowedTools,
     ...externalMcp.allowedTools,
   ]);
@@ -1046,9 +1029,6 @@ export function buildClaudeRuntimeConfig({
         onToolEnd: emitToolEvent,
       },
     );
-  }
-  if (useClaudeInChrome && browserProvider.claudeInChromeServer) {
-    mcpServers[claudeInChromeServerKey] = browserProvider.claudeInChromeServer;
   }
   if (useMiniMaxMcp) {
     const minimaxMcpServer = resolveMiniMaxMcpServer(runtimeEnv, agent);
@@ -1127,12 +1107,9 @@ export function buildClaudeRuntimeConfig({
       mcpServerKey,
       mcpServerName,
       customAllowedTools,
-      claudeInChromeAllowedTools,
       minimaxMcpAllowedTools,
       externalMcpAllowedTools: externalMcp.allowedTools,
       externalMcpServers: Object.keys(externalMcp.servers),
-      browserProvider,
-      useClaudeInChrome,
       useMiniMaxMcp,
       enabledMiniMaxMcpTools,
       claudeCodeExecutable: claudeSdkProcessConfig.executable,

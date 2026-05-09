@@ -1039,7 +1039,7 @@
       "delete": "Delete MCP",
       "deleteConfirm": "Delete MCP \"{name}\"? New chats will no longer load it.",
       "deleteTitle": "Delete {name}?",
-      "deleteDesc": "This removes the MCP from the current agent. New chats will no longer load it.",
+      "deleteDesc": "This removes the MCP from global settings. New chats will no longer load it.",
       "deleted": "MCP deleted",
       "nameRequired": "Enter an MCP name",
       "commandRequired": "Enter a command",

@@ -9,9 +9,18 @@
   try {
     await import("./index.js");
   } catch (err) {
-    console.error(`[server] 启动失败: ${err.message}`);
-    if (err.code) console.error(`[server] 错误码: ${err.code}`);
-    console.error(err.stack);
+    const message = (err && typeof err === "object" && "message" in err)
+      ? String(err.message || "")
+      : String(err ?? "");
+    console.error(`[server] 启动失败: ${message || "(empty message)"}`);
+    if (err && typeof err === "object" && err.code) {
+      console.error(`[server] 错误码: ${err.code}`);
+    }
+    if (err && typeof err === "object" && err.stack) {
+      console.error(err.stack);
+    } else {
+      console.error(`[server] 原始异常: ${String(err)}`);
+    }
 
     // 诊断信息
     console.error(

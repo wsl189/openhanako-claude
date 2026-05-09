@@ -19,7 +19,6 @@ import { createArtifactTool } from "../lib/tools/artifact-tool.js";
 import { createChannelTool } from "../lib/tools/channel-tool.js";
 import { createAskAgentTool } from "../lib/tools/ask-agent-tool.js";
 import { createBrowserTool } from "../lib/tools/browser-tool.js";
-import { createClaudeInChromeTool, CLAUDE_IN_CHROME_SWITCH } from "../lib/tools/claude-in-chrome-tool.js";
 import {
   createMiniMaxMcpSwitchTools,
   MINIMAX_MCP_WEB_SEARCH_SWITCH,
@@ -253,7 +252,6 @@ export class Agent {
     this._browserTool = this._browserProvider.useEmbeddedBrowser
       ? createBrowserTool()
       : null;
-    this._claudeInChromeTool = createClaudeInChromeTool();
     this._minimaxMcpSwitchTools = createMiniMaxMcpSwitchTools();
     this._notifyTool = createNotifyTool({
       onNotify: (title, body, opts) => this._notifyHandler?.(title, body, opts),
@@ -421,7 +419,6 @@ export class Agent {
       this._channelTool,
       this._askAgentTool,
       this._browserTool,
-      this._claudeInChromeTool,
       ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
@@ -626,7 +623,6 @@ export class Agent {
     } = options || {};
     const isZh = String(this._config.locale || "").startsWith("zh");
     const agentId = path.basename(this.agentDir || "");
-    const browserProvider = this._resolveBrowserProvider();
 
     const toolProfile = this._engine?.getAgentPermissionConfig?.(agentId) || null;
     const runtimeCustomNames = new Set((this.tools || []).map((tool) => tool?.name).filter(Boolean));
@@ -638,15 +634,14 @@ export class Agent {
       : [...runtimeCustomNames];
     const hasMiniMaxMcpWebSearch = enabledCustom.includes(MINIMAX_MCP_WEB_SEARCH_SWITCH);
     const hasMiniMaxMcpUnderstandImage = enabledCustom.includes(MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH);
-    const hasClaudeInChromeSwitch = enabledCustom.includes(CLAUDE_IN_CHROME_SWITCH);
-    const externalMcpTools = browserProvider?.useClaudeInChrome && hasClaudeInChromeSwitch
-      ? ["mcp__claude_in_chrome__*"]
-      : [];
+    const externalMcpTools = [
+      ...resolveExternalMcpServers(this._config, {
+        externalServers: this._engine?.getExternalMcpServers?.() || {},
+      }).allowedTools,
+    ];
     if (hasMiniMaxMcpWebSearch) externalMcpTools.push("mcp__MiniMax__web_search");
     if (hasMiniMaxMcpUnderstandImage) externalMcpTools.push("mcp__MiniMax__understand_image");
-    externalMcpTools.push(...resolveExternalMcpServers(this._config, {
-      externalServers: this._engine?.getExternalMcpServers?.() || {},
-    }).allowedTools);
+    const hasClaudeInChrome = externalMcpTools.includes("mcp__claude_in_chrome__*");
     const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
     const formatToolList = (list = []) => {
       const cleaned = [...new Set((list || []).map((item) => String(item || "").trim()).filter(Boolean))];
@@ -830,7 +825,6 @@ export class Agent {
 
       const hasSearchTool = hasMiniMaxMcpWebSearch;
       const hasEmbeddedBrowser = hasTool("browser");
-      const hasClaudeInChrome = browserProvider?.useClaudeInChrome === true && enabledCustom.includes(CLAUDE_IN_CHROME_SWITCH);
       if (!hasSearchTool && hasEmbeddedBrowser) {
         parts.push(isZh
           ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"

@@ -149,3 +149,12 @@ export function resolveBrowserProvider(env = process.env, opts = {}) {
     chromeExtensionInstalled: extensionInstalled,
   };
 }
+
+export function resolveClaudeInChromeExternalServer(env = process.env) {
+  const resolved = resolveClaudeInChromeServer(env);
+  if (!resolved?.available || !resolved?.config) return null;
+  return {
+    name: "claude_in_chrome",
+    server: { ...resolved.config },
+  };
+}

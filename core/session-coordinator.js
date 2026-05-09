@@ -6,7 +6,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import { renameSession } from "@anthropic-ai/claude-agent-sdk";
+import { createRequire } from "module";
 import { createModuleLogger } from "../lib/debug-log.js";
 import { BrowserManager } from "../lib/browser/browser-manager.js";
 import { sanitizeAssistantVisibleText } from "../lib/text/assistant-visible-text.js";
@@ -31,6 +31,18 @@ import {
 
 const log = createModuleLogger("session");
 const EDE_DIAGNOSTIC_RE = /^\s*(?:⚠\s*)?\[ede_diagnostic\]/i;
+const require = createRequire(import.meta.url);
+let _sdkRenameSession = null;
+
+function getClaudeSdkRenameSession() {
+  if (typeof _sdkRenameSession === "function") return _sdkRenameSession;
+  const sdk = require("@anthropic-ai/claude-agent-sdk");
+  if (typeof sdk?.renameSession !== "function") {
+    throw new Error("claude-agent-sdk renameSession() is unavailable");
+  }
+  _sdkRenameSession = sdk.renameSession;
+  return _sdkRenameSession;
+}
 
 export const PATROL_TOOLS_DEFAULT = [
   "search_memory", "pin_memory", "unpin_memory",
@@ -1326,6 +1338,7 @@ export class SessionCoordinator {
   async saveSessionTitle(sessionPath, title) {
     const metadata = patchSessionMetadata(sessionPath, { title });
     try {
+      const renameSession = getClaudeSdkRenameSession();
       await renameSession(metadata.sessionId, title || "", { dir: metadata.cwd });
     } catch {
       // local metadata is source of truth for Hanako UI

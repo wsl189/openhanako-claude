@@ -1,10 +1,23 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { createRequire } from "module";
 import {
   applyClaudeMaxOutputTokensEnv,
   resolveClaudeSdkModelId,
 } from "./model-runtime-overrides.js";
 import { normalizeContentBlocks } from "./claude-transcript.js";
 import { patchSessionMetadata } from "./claude-session-store.js";
+
+const require = createRequire(import.meta.url);
+let _sdkQueryFn = null;
+
+function getClaudeSdkQuery() {
+  if (typeof _sdkQueryFn === "function") return _sdkQueryFn;
+  const sdk = require("@anthropic-ai/claude-agent-sdk");
+  if (typeof sdk?.query !== "function") {
+    throw new Error("claude-agent-sdk query() is unavailable");
+  }
+  _sdkQueryFn = sdk.query;
+  return _sdkQueryFn;
+}
 
 function deferred() {
   let resolve;
@@ -350,6 +363,7 @@ export class ClaudeSessionRuntime {
     }
     this._abortRequested = false;
     this._pendingSteerInterrupts = 0;
+    const query = getClaudeSdkQuery();
     this._query = query({
       prompt: this._queue,
       options: {
