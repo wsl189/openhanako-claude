@@ -914,6 +914,7 @@ export class SessionCoordinator {
       env: runtimeEnv,
       confirmStore: this._d.getConfirmStore?.() || null,
       sessionPath,
+      executionMode: "chat",
       createToolContext: () => ({
         sessionManager: runtime?.sessionManager,
       }),
@@ -931,6 +932,7 @@ export class SessionCoordinator {
       + `forcedToolsOption=${runtimeTools.forcedToolsOption === true} `
       + `permissionStrategy=${runtimeTools.permissionStrategy || "unknown"} `
       + `canUseTool=${runtimeTools.hasCanUseTool === true} `
+      + `preToolUseHooks=${runtimeTools.hasPreToolUseHooks === true} `
       + `customLoaded=${JSON.stringify(runtimeTools.customToolsLoaded || [])}`,
     );
     log.log(

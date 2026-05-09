@@ -295,6 +295,8 @@ export class BridgeSessionManager {
         disabledBuiltinTools: CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES,
         model: runtimeEnv.model,
         env: runtimeEnv.env,
+        sessionPath,
+        executionMode: "platform",
         systemAppend: mediaInstruction,
         createToolContext: () => ({
           sessionManager: runtime?.sessionManager,
@@ -313,6 +315,7 @@ export class BridgeSessionManager {
         + `forcedToolsOption=${runtimeTools.forcedToolsOption === true} `
         + `permissionStrategy=${runtimeTools.permissionStrategy || "unknown"} `
         + `canUseTool=${runtimeTools.hasCanUseTool === true} `
+        + `preToolUseHooks=${runtimeTools.hasPreToolUseHooks === true} `
         + `customLoaded=${JSON.stringify(runtimeTools.customToolsLoaded || [])}`,
       );
 

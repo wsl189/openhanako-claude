@@ -7127,9 +7127,9 @@ body.resizing .jian-sidebar-inner {
 }
 
 .input-prompt-question-title {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: color-mix(in oklab, var(--text) 88%, var(--text-muted) 12%);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
     line-height: 1.35;
 }
 
@@ -7272,6 +7272,10 @@ body.resizing .jian-sidebar-inner {
     color: white;
     background: color-mix(in oklab, var(--accent) 74%, black 26%);
     border-color: color-mix(in oklab, var(--accent) 74%, black 26%);
+}
+
+.input-prompt-btn.submit-right {
+    margin-left: auto;
 }
 
 .input-prompt-btn.reject {
@@ -14673,6 +14677,10 @@ a.about-link:hover {
     .input-prompt-btn {
         flex: 1;
         justify-content: center;
+    }
+    .input-prompt-btn.submit-right {
+        flex: 0 0 auto;
+        margin-left: auto;
     }
     .input-prompt-step {
         max-width: 190px;

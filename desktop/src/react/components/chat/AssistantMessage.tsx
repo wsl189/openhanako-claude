@@ -869,7 +869,6 @@ const AskUserConfirmCard = memo(function AskUserConfirmCard({
         <div className="cron-confirm-head">
           <div className={`cron-confirm-status ${status === 'confirmed' ? 'approved' : 'rejected'}`}>{doneText}</div>
         </div>
-        <div className="cron-confirm-title">{isZh ? 'Agent 需要你的输入' : 'Agent Needs Your Input'}</div>
       </div>
     );
   }
@@ -879,7 +878,6 @@ const AskUserConfirmCard = memo(function AskUserConfirmCard({
       <div className="cron-confirm-head">
         <div className="cron-confirm-status pending">{(window as any).t('automation.cardPending')}</div>
       </div>
-      <div className="cron-confirm-title">{isZh ? 'Agent 需要你的输入' : 'Agent Needs Your Input'}</div>
       {(questions || []).map((q, idx) => {
         const id = String(q?.id || '').trim() || `q_${idx + 1}`;
         const qTitle = String(q?.question || '').trim();

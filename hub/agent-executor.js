@@ -341,6 +341,8 @@ async function runAgentSessionNow(agentId, rounds, {
     systemAppend: mergedSystemAppend,
     model: model?.id || model?.name,
     env: runtimeEnv,
+    sessionPath,
+    executionMode: sessionSuffix === "channel" ? "channel" : "chat",
     createToolContext: () => ({
       sessionManager: runtime?.sessionManager,
     }),

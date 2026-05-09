@@ -7,7 +7,10 @@ import {
   MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
   MINIMAX_MCP_WEB_SEARCH_SWITCH,
 } from "../lib/tools/minimax-mcp-tools.js";
-import { extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
+import { extractDeleteTargets, extractGuardPaths } from "../lib/sandbox/tool-wrapper.js";
+import { readSessionMessageEntries, readSessionMessagesFromLog } from "./session-message-log.js";
+import { readSessionMetadata } from "./claude-session-store.js";
+import { buildSessionMessagesFromSession, readClaudeTranscriptEntries } from "./claude-transcript.js";
 
 const require = createRequire(import.meta.url);
 
@@ -117,6 +120,16 @@ const IMAGE_FILE_EXTENSIONS = new Set([
   ".heif",
   ".avif",
 ]);
+const HIGH_RISK_TEXT_CONFIRM_TTL_MS = 10 * 60 * 1000;
+const HIGH_RISK_PENDING_TEXT_CONFIRM = new Map();
+const HIGH_RISK_CODE_LABELS = {
+  destructive_delete: "删除类危险操作",
+  irreversible_git: "不可逆 Git 操作",
+  privileged_system: "系统权限类操作",
+  data_exfiltration: "可能的数据外传操作",
+  sensitive_write: "敏感路径写入",
+  cron_mutation: "定时任务变更",
+};
 
 function uniq(list = []) {
   return [...new Set((list || []).filter(Boolean))];
@@ -700,14 +713,41 @@ function isPathInside(target, base) {
   return target === base || target.startsWith(base + path.sep);
 }
 
+function normalizeToolNameForPolicy(toolName = "") {
+  const raw = String(toolName || "").trim();
+  if (!raw) return "";
+  if (CLAUDE_BUILTIN_TOOL_NAMES.includes(raw)) return raw;
+  const lowered = raw.toLowerCase();
+  const alias = {
+    bash: "Bash",
+    read: "Read",
+    write: "Write",
+    edit: "Edit",
+    grep: "Grep",
+    glob: "Glob",
+    find: "Glob",
+    ls: "Glob",
+  };
+  if (alias[lowered]) return alias[lowered];
+  const mcpMatch = raw.match(/^mcp__[a-z0-9_-]+__([a-z0-9_-]+)$/i);
+  if (mcpMatch?.[1]) {
+    const suffix = String(mcpMatch[1] || "").trim().toLowerCase();
+    if (alias[suffix]) return alias[suffix];
+    if (suffix === "cron") return "cron";
+    return mcpMatch[1];
+  }
+  return raw;
+}
+
 function resolveToolTargetPath(toolName, input = {}, cwd = process.cwd()) {
   const payload = (input && typeof input === "object") ? input : {};
+  const normalizedTool = normalizeToolNameForPolicy(toolName);
   const readWriteTools = new Set(["Read", "Write", "Edit"]);
   const treeTools = new Set(["Glob", "Grep"]);
   let rawPath = "";
-  if (readWriteTools.has(toolName)) {
+  if (readWriteTools.has(normalizedTool)) {
     rawPath = String(payload.file_path || payload.path || "").trim();
-  } else if (treeTools.has(toolName)) {
+  } else if (treeTools.has(normalizedTool)) {
     rawPath = String(payload.path || "").trim();
   }
   if (!rawPath) return null;
@@ -759,7 +799,7 @@ function findDisallowedBashPath(command, cwd, allowedRoots = []) {
 }
 
 function detectBashBypassAttempt(toolName, input = {}, opts = {}) {
-  if (toolName !== "Bash") return null;
+  if (normalizeToolNameForPolicy(toolName) !== "Bash") return null;
   const payload = (input && typeof input === "object") ? input : {};
   const command = String(payload.command || "");
   const strictSandbox = opts.strictSandbox === true;
@@ -771,16 +811,6 @@ function detectBashBypassAttempt(toolName, input = {}, opts = {}) {
     return "Bash command denied: disabling sandbox is not allowed.";
   }
 
-  const privilegeEscalationPatterns = [
-    /\bsudo\b/i,
-    /\bsu(?:\s|$)/i,
-    /\bdoas\b/i,
-    /\bpkexec\b/i,
-  ];
-  if (privilegeEscalationPatterns.some((pattern) => pattern.test(command))) {
-    return "Bash command denied: privileged escalation commands are not allowed.";
-  }
-
   if (strictSandbox) {
     const disallowedPath = findDisallowedBashPath(command, cwd, allowedRoots);
     if (disallowedPath) {
@@ -789,6 +819,649 @@ function detectBashBypassAttempt(toolName, input = {}, opts = {}) {
   }
 
   return null;
+}
+
+function normalizeExecutionMode(mode = "") {
+  const normalized = String(mode || "").trim().toLowerCase();
+  if (normalized === "chat" || normalized === "platform" || normalized === "channel") {
+    return normalized;
+  }
+  return "";
+}
+
+function resolveSessionExecutionMode({ sessionPath = "", executionMode = "" } = {}) {
+  const explicit = normalizeExecutionMode(executionMode);
+  if (explicit) return explicit;
+
+  const normalized = String(sessionPath || "").replace(/\\/g, "/").toLowerCase();
+  if (
+    normalized.includes("/sessions/bridge/")
+    || normalized.includes("/bridge/owner/")
+  ) return "platform";
+  if (normalized.includes("/sessions/channel/")) return "channel";
+  return "chat";
+}
+
+function truncateText(text = "", max = 160) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  return raw.length > max ? `${raw.slice(0, max - 1)}…` : raw;
+}
+
+function isCronMutationOperation(payload = {}) {
+  const action = String(payload.action || payload.operation || "").trim().toLowerCase();
+  if (["add", "create", "remove", "delete", "toggle", "enable", "disable", "pause", "resume", "update"].includes(action)) {
+    return true;
+  }
+  const command = String(payload.command || "").trim().toLowerCase();
+  if (!command) return false;
+  return /\bcron\s+(add|create|remove|delete|toggle|enable|disable|pause|resume|update)\b/.test(command);
+}
+
+function isCronToolName(toolName = "") {
+  const name = String(toolName || "").trim().toLowerCase();
+  return name === "cron" || name.endsWith("__cron");
+}
+
+function isSensitiveWritePath(targetPath = "") {
+  const normalized = path.resolve(String(targetPath || ""));
+  if (!normalized) return false;
+
+  const unixRules = [
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/var",
+    "/private/etc",
+    "/private/var",
+    "/System",
+  ];
+  if (process.platform !== "win32") {
+    if (unixRules.some((base) => isPathInside(normalized, base) || normalized === base)) return true;
+  }
+
+  const home = String(process.env.HOME || "").trim();
+  if (home) {
+    const homeSensitive = [
+      path.join(home, ".ssh"),
+      path.join(home, ".gnupg"),
+      path.join(home, ".aws"),
+      path.join(home, ".config"),
+      path.join(home, ".kube"),
+      path.join(home, ".docker"),
+    ];
+    if (homeSensitive.some((base) => isPathInside(normalized, base) || normalized === base)) return true;
+  }
+
+  if (process.platform === "win32") {
+    const winPath = normalized.toLowerCase();
+    const markers = [
+      "\\windows\\",
+      "\\program files\\",
+      "\\program files (x86)\\",
+      "\\system32\\",
+      "\\users\\default\\",
+      "\\appdata\\roaming\\",
+      "\\appdata\\local\\",
+      "\\.ssh\\",
+    ];
+    if (markers.some((marker) => winPath.includes(marker))) return true;
+  }
+
+  return false;
+}
+
+function makeHighRiskDecision(code, summary, signature) {
+  return {
+    highRisk: true,
+    code,
+    label: HIGH_RISK_CODE_LABELS[code] || "高风险操作",
+    summary: truncateText(summary, 220),
+    signature: String(signature || summary || code || "").trim(),
+  };
+}
+
+function formatZhCount(n = 0) {
+  const num = Number.isFinite(Number(n)) ? Math.max(0, Number(n)) : 0;
+  if (num === 2) return "两";
+  const zh = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+  if (num >= 0 && num <= 10 && Number.isInteger(num)) return zh[num];
+  return String(num);
+}
+
+function isScreenshotLikeFilePath(targetPath = "") {
+  const base = path.basename(String(targetPath || "")).toLowerCase();
+  if (!base) return false;
+  const hasScreenshotName = /(截屏|屏幕快照|screenshot|screen\s*shot|截图)/i.test(base);
+  const hasImageExt = /\.(png|jpe?g|webp|gif|bmp|tiff?|heic|heif|avif|svg)$/i.test(base);
+  return hasScreenshotName && hasImageExt;
+}
+
+function trimTrailingPathSeparators(rawPath = "") {
+  const text = String(rawPath || "");
+  if (!text) return text;
+  if (/^[A-Za-z]:[\\/]{0,1}$/.test(text)) return text;
+  if (text === "/" || text === "\\") return text;
+  return text.replace(/[\\/]+$/g, "");
+}
+
+function inferDeleteTargetKindZh(targetPath = "") {
+  const p = String(targetPath || "").trim();
+  if (!p) return "文件/文件夹";
+  if (isScreenshotLikeFilePath(p)) return "截屏";
+
+  try {
+    const stat = fs.statSync(p);
+    if (stat.isDirectory()) return "文件夹";
+    if (stat.isFile()) return "文件";
+  } catch {
+    // fallback to heuristic
+  }
+
+  const normalized = trimTrailingPathSeparators(p);
+  const base = path.basename(normalized);
+  if (!base) return "文件/文件夹";
+  if (path.extname(base)) return "文件";
+  return "文件夹";
+}
+
+function buildDeleteTargetLabelZh(targetPath = "") {
+  const p = String(targetPath || "").trim();
+  const normalized = trimTrailingPathSeparators(p);
+  const base = path.basename(normalized) || normalized || p;
+  const display = truncateText(base, 36);
+  const kind = inferDeleteTargetKindZh(p);
+  return `${kind}“${display}”`;
+}
+
+function buildDestructiveDeleteConfirmTextZh(deleteTargets = []) {
+  const targets = Array.isArray(deleteTargets)
+    ? [...new Set(deleteTargets.filter(Boolean).map((item) => String(item).trim()).filter(Boolean))]
+    : [];
+  if (targets.length === 0) return "删除文件/文件夹";
+  const labels = targets.map((item) => buildDeleteTargetLabelZh(item));
+  if (labels.length <= 2) {
+    return `删除${labels.join("、")}`;
+  }
+  const shown = labels.slice(0, 2).join("、");
+  return `删除${shown}等${formatZhCount(labels.length)}项`;
+}
+
+function buildIrreversibleGitConfirmTextZh(command = "") {
+  const cmd = String(command || "").trim();
+  if (!cmd) return "执行不可逆的 Git 变更";
+  if (/\bgit\s+reset\s+--hard\b/i.test(cmd)) return "执行 Git 强制回退（reset --hard）";
+  if (/\bgit\s+checkout\s+--\s+/i.test(cmd)) return "执行 Git 文件覆盖恢复（checkout --）";
+  if (/\bgit\s+restore\b[^\n\r;]*\s--source\b/i.test(cmd)) return "执行 Git 指定来源覆盖恢复（restore --source）";
+  if (/\bgit\s+clean\b[^\n\r;]*\b-f\b/i.test(cmd)) return "清理未跟踪文件（git clean -f）";
+  return "执行不可逆的 Git 变更";
+}
+
+function buildPrivilegedSystemConfirmTextZh(command = "") {
+  const cmd = String(command || "").trim();
+  if (!cmd) return "执行系统级高权限命令";
+
+  const systemctlMatch = cmd.match(/\bsystemctl\s+(restart|start|stop|enable|disable)\s+([A-Za-z0-9_.@-]+)/i);
+  if (systemctlMatch?.[1] && systemctlMatch?.[2]) {
+    const op = String(systemctlMatch[1]).toLowerCase();
+    const service = String(systemctlMatch[2]).trim();
+    const opLabel = ({
+      restart: "重启",
+      start: "启动",
+      stop: "停止",
+      enable: "启用",
+      disable: "禁用",
+    })[op] || "变更";
+    return `${opLabel}系统服务 ${service}`;
+  }
+
+  if (/\bchmod\b/i.test(cmd)) return "修改文件权限（chmod）";
+  if (/\bchown\b/i.test(cmd)) return "修改文件所有者（chown）";
+  if (/\bschtasks\b/i.test(cmd)) return "修改系统计划任务（schtasks）";
+  if (/\breg\b\s+(?:add|delete)\b/i.test(cmd)) return "修改系统注册表（reg）";
+  if (/\bsudo\b/i.test(cmd) || /\bsu(?:\s|$)/i.test(cmd) || /\bdoas\b/i.test(cmd) || /\bpkexec\b/i.test(cmd)) {
+    return "执行提权命令";
+  }
+  return "执行系统级高权限命令";
+}
+
+function buildDataExfiltrationConfirmTextZh(command = "") {
+  const cmd = String(command || "").trim();
+  if (!cmd) return "执行可能外传数据的网络命令";
+  if (/\bcurl\b[^\n\r;]*(?:\s-F\s+['"]?@|\s--form\s+['"]?@|\s--data-binary\s+@|\s--upload-file\s+)/i.test(cmd)) {
+    return "通过 curl 上传文件到网络地址";
+  }
+  if (/\bwget\b[^\n\r;]*\s--post-file=/i.test(cmd)) return "通过 wget 上传文件到网络地址";
+  if (/\bscp\b/i.test(cmd)) return "通过 scp 传输文件到远程主机";
+  if (/\brsync\b[^\n\r;]*\b(?:@|:\/\/)/i.test(cmd)) return "通过 rsync 同步文件到远程目标";
+  return "执行可能外传数据的网络命令";
+}
+
+function buildSensitiveWriteConfirmTextZh(targetPath = "") {
+  const target = String(targetPath || "").trim();
+  if (!target) return "写入敏感路径";
+  const base = path.basename(target);
+  if (/^id_rsa|id_ed25519|authorized_keys$/i.test(base)) return "修改 SSH 密钥相关文件";
+  if (/^config$/i.test(base) && /\/\.ssh\//i.test(target.replace(/\\/g, "/"))) return "修改 SSH 配置";
+  return "写入敏感路径文件";
+}
+
+function buildCronMutationConfirmTextZh(action = "") {
+  const a = String(action || "").trim().toLowerCase();
+  if (/\b(add|create)\b/.test(a)) return "新增定时任务";
+  if (/\b(remove|delete)\b/.test(a)) return "删除定时任务";
+  if (/\b(update)\b/.test(a)) return "更新定时任务";
+  if (/\b(toggle|enable|disable|pause|resume)\b/.test(a)) return "变更定时任务状态";
+  return "修改定时任务配置";
+}
+
+function normalizeConfirmationActionText(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  let normalized = raw
+    .replace(/[。！？!?]+$/g, "")
+    .replace(/^\s*(?:请)?(?:确认|确定|是否)(?:同意)?(?:执行)?(?:以下)?(?:操作)?[:：]?\s*/i, "")
+    .replace(/^\s*(?:是否同意执行以下操作|确认是否执行)[:：]?\s*/i, "")
+    .replace(/\s*吗$/i, "")
+    .trim();
+  if (!normalized) normalized = raw.trim();
+  return normalized;
+}
+
+function resolveAgentHighRiskPromptCandidate(payload = {}) {
+  const source = (payload && typeof payload === "object") ? payload : {};
+  const fields = [
+    source.confirm_text,
+    source.confirmation_text,
+    source.confirm_question,
+    source.confirmation_question,
+    source.confirmation,
+    source.description,
+    source.summary,
+    source.prompt,
+    source.message,
+  ];
+  for (const item of fields) {
+    const text = String(item || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function isSafeAgentConfirmationText(rawText = "") {
+  const text = String(rawText || "").trim();
+  if (!text) return false;
+  if (text.length < 2 || text.length > 64) return false;
+  if (/[\r\n]/.test(text)) return false;
+
+  const bannedCommandLike = /(;|\|\||&&|`|\$\(|\brm\b|\bgit\b|\bsudo\b|\bcurl\b|\bwget\b|\bscp\b|\brsync\b|\bchmod\b|\bchown\b|\bsystemctl\b|\bpkexec\b|\bschtasks\b|\breg\s+(?:add|delete)\b)/i;
+  if (bannedCommandLike.test(text)) return false;
+
+  const bannedPathLike = /([A-Za-z]:\\|\/Users\/|\/tmp\/|\/etc\/|\/var\/|\\\s|\.(?:png|jpe?g|gif|webp|bmp|svg|txt|json|log)\b)/i;
+  if (bannedPathLike.test(text)) return false;
+
+  const bannedBypassLike = /(无需确认|不用确认|自动执行|直接执行|已确认|已批准|跳过确认|不再询问)/i;
+  if (bannedBypassLike.test(text)) return false;
+
+  return true;
+}
+
+function resolveHighRiskConfirmQuestionZh(risk = {}, payload = {}) {
+  const candidateRaw = resolveAgentHighRiskPromptCandidate(payload);
+  if (candidateRaw && isSafeAgentConfirmationText(candidateRaw)) {
+    const normalized = normalizeConfirmationActionText(candidateRaw);
+    if (normalized) return normalized;
+  }
+  return String(risk?.confirmQuestionZh || "").trim();
+}
+
+function describeHighRiskActionZh(risk = {}) {
+  if (String(risk?.confirmQuestionZh || "").trim()) return String(risk.confirmQuestionZh).trim();
+  const code = String(risk?.code || "").trim();
+  switch (code) {
+    case "destructive_delete":
+      return "删除文件/目录";
+    case "irreversible_git":
+      return "执行不可逆的 Git 变更";
+    case "privileged_system":
+      return "执行系统级高权限命令";
+    case "data_exfiltration":
+      return "执行可能外传数据的网络命令";
+    case "sensitive_write":
+      return "写入敏感路径";
+    case "cron_mutation":
+      return "修改定时任务配置";
+    default:
+      return "执行高风险操作";
+  }
+}
+
+function classifyHighRiskOperation(toolName, input = {}, opts = {}) {
+  const payload = (input && typeof input === "object") ? input : {};
+  const cwd = normalizeAbsolutePath(opts.cwd || process.cwd()) || process.cwd();
+  const workspace = normalizeAbsolutePath(opts.workspace || "");
+  const normalizedTool = normalizeToolNameForPolicy(toolName);
+
+  if (normalizedTool === "Bash") {
+    const command = String(payload.command || "").trim();
+    if (!command) return { highRisk: false };
+
+    const deleteTargets = extractDeleteTargets(command, cwd);
+    if (deleteTargets.length > 0 || /\brm\s+-[^\n\r;]*\b(?:r|R)[^\n\r;]*\b(?:f|F)\b/i.test(command)) {
+      const decision = makeHighRiskDecision(
+        "destructive_delete",
+        `Bash delete command: ${truncateText(command)}`,
+        `bash:delete:${command}`,
+      );
+      decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
+        ...decision,
+        confirmQuestionZh: buildDestructiveDeleteConfirmTextZh(deleteTargets),
+      }, payload);
+      return decision;
+    }
+
+    if (
+      /\bgit\s+reset\s+--hard\b/i.test(command)
+      || /\bgit\s+checkout\s+--\s+/i.test(command)
+      || /\bgit\s+restore\b[^\n\r;]*\s--source\b/i.test(command)
+      || /\bgit\s+clean\b[^\n\r;]*\b-f\b/i.test(command)
+    ) {
+      const decision = makeHighRiskDecision(
+        "irreversible_git",
+        `Bash git operation: ${truncateText(command)}`,
+        `bash:git:${command}`,
+      );
+      decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
+        ...decision,
+        confirmQuestionZh: buildIrreversibleGitConfirmTextZh(command),
+      }, payload);
+      return decision;
+    }
+
+    if (
+      /\bsudo\b/i.test(command)
+      || /\bsu(?:\s|$)/i.test(command)
+      || /\bdoas\b/i.test(command)
+      || /\bpkexec\b/i.test(command)
+      || /\bchmod\b/i.test(command)
+      || /\bchown\b/i.test(command)
+      || /\bsystemctl\b/i.test(command)
+      || /\bsc\b\s+(?:create|delete|start|stop)\b/i.test(command)
+      || /\bschtasks\b/i.test(command)
+      || /\breg\b\s+(?:add|delete)\b/i.test(command)
+    ) {
+      const decision = makeHighRiskDecision(
+        "privileged_system",
+        `Bash privileged/system command: ${truncateText(command)}`,
+        `bash:privileged:${command}`,
+      );
+      decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
+        ...decision,
+        confirmQuestionZh: buildPrivilegedSystemConfirmTextZh(command),
+      }, payload);
+      return decision;
+    }
+
+    if (
+      /\bscp\b/i.test(command)
+      || /\brsync\b[^\n\r;]*\b(?:@|:\/\/)/i.test(command)
+      || /\bcurl\b[^\n\r;]*(?:\s-F\s+['"]?@|\s--form\s+['"]?@|\s--data-binary\s+@|\s--upload-file\s+)/i.test(command)
+      || /\bwget\b[^\n\r;]*\s--post-file=/i.test(command)
+    ) {
+      const decision = makeHighRiskDecision(
+        "data_exfiltration",
+        `Bash network transfer command: ${truncateText(command)}`,
+        `bash:exfil:${command}`,
+      );
+      decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
+        ...decision,
+        confirmQuestionZh: buildDataExfiltrationConfirmTextZh(command),
+      }, payload);
+      return decision;
+    }
+  }
+
+  if (normalizedTool === "Write" || normalizedTool === "Edit") {
+    const targetPath = resolveToolTargetPath(normalizedTool, payload, cwd);
+    if (targetPath) {
+      if ((workspace && !isPathInside(targetPath, workspace)) || isSensitiveWritePath(targetPath)) {
+        const decision = makeHighRiskDecision(
+          "sensitive_write",
+          `${normalizedTool} target path: ${targetPath}`,
+          `${normalizedTool.toLowerCase()}:${targetPath}`,
+        );
+        decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
+          ...decision,
+          confirmQuestionZh: buildSensitiveWriteConfirmTextZh(targetPath),
+        }, payload);
+        return decision;
+      }
+    }
+  }
+
+  if (isCronToolName(normalizedTool) && isCronMutationOperation(payload)) {
+    const action = String(payload.action || payload.operation || payload.command || "cron mutation").trim();
+    const decision = makeHighRiskDecision(
+      "cron_mutation",
+      `Cron change: ${truncateText(action)}`,
+      `cron:${action}`,
+    );
+    decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
+      ...decision,
+      confirmQuestionZh: buildCronMutationConfirmTextZh(action),
+    }, payload);
+    return decision;
+  }
+
+  return { highRisk: false };
+}
+
+function getPendingTextConfirmation(sessionPath = "") {
+  const key = String(sessionPath || "").trim();
+  if (!key) return null;
+  const pending = HIGH_RISK_PENDING_TEXT_CONFIRM.get(key) || null;
+  if (!pending) return null;
+  if (pending.expiresAt <= Date.now()) {
+    HIGH_RISK_PENDING_TEXT_CONFIRM.delete(key);
+    return null;
+  }
+  return pending;
+}
+
+function setPendingTextConfirmation(sessionPath = "", value = null) {
+  const key = String(sessionPath || "").trim();
+  if (!key) return;
+  if (!value) {
+    HIGH_RISK_PENDING_TEXT_CONFIRM.delete(key);
+    return;
+  }
+  HIGH_RISK_PENDING_TEXT_CONFIRM.set(key, value);
+}
+
+function extractTextFromMessageBlocks(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block && typeof block === "object" && block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+}
+
+function extractUserTextsFromSessionLog(sessionPath = "") {
+  const messages = readSessionMessagesFromLog(sessionPath, { limit: 120 });
+  const out = [];
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message || String(message.role || "").toLowerCase() !== "user") continue;
+    const text = extractTextFromMessageBlocks(message.content);
+    if (text) out.push(text);
+  }
+  return out;
+}
+
+function toMillis(rawTs) {
+  const ms = Date.parse(String(rawTs || ""));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function extractUserTextEntriesFromSessionLog(sessionPath = "", { afterTs = 0 } = {}) {
+  const entries = readSessionMessageEntries(sessionPath, { limit: 240 });
+  const out = [];
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    const message = entry?.message;
+    if (!message || String(message.role || "").toLowerCase() !== "user") continue;
+    const ts = toMillis(entry?.timestamp || message?.timestamp);
+    if (afterTs > 0 && ts > 0 && ts < afterTs) continue;
+    const text = extractTextFromMessageBlocks(message.content);
+    if (!text) continue;
+    out.push({ text, timestamp: ts });
+  }
+  return out;
+}
+
+function extractUserTextsFromTranscript(sessionPath = "") {
+  const fp = String(sessionPath || "").trim();
+  if (!fp) return [];
+  try {
+    const meta = readSessionMetadata(fp);
+    const sessionId = String(meta?.sessionId || "").trim();
+    const cwd = String(meta?.cwd || "").trim();
+    if (!sessionId) return [];
+    const messages = buildSessionMessagesFromSession({
+      sessionId,
+      cwd,
+      limit: 120,
+    });
+    const out = [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (!message || String(message.role || "").toLowerCase() !== "user") continue;
+      const text = extractTextFromMessageBlocks(message.content);
+      if (text) out.push(text);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+function extractUserTextEntriesFromTranscript(sessionPath = "", { afterTs = 0 } = {}) {
+  const fp = String(sessionPath || "").trim();
+  if (!fp) return [];
+  try {
+    const meta = readSessionMetadata(fp);
+    const sessionId = String(meta?.sessionId || "").trim();
+    const cwd = String(meta?.cwd || "").trim();
+    if (!sessionId) return [];
+    const entries = readClaudeTranscriptEntries({
+      sessionId,
+      cwd,
+      limit: 240,
+    });
+    const out = [];
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const entry = entries[i];
+      const message = entry?.message;
+      if (!message || String(message.role || "").toLowerCase() !== "user") continue;
+      const ts = toMillis(entry?.timestamp || message?.timestamp);
+      if (afterTs > 0 && ts > 0 && ts < afterTs) continue;
+      const text = extractTextFromMessageBlocks(message.content);
+      if (!text) continue;
+      // Ignore synthetic/internal SDK control text.
+      if (/^\[request interrupted by user(?: for tool use)?\]$/i.test(text.trim())) continue;
+      out.push({ text, timestamp: ts });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function resolvePlainTextConfirmationDecision(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  if (/(不要执行|不执行|不同意|拒绝|取消|停止|算了|cancel|reject|deny|stop|\bno\b)/i.test(raw)) {
+    return "reject";
+  }
+  if (/(确认|同意|继续|可以执行|执行吧|confirm|approve|allow|proceed|\byes\b|\bok\b|\bokay\b)/i.test(raw)) {
+    return "approve";
+  }
+  return null;
+}
+
+function resolveSessionPlainTextConfirmationDecision(sessionPath = "", { createdAt = 0 } = {}) {
+  const logEntries = extractUserTextEntriesFromSessionLog(sessionPath, { afterTs: createdAt });
+  const transcriptEntries = extractUserTextEntriesFromTranscript(sessionPath, { afterTs: createdAt });
+  const candidates = [...logEntries, ...transcriptEntries];
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  for (const item of candidates) {
+    const decision = resolvePlainTextConfirmationDecision(item.text);
+    if (decision) return decision;
+  }
+  return null;
+}
+
+async function waitForHighRiskAskUserConfirmation({
+  confirmStore,
+  emitToolEvent,
+  sessionPath,
+  risk,
+}) {
+  if (!confirmStore || typeof confirmStore.create !== "function") {
+    return { action: "rejected" };
+  }
+  return waitForAskUserConfirmation({
+    confirmStore,
+    emitToolEvent,
+    sessionPath,
+    input: {
+      questions: [
+        {
+          id: "high_risk_approval",
+          header: "高风险操作确认",
+          question: `是否同意执行以下操作：${describeHighRiskActionZh(risk)}？`,
+          options: [
+            {
+              label: "同意执行 (Recommended)",
+              description: "允许本次高风险操作继续执行。",
+            },
+            {
+              label: "拒绝执行",
+              description: "阻止本次操作。",
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
+function isRejectLikeText(text = "") {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return /(拒绝|不执行|不同意|reject|deny|cancel|stop|no)/i.test(value);
+}
+
+function isApproveLikeText(text = "") {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return /(同意|执行|确认|approve|confirm|allow|yes|ok)/i.test(value);
+}
+
+function resolveHighRiskAskUserDecision(decision) {
+  if (decision?.action !== "confirmed") return "reject";
+  const answerRaw = decision?.value?.high_risk_approval;
+  const answer = String(answerRaw || "").trim();
+  if (!answer) return "approve";
+  if (isRejectLikeText(answer)) return "reject";
+  if (isApproveLikeText(answer)) return "approve";
+  return "approve";
 }
 
 function createAllowedToolMatcher(allowedTools = []) {
@@ -914,15 +1587,17 @@ async function waitForAskUserConfirmation({
   return promise;
 }
 
-function buildCanUseToolHandler(permissionStrategy, opts = {}) {
+function buildToolUseDecisionEvaluator(permissionStrategy, opts = {}) {
   if (permissionStrategy !== "auto_allow") return undefined;
   const strictSandbox = false;
   const allowedRoots = strictSandbox ? resolveAllowedRoots(opts.workspace, opts.pathRules) : [];
   const cwd = opts.cwd;
+  const workspace = opts.workspace;
   const agentDir = opts.agentDir;
   const allowedToolMatcher = createAllowedToolMatcher(opts.allowedTools);
   const confirmStore = opts.confirmStore;
   const sessionPath = opts.sessionPath || null;
+  const executionMode = normalizeExecutionMode(opts.executionMode);
   const emitToolEvent = opts.emitToolEvent;
   let planModeEntered = false;
 
@@ -960,6 +1635,80 @@ function buildCanUseToolHandler(permissionStrategy, opts = {}) {
           message: `Tool "${toolName}" denied: path is outside strict sandbox scope (${targetPath}).`,
         };
       }
+    }
+
+    const risk = classifyHighRiskOperation(toolName, payload, {
+      cwd,
+      workspace,
+      agentDir,
+    });
+    if (risk.highRisk) {
+      const mode = resolveSessionExecutionMode({
+        sessionPath: sessionPath || "",
+        executionMode,
+      });
+      const fingerprint = `${toolName}:${risk.code}:${risk.signature}`;
+      if (mode === "chat") {
+        const decision = await waitForHighRiskAskUserConfirmation({
+          confirmStore,
+          emitToolEvent,
+          sessionPath,
+          risk,
+        });
+        if (resolveHighRiskAskUserDecision(decision) === "approve") {
+          return {
+            behavior: "allow",
+            updatedInput: payload,
+          };
+        }
+        return {
+          behavior: "deny",
+          message: `用户拒绝了高风险操作（${risk.label}）。`,
+        };
+      }
+
+      const existing = getPendingTextConfirmation(sessionPath || "");
+      if (existing && existing.fingerprint === fingerprint) {
+        const decision = resolveSessionPlainTextConfirmationDecision(sessionPath || "", {
+          createdAt: Number(existing.createdAt || 0),
+        });
+        if (decision === "approve") {
+          setPendingTextConfirmation(sessionPath || "", null);
+          return {
+            behavior: "allow",
+            updatedInput: payload,
+          };
+        }
+        if (decision === "reject") {
+          setPendingTextConfirmation(sessionPath || "", null);
+          return {
+            behavior: "deny",
+            message: `用户已取消高风险操作（${risk.label}）。`,
+          };
+        }
+        return {
+          behavior: "deny",
+          message: [
+            `高风险操作正在等待用户的明确文本确认（${risk.label}）。`,
+            `请用户回复：“确认”或“取消”。`,
+            `待确认事项：${describeHighRiskActionZh(risk)}`,
+          ].join("\n"),
+        };
+      }
+
+      setPendingTextConfirmation(sessionPath || "", {
+        fingerprint,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + HIGH_RISK_TEXT_CONFIRM_TTL_MS,
+      });
+      return {
+        behavior: "deny",
+        message: [
+          `执行该高风险操作前需要用户明确文本确认（${risk.label}）。`,
+          `请先让用户回复：“确认”或“取消”，再重试同一操作。`,
+          `待确认事项：${describeHighRiskActionZh(risk)}`,
+        ].join("\n"),
+      };
     }
 
     if (toolName === "AskUserQuestion") {
@@ -1057,6 +1806,58 @@ function buildCanUseToolHandler(permissionStrategy, opts = {}) {
   };
 }
 
+function buildCanUseToolHandler(toolUseDecisionEvaluator) {
+  if (typeof toolUseDecisionEvaluator !== "function") return undefined;
+  return async (toolName, input = {}) => toolUseDecisionEvaluator(toolName, input);
+}
+
+function buildPreToolUseHooks(toolUseDecisionEvaluator) {
+  if (typeof toolUseDecisionEvaluator !== "function") return undefined;
+  return {
+    PreToolUse: [
+      {
+        hooks: [
+          async (hookInput = {}) => {
+            const toolName = String(hookInput?.tool_name || "").trim();
+            const rawInput = hookInput?.tool_input;
+            const payload = (rawInput && typeof rawInput === "object" && !Array.isArray(rawInput))
+              ? rawInput
+              : {};
+            const decision = await toolUseDecisionEvaluator(toolName, payload);
+            if (decision?.behavior === "allow") {
+              return {
+                continue: true,
+                decision: "approve",
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse",
+                  permissionDecision: "allow",
+                  ...(decision.updatedInput && typeof decision.updatedInput === "object"
+                    ? { updatedInput: decision.updatedInput }
+                    : {}),
+                },
+              };
+            }
+            return {
+              continue: true,
+              decision: "block",
+              reason: String(
+                decision?.message || "Tool call denied by session policy.",
+              ),
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: String(
+                  decision?.message || "Tool call denied by session policy.",
+                ),
+              },
+            };
+          },
+        ],
+      },
+    ],
+  };
+}
+
 export function buildClaudeRuntimeConfig({
   agent,
   cwd,
@@ -1075,6 +1876,7 @@ export function buildClaudeRuntimeConfig({
   env = {},
   confirmStore = null,
   sessionPath = null,
+  executionMode = "",
   includePartialMessages = false,
 } = {}) {
   const explicitClaudeConfigDir = String(env?.CLAUDE_CONFIG_DIR || "").trim();
@@ -1144,7 +1946,7 @@ export function buildClaudeRuntimeConfig({
     ...minimaxMcpAllowedTools,
     ...externalMcp.allowedTools,
   ]);
-  const canUseTool = buildCanUseToolHandler(permissionStrategy, {
+  const toolUseDecisionEvaluator = buildToolUseDecisionEvaluator(permissionStrategy, {
     sandboxMode,
     workspace,
     pathRules,
@@ -1152,9 +1954,12 @@ export function buildClaudeRuntimeConfig({
     agentDir: agent?.agentDir,
     confirmStore,
     sessionPath,
+    executionMode,
     emitToolEvent,
     allowedTools,
   });
+  const canUseTool = buildCanUseToolHandler(toolUseDecisionEvaluator);
+  const hooks = buildPreToolUseHooks(toolUseDecisionEvaluator);
   const mcpServers = {};
   if (filteredCustomTools.length > 0) {
     mcpServers[mcpServerKey] = createCustomToolsMcpServer(
@@ -1223,6 +2028,7 @@ export function buildClaudeRuntimeConfig({
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: !strictSandbox,
     ...(canUseTool ? { canUseTool } : {}),
+    ...(hooks ? { hooks } : {}),
     settingSources,
     includePartialMessages: includePartialMessages === true,
     persistSession: true,
@@ -1240,6 +2046,7 @@ export function buildClaudeRuntimeConfig({
       forcedToolsOption: shouldForceTools || noTools,
       permissionStrategy,
       hasCanUseTool: typeof canUseTool === "function",
+      hasPreToolUseHooks: !!hooks?.PreToolUse?.length,
       customToolsLoaded: filteredCustomTools.map((toolDef) => toolDef?.name).filter(Boolean),
       mcpServerKey,
       mcpServerName,

@@ -30,6 +30,7 @@ import { createNotifyTool } from "../lib/tools/notify-tool.js";
 import { createDescribeImagesTool } from "../lib/tools/describe-images-tool.js";
 import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { createPdf2MdTool } from "../lib/tools/pdf2md-tool.js";
+import { createSetupSettingsTool } from "../lib/tools/setup-settings-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { resolveBrowserProvider } from "./browser-provider.js";
 import { resolveExternalMcpServers } from "./claude-runtime-config.js";
@@ -92,6 +93,7 @@ export class Agent {
     this._describeImagesTool = null;
     this._generateImagesTool = null;
     this._pdf2MdTool = null;
+    this._setupSettingsTool = null;
   }
 
   // ════════════════════════════
@@ -325,6 +327,9 @@ export class Agent {
     this._pdf2MdTool = createPdf2MdTool({
       getConfig: () => this._config?.tools?.pdf2md || {},
     });
+    this._setupSettingsTool = createSetupSettingsTool({
+      engine: this._engine,
+    });
 
     // 9. 频道工具（需要 channelsDir 和 agentsDir）
     if (this.channelsDir && this.agentsDir) {
@@ -432,6 +437,7 @@ export class Agent {
       this._generateImagesTool,
       this._pdf2MdTool,
       this._notifyTool,
+      this._setupSettingsTool,
     ].filter(Boolean);
   }
   get tools() {
@@ -453,6 +459,7 @@ export class Agent {
       this._generateImagesTool,
       this._pdf2MdTool,
       this._notifyTool,
+      this._setupSettingsTool,
     ].filter(Boolean);
   }
 
@@ -774,9 +781,18 @@ export class Agent {
     }
 
     if (includeSettings) {
+      const canSetupSettings = hasTool("setup_settings");
       parts.push(isZh
-        ? "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
-        : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
+        ? (
+          canSetupSettings
+            ? "\n## 设置修改\n\n如用户要求安装 skill、配置 MCP 或更新身份/意识，优先使用 setup_settings 工具执行。仅在工具失败时再给手动步骤。"
+            : "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
+        )
+        : (
+          canSetupSettings
+            ? "\n## Settings Changes\n\nWhen the user asks to install skills, configure MCP, or update identity/ishiki, prefer using the setup_settings tool. Only provide manual steps if the tool fails."
+            : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
+        )
       );
     }
 

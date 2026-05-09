@@ -1266,12 +1266,10 @@ function InputPromptPanel({
   const currentIndex = Math.min(activeAskIndex, Math.max(askQuestions.length - 1, 0));
   const currentQuestion = askQuestions[currentIndex];
   const currentQuestionId = String(currentQuestion?.id || '').trim() || `q_${currentIndex + 1}`;
-  const currentTitle = String(currentQuestion?.header || '').trim()
-    || String(currentQuestion?.question || '').trim()
+  const currentTitle = String(currentQuestion?.question || '').trim()
+    || String(currentQuestion?.header || '').trim()
     || `${isZh ? '问题' : 'Question'} ${currentIndex + 1}`;
-  const currentDescription = String(currentQuestion?.header || '').trim() && String(currentQuestion?.question || '').trim()
-    ? String(currentQuestion.question || '').trim()
-    : '';
+  const currentDescription = '';
   const currentOptions = Array.isArray(currentQuestion?.options)
     ? currentQuestion.options.filter((option) => option?.label)
     : [];
@@ -1288,15 +1286,13 @@ function InputPromptPanel({
 
   return (
     <div className="input-prompt-panel" role="group" aria-live="polite">
-      <div className="input-prompt-head">
-        <span className="input-prompt-kicker">{isZh ? '等待输入' : 'Needs Input'}</span>
-        {queueSize > 1 && (
+      {queueSize > 1 ? (
+        <div className="input-prompt-head">
           <span className="input-prompt-queue">
             {isZh ? `后续还有 ${queueSize - 1} 项` : `${queueSize - 1} more pending`}
           </span>
-        )}
-      </div>
-      <div className="input-prompt-title">{isZh ? 'Agent 需要你的输入' : 'Agent Needs Your Input'}</div>
+        </div>
+      ) : null}
       {askQuestions.length > 1 ? (
         <div className="input-prompt-steps" role="tablist" aria-label={isZh ? '问题步骤' : 'Question steps'}>
           {askQuestions.map((question, idx) => {
@@ -1398,19 +1394,11 @@ function InputPromptPanel({
         ) : null}
         <button
           type="button"
-          className="input-prompt-btn approve"
+          className="input-prompt-btn approve submit-right"
           disabled={isSubmitting}
           onClick={handleAskApprove}
         >
           {isZh ? '提交' : 'Submit'}
-        </button>
-        <button
-          type="button"
-          className="input-prompt-btn reject"
-          disabled={isSubmitting}
-          onClick={handleReject}
-        >
-          {isZh ? '拒绝' : 'Reject'}
         </button>
       </div>
     </div>
