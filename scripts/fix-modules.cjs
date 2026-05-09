@@ -54,8 +54,7 @@ function installPackageFromNpm(packageName, version, destPath) {
   }
 }
 
-function ensureClaudeAgentSdkNativePackage({ platformName, archName, distModules, localModules }) {
-  if (platformName !== "win" && platformName !== "windows") return;
+function ensureClaudeAgentSdkNativePackageForArch({ archName, distModules, localModules }) {
   if (archName !== "x64" && archName !== "arm64") return;
 
   const sdkPackageJsonPath = path.join(localModules, "@anthropic-ai", "claude-agent-sdk", "package.json");
@@ -86,8 +85,36 @@ function ensureClaudeAgentSdkNativePackage({ platformName, archName, distModules
   }
 }
 
+function ensureClaudeAgentSdkNativePackage({ platformName, archName, distModules, localModules }) {
+  if (platformName !== "win" && platformName !== "windows" && platformName !== "win32") return;
+  if (archName !== "x64" && archName !== "arm64") return;
+
+  // 默认按目标架构分别打包：
+  // - win-arm64 仅携带 win32-arm64
+  // - win-x64   仅携带 win32-x64
+  // 如需兼容性双带，可显式设置 HANAKO_WINDOWS_INCLUDE_BOTH_CLAUDE_ARCHS=1。
+  const includeBoth = /^(1|true|yes|on)$/i.test(
+    String(process.env.HANAKO_WINDOWS_INCLUDE_BOTH_CLAUDE_ARCHS || "").trim(),
+  );
+  const targetArchs = includeBoth
+    ? (archName === "arm64" ? ["arm64", "x64"] : ["x64", "arm64"])
+    : [archName];
+  for (const targetArch of targetArchs) {
+    ensureClaudeAgentSdkNativePackageForArch({
+      platformName,
+      archName: targetArch,
+      distModules,
+      localModules,
+    });
+  }
+}
+
 exports.default = async function (context) {
-  const platformName = context.packager.platform.name;
+  const platformName = String(
+    context.packager?.platform?.name
+    || context.electronPlatformName
+    || "",
+  ).toLowerCase();
   const appDir = platformName === "mac"
     ? path.join(context.appOutDir, context.packager.appInfo.productFilename + ".app",
         "Contents", "Resources", "app")

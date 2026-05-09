@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
+import { fileURLToPath } from "url";
 import { createCustomToolsMcpServer } from "../lib/claude/custom-tool-adapter.js";
 import {
   MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
@@ -151,18 +152,31 @@ function writeFileIfChanged(filePath, content) {
 }
 
 function applyClaudeNoProxyRuntimeEnv(env = {}, baseDir = "") {
-  removeClaudeProxyEnv(env);
-  env.http_proxy = DEFAULT_LOCAL_PROXY_URL;
-  env.https_proxy = DEFAULT_LOCAL_PROXY_URL;
-  env.HTTP_PROXY = DEFAULT_LOCAL_PROXY_URL;
-  env.HTTPS_PROXY = DEFAULT_LOCAL_PROXY_URL;
-  env.all_proxy = "socks5h://127.0.0.1:7897";
-  env.ALL_PROXY = "socks5h://127.0.0.1:7897";
-  env.no_proxy = "localhost,127.0.0.1,::1";
-  env.NO_PROXY = "localhost,127.0.0.1,::1";
+  const forceLocalProxy = /^(1|true|yes|on)$/i.test(
+    String(env?.HANAKO_FORCE_LOCAL_PROXY || process.env.HANAKO_FORCE_LOCAL_PROXY || "").trim(),
+  );
+  const hasExplicitProxy = CLAUDE_PROXY_ENV_KEYS.some(
+    (key) => String(env?.[key] || "").trim().length > 0,
+  );
+
+  // Default behavior: keep existing proxy settings if user configured them;
+  // otherwise run direct network access to avoid hard-failing on localhost proxy.
+  if (!hasExplicitProxy) {
+    removeClaudeProxyEnv(env);
+  }
+  if (forceLocalProxy) {
+    env.http_proxy = DEFAULT_LOCAL_PROXY_URL;
+    env.https_proxy = DEFAULT_LOCAL_PROXY_URL;
+    env.HTTP_PROXY = DEFAULT_LOCAL_PROXY_URL;
+    env.HTTPS_PROXY = DEFAULT_LOCAL_PROXY_URL;
+    env.all_proxy = "socks5h://127.0.0.1:7897";
+    env.ALL_PROXY = "socks5h://127.0.0.1:7897";
+  }
+  if (!String(env.no_proxy || "").trim()) env.no_proxy = "localhost,127.0.0.1,::1";
+  if (!String(env.NO_PROXY || "").trim()) env.NO_PROXY = "localhost,127.0.0.1,::1";
 
   const rootDir = normalizeAbsolutePath(baseDir);
-  if (!rootDir) return env;
+  if (!rootDir || !forceLocalProxy) return env;
 
   const shimDir = path.join(rootDir, ".hanako-no-proxy");
   const curlHome = path.join(shimDir, "curl");
@@ -227,6 +241,59 @@ function normalizeAbsolutePath(rawPath) {
   return p;
 }
 
+function resolveWindowsGitBashPath(runtimeEnv = {}) {
+  if (process.platform !== "win32") return "";
+  const explicit = String(runtimeEnv?.CLAUDE_CODE_GIT_BASH_PATH || "").trim();
+  if (explicit && fs.existsSync(explicit)) return explicit;
+
+  const candidates = [];
+  const push = (p) => {
+    const normalized = String(p || "").trim();
+    if (!normalized || candidates.includes(normalized)) return;
+    candidates.push(normalized);
+  };
+
+  const programFiles = [
+    runtimeEnv?.ProgramFiles,
+    runtimeEnv?.["ProgramFiles(x86)"],
+    runtimeEnv?.ProgramW6432,
+  ].filter(Boolean);
+  for (const base of programFiles) {
+    push(path.join(base, "Git", "bin", "bash.exe"));
+    push(path.join(base, "Git", "usr", "bin", "bash.exe"));
+  }
+
+  const localAppData = String(runtimeEnv?.LOCALAPPDATA || "").trim();
+  if (localAppData) {
+    push(path.join(localAppData, "Programs", "Git", "bin", "bash.exe"));
+    push(path.join(localAppData, "Programs", "Git", "usr", "bin", "bash.exe"));
+  }
+
+  const resourcesPath = String(process.resourcesPath || "").trim();
+  if (resourcesPath) {
+    push(path.join(resourcesPath, "git", "usr", "bin", "bash.exe"));
+    push(path.join(resourcesPath, "git", "bin", "bash.exe"));
+  }
+
+  // Source/dev fallback: vendor/git-portable downloaded by prepare:win
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  push(path.join(repoRoot, "vendor", "git-portable", "usr", "bin", "bash.exe"));
+  push(path.join(repoRoot, "vendor", "git-portable", "bin", "bash.exe"));
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return "";
+}
+
+function ensureWindowsGitBashEnv(runtimeEnv = {}) {
+  if (process.platform !== "win32") return runtimeEnv;
+  if (String(runtimeEnv?.CLAUDE_CODE_GIT_BASH_PATH || "").trim()) return runtimeEnv;
+  const detected = resolveWindowsGitBashPath(runtimeEnv);
+  if (detected) runtimeEnv.CLAUDE_CODE_GIT_BASH_PATH = detected;
+  return runtimeEnv;
+}
+
 function parseCommandArgs(raw) {
   const text = String(raw || "").trim();
   if (!text) return [];
@@ -243,6 +310,68 @@ function parseCommandArgs(raw) {
   return text.split(/\s+/).map((item) => item.trim()).filter(Boolean);
 }
 
+function resolveBundledClaudeCodeExecutable(env = {}) {
+  const normalizedArch = String(
+    env?.HANAKO_CLAUDE_CODE_BINARY_ARCH
+      || env?.HANAKO_CLAUDE_BINARY_ARCH
+      || env?.HANA_CLAUDE_CODE_BINARY_ARCH
+      || env?.HANA_CLAUDE_BINARY_ARCH
+      || "",
+  ).trim().toLowerCase();
+
+  const candidatePackageIds = [];
+  const pushPkg = (pkg) => {
+    if (!pkg || candidatePackageIds.includes(pkg)) return;
+    candidatePackageIds.push(pkg);
+  };
+
+  if (process.platform === "win32") {
+    const preferredArchs = [];
+    if (normalizedArch === "x64" || normalizedArch === "arm64") preferredArchs.push(normalizedArch);
+    if (process.arch === "arm64") {
+      preferredArchs.push("arm64", "x64");
+    } else if (process.arch === "x64") {
+      preferredArchs.push("x64", "arm64");
+    } else {
+      preferredArchs.push(process.arch);
+    }
+    for (const arch of preferredArchs) {
+      pushPkg(`@anthropic-ai/claude-agent-sdk-win32-${arch}`);
+    }
+  } else if (process.platform === "darwin") {
+    const preferredArchs = [];
+    if (normalizedArch === "x64" || normalizedArch === "arm64") preferredArchs.push(normalizedArch);
+    preferredArchs.push(process.arch, process.arch === "arm64" ? "x64" : "arm64");
+    for (const arch of preferredArchs) {
+      pushPkg(`@anthropic-ai/claude-agent-sdk-darwin-${arch}`);
+    }
+  } else if (process.platform === "linux") {
+    const preferredArchs = [];
+    if (normalizedArch === "x64" || normalizedArch === "arm64") preferredArchs.push(normalizedArch);
+    preferredArchs.push(process.arch, process.arch === "arm64" ? "x64" : "arm64");
+    for (const arch of preferredArchs) {
+      pushPkg(`@anthropic-ai/claude-agent-sdk-linux-${arch}-musl`);
+      pushPkg(`@anthropic-ai/claude-agent-sdk-linux-${arch}`);
+    }
+  }
+
+  for (const pkgId of candidatePackageIds) {
+    try {
+      return require.resolve(`${pkgId}/claude${process.platform === "win32" ? ".exe" : ""}`);
+    } catch {
+      try {
+        const pkgJsonPath = require.resolve(`${pkgId}/package.json`);
+        const binaryName = process.platform === "win32" ? "claude.exe" : "claude";
+        const candidate = path.join(path.dirname(pkgJsonPath), binaryName);
+        if (fs.existsSync(candidate)) return candidate;
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+  return null;
+}
+
 function resolveClaudeCodeCliPath(env = {}) {
   const explicitPath = String(
     env?.HANAKO_CLAUDE_CODE_CLI_PATH
@@ -251,7 +380,14 @@ function resolveClaudeCodeCliPath(env = {}) {
       || env?.HANA_CLAUDE_CODE_ENTRY
       || "",
   ).trim();
-  if (explicitPath) return path.resolve(explicitPath);
+  if (explicitPath) {
+    const resolvedExplicitPath = path.resolve(explicitPath);
+    if (fs.existsSync(resolvedExplicitPath)) return resolvedExplicitPath;
+  }
+
+  const bundledExecutable = resolveBundledClaudeCodeExecutable(env);
+  if (bundledExecutable) return bundledExecutable;
+
   try {
     const sdkEntryPath = require.resolve("@anthropic-ai/claude-agent-sdk");
     const candidate = path.join(path.dirname(sdkEntryPath), "cli.js");
@@ -946,6 +1082,7 @@ export function buildClaudeRuntimeConfig({
     ...process.env,
     ...(env || {}),
   };
+  ensureWindowsGitBashEnv(runtimeEnv);
   const agentConfigDir = normalizeAbsolutePath(agent?.agentDir);
   applyClaudeNoProxyRuntimeEnv(runtimeEnv, agentConfigDir || cwd || workspace);
   if (!explicitClaudeConfigDir && agentConfigDir) {

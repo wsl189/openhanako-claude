@@ -19,17 +19,60 @@ function realPath(p) {
   catch { return null; }
 }
 
+/**
+ * 解析用于安全比较的路径：
+ * - 优先 realpath（跟踪 symlink）
+ * - 若目标不存在，则回退到“最近存在父目录的 realpath + 剩余子路径”
+ */
+function resolvePathForCheck(p) {
+  const abs = path.resolve(String(p || ""));
+  try {
+    return fs.realpathSync(abs);
+  } catch (err) {
+    if (err?.code !== "ENOENT") return null;
+    const missingParts = [];
+    let cursor = abs;
+    while (true) {
+      const parent = path.dirname(cursor);
+      if (parent === cursor) return abs;
+      missingParts.unshift(path.basename(cursor));
+      try {
+        const realParent = fs.realpathSync(parent);
+        return path.join(realParent, ...missingParts);
+      } catch (parentErr) {
+        if (parentErr?.code !== "ENOENT") return null;
+        cursor = parent;
+      }
+    }
+  }
+}
+
+/** 判断 target 是否位于 base 内（含相等）；Windows 下做大小写不敏感比较 */
+function isPathInside(target, base) {
+  const normalize = (v) => {
+    const resolved = path.resolve(String(v || ""));
+    if (process.platform === "win32") {
+      return resolved.replace(/\//g, "\\").toLowerCase();
+    }
+    return resolved;
+  };
+  const t = normalize(target);
+  const b = normalize(base);
+  const baseWithSep = b.endsWith(path.sep) ? b : b + path.sep;
+  return t === b || t.startsWith(baseWithSep);
+}
+
 /** 安全路径校验：target 必须在 baseDir 内部（解析 symlink 后比较） */
 function isInsidePath(target, baseDir) {
-  const base = realPath(baseDir);
+  const base = resolvePathForCheck(baseDir);
   if (!base) return false;
-  const resolved = realPath(target);
-  if (resolved) return resolved === base || resolved.startsWith(base + path.sep);
+  const resolved = resolvePathForCheck(target);
+  if (resolved) return isPathInside(resolved, base);
   // 路径不存在（mkdir / rename 目标）：解析父目录 + 保留 basename
   const parentResolved = realPath(path.dirname(target));
   if (!parentResolved) return false;
   const full = path.join(parentResolved, path.basename(target));
-  return full === base || full.startsWith(base + path.sep);
+  return isPathInside(full, base);
 }
 
 /** 校验 dir 覆盖：仅允许 engine 已知的根目录（解析 symlink 后比较） */
@@ -39,24 +82,33 @@ function isApprovedDir(dir, engine) {
     engine.homeCwd,
     os.homedir(),
   ].filter(Boolean);
-  const resolved = realPath(dir);
+  const resolved = resolvePathForCheck(dir);
   if (!resolved) return false;
   const inApprovedRoots = approved.some(root => {
-    const r = realPath(root);
+    const r = resolvePathForCheck(root);
     if (!r) return false;
-    return resolved === r || resolved.startsWith(r + path.sep);
+    return isPathInside(resolved, r);
   });
   if (inApprovedRoots) return true;
 
   // 兼容欢迎页“打开文件夹”：允许用户显式选择的本地目录，
   // 但仍屏蔽敏感目录（.ssh/.gnupg/.aws/.kube 以及 hanakoHome）。
-  try {
-    const stat = fs.statSync(resolved);
-    if (!stat.isDirectory()) return false;
-  } catch {
-    return false;
+  // 目录存在：正常放行；
+  // 目录不存在：允许“可创建目录”（父目录存在）以兼容首次切换/迁移后的工作区。
+  const existing = realPath(dir);
+  if (existing) {
+    try {
+      const stat = fs.statSync(existing);
+      if (!stat.isDirectory()) return false;
+    } catch {
+      return false;
+    }
+    return !isSensitivePath(existing, engine.hanakoHome);
   }
-  return !isSensitivePath(resolved, engine.hanakoHome);
+
+  const parentResolved = realPath(path.dirname(dir));
+  if (!parentResolved) return false;
+  return !isSensitivePath(parentResolved, engine.hanakoHome);
 }
 
 /** 敏感 dot 目录（不允许 upload 从这些目录复制文件） */
@@ -120,7 +172,7 @@ function isSessionPathAllowed(sessionPath, engine) {
   if (!raw) return false;
   const resolved = path.resolve(raw);
   const base = path.resolve(engine.agentsDir);
-  return resolved === base || resolved.startsWith(base + path.sep);
+  return isPathInside(resolved, base);
 }
 
 function resolveSessionDeskDir(sessionPath, engine) {

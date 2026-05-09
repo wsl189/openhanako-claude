@@ -267,6 +267,89 @@ function getCurrentAgentId() {
   return null;
 }
 
+function hasCommand(bin, args = ["--version"]) {
+  try {
+    execFileSync(bin, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+      windowsHide: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function firstExisting(paths = []) {
+  for (const candidate of paths) {
+    const p = String(candidate || "").trim();
+    if (!p) continue;
+    if (fs.existsSync(p)) return p;
+  }
+  return "";
+}
+
+function findBashInPathOnWindows() {
+  try {
+    const out = execFileSync("where", ["bash.exe"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+      windowsHide: true,
+      encoding: "utf8",
+    });
+    const lines = String(out || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return lines.find((line) => fs.existsSync(line)) || "";
+  } catch {
+    return "";
+  }
+}
+
+function ensureGitPrerequisites() {
+  if (process.platform === "win32") {
+    const gitRoot = path.join(process.resourcesPath || "", "git");
+    const bundledGit = firstExisting([
+      path.join(gitRoot, "cmd", "git.exe"),
+      path.join(gitRoot, "mingw64", "bin", "git.exe"),
+    ]);
+    const bundledBash = firstExisting([
+      path.join(gitRoot, "usr", "bin", "bash.exe"),
+      path.join(gitRoot, "usr", "bin", "sh.exe"),
+    ]);
+    const explicitBash = String(process.env.CLAUDE_CODE_GIT_BASH_PATH || "").trim();
+    const discoveredBash = firstExisting([
+      explicitBash,
+      bundledBash,
+      findBashInPathOnWindows(),
+      "C:\\Program Files\\Git\\bin\\bash.exe",
+      "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Git", "bin", "bash.exe"),
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Git", "usr", "bin", "bash.exe"),
+    ]);
+
+    const hasGit = Boolean(bundledGit) || hasCommand("git", ["--version"]);
+    if (!hasGit) {
+      throw new Error(
+        "Git is required on Windows. Install Git for Windows, "
+        + "or package Hanako with bundled Git (npm run prepare:win).",
+      );
+    }
+    if (!discoveredBash) {
+      throw new Error(
+        "Git Bash is required on Windows. Install Git for Windows, "
+        + "or ensure resources/git/usr/bin/bash.exe is bundled.",
+      );
+    }
+    process.env.CLAUDE_CODE_GIT_BASH_PATH = discoveredBash;
+    return;
+  }
+
+  if (hasCommand("git", ["--version"])) return;
+  if (process.platform === "darwin") {
+    throw new Error("Git is required on macOS. Run: xcode-select --install");
+  }
+  throw new Error("Git is required. Please install git and restart Hanako.");
+}
+
 // ── 启动 Server ──
 // 收集 server 的 stdout/stderr 用于崩溃诊断
 let _serverLogs = [];
@@ -2974,6 +3057,9 @@ app.whenReady().then(async () => {
     // 1. 立刻显示启动窗口
     createSplashWindow();
     const splashShownAt = Date.now();
+
+    // 启动前自检：确保 Git/Bash 可用，避免运行到对话阶段才隐式失败。
+    ensureGitPrerequisites();
 
     // 2. 后台启动 server
     console.log("[desktop] 启动 Hanako Server...");

@@ -212,6 +212,11 @@ function shouldLogContextUsage() {
   return /^(1|true|yes|on)$/i.test(raw);
 }
 
+function shouldEnableRuntimeDebugLogs() {
+  const raw = String(process.env.HANAKO_CLAUDE_RUNTIME_DEBUG || "").trim();
+  return /^(1|true|yes|on)$/i.test(raw);
+}
+
 function formatUsageList(items = [], nameKey = "name", limit = 12) {
   if (!Array.isArray(items) || items.length === 0) return "(none)";
   return items
@@ -364,12 +369,29 @@ export class ClaudeSessionRuntime {
     this._abortRequested = false;
     this._pendingSteerInterrupts = 0;
     const query = getClaudeSdkQuery();
+    const inheritedStderr = typeof this.options?.stderr === "function"
+      ? this.options.stderr
+      : null;
+    const stderrBridge = (chunk) => {
+      if (inheritedStderr) {
+        try {
+          inheritedStderr(chunk);
+        } catch {
+          // ignore user-provided stderr callback failures
+        }
+      }
+      const text = String(chunk || "");
+      if (!text) return;
+      this._emit({ type: "runtime_stderr", text });
+    };
     this._query = query({
       prompt: this._queue,
       options: {
         ...this.options,
         abortController: (this._abortController = new AbortController()),
         ...(this.resumeSessionId ? { resume: this.resumeSessionId } : {}),
+        stderr: stderrBridge,
+        ...(shouldEnableRuntimeDebugLogs() ? { debug: true } : {}),
       },
     });
     // Some SDK/CLI combinations can miss in-process MCP registration from the

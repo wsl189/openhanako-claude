@@ -32,9 +32,19 @@ function hasUsablePortableGit() {
     );
 }
 
+function ensureBashShim() {
+  const bashPath = path.join(VENDOR_DIR, "usr", "bin", "bash.exe");
+  if (fs.existsSync(bashPath)) return true;
+  const shPath = path.join(VENDOR_DIR, "usr", "bin", "sh.exe");
+  if (!fs.existsSync(shPath)) return false;
+  fs.copyFileSync(shPath, bashPath);
+  return fs.existsSync(bashPath);
+}
+
 async function main() {
   // 已存在则跳过
   if (hasUsablePortableGit()) {
+    ensureBashShim();
     console.log(`[download-git-portable] MinGit ${MINGIT_VERSION} already present, skipping.`);
     return;
   }
@@ -64,6 +74,9 @@ async function main() {
 
   if (!hasUsablePortableGit()) {
     throw new Error("Downloaded MinGit is missing cmd/git.exe or a bundled POSIX shell");
+  }
+  if (!ensureBashShim()) {
+    throw new Error("Downloaded MinGit is missing usr/bin/bash.exe and cannot derive it from sh.exe");
   }
 
   // 清理 zip

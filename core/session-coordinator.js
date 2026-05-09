@@ -83,6 +83,29 @@ function compactForLog(value, limit = 900) {
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
+function formatRuntimeErrorForLog(error) {
+  if (!error) return "";
+  if (typeof error === "string") return error.trim();
+  const name = String(error?.name || "").trim();
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "").trim();
+  const stack = String(error?.stack || "").trim();
+  const cause = error?.cause;
+  const causeMsg = typeof cause === "string"
+    ? cause.trim()
+    : String(cause?.message || "").trim();
+  const summary = [
+    name ? `name=${name}` : "",
+    code ? `code=${code}` : "",
+    message ? `message=${message}` : "",
+    causeMsg ? `cause=${causeMsg}` : "",
+  ].filter(Boolean).join(" ");
+  if (stack && stack !== message) {
+    return summary ? `${summary}\n${stack}` : stack;
+  }
+  return summary || compactForLog(error, 2000);
+}
+
 function logToolEvent(event = {}) {
   const name = String(event?.name || "");
   if (!name) return;
@@ -910,6 +933,11 @@ export class SessionCoordinator {
       + `canUseTool=${runtimeTools.hasCanUseTool === true} `
       + `customLoaded=${JSON.stringify(runtimeTools.customToolsLoaded || [])}`,
     );
+    log.log(
+      `[runtime-launch] executable=${runtimeTools.claudeCodeExecutable || ""} `
+      + `args=${JSON.stringify(runtimeTools.claudeCodeExecutableArgs || [])} `
+      + `cli=${runtimeTools.claudeCodeCliPath || ""}`,
+    );
 
     runtime = new ClaudeSessionRuntime({
       sessionId: metadata?.sessionId || randomUUID(),
@@ -920,6 +948,7 @@ export class SessionCoordinator {
       initialContextUsage: metadata?.contextUsage || null,
     });
     runtime.model = runtimeModel;
+    runtime.hanakoRuntimeDiagnostics = runtimeTools;
     if (sessionPath && resolvedModelRef && resolvedModelRef !== metadata?.model) {
       try {
         patchSessionMetadata(sessionPath, { model: resolvedModelRef });
@@ -953,6 +982,39 @@ export class SessionCoordinator {
           `[sdk-init] session=${path.basename(sessionPath || "")} `
           + `mcpServers=${JSON.stringify(mcpStatuses)} `
           + `mcpTools=${JSON.stringify(mcpTools)}`,
+        );
+      } else if (event?.type === "runtime_stderr") {
+        const lines = String(event.text || "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (lines.length > 0) {
+          const tail = Array.isArray(session?.hanakoRuntimeStderrTail)
+            ? session.hanakoRuntimeStderrTail
+            : [];
+          for (const line of lines) {
+            tail.push(line);
+            log.warn(
+              `[runtime-stderr] session=${path.basename(sessionPath || "")} ${line}`,
+            );
+          }
+          if (tail.length > 60) tail.splice(0, tail.length - 60);
+          session.hanakoRuntimeStderrTail = tail;
+        }
+      } else if (event?.type === "runtime_error") {
+        const diag = session?.hanakoRuntimeDiagnostics || {};
+        const stderrTail = Array.isArray(session?.hanakoRuntimeStderrTail)
+          ? session.hanakoRuntimeStderrTail
+          : [];
+        log.error(
+          `[runtime-error] session=${path.basename(sessionPath || "")} `
+          + `${formatRuntimeErrorForLog(event.error)} `
+          + `runtime=${compactForLog({
+            executable: diag.claudeCodeExecutable || "",
+            executableArgs: diag.claudeCodeExecutableArgs || [],
+            cliPath: diag.claudeCodeCliPath || "",
+          }, 1200)} `
+          + `stderrTail=${compactForLog(stderrTail.slice(-20), 2000)}`,
         );
       }
       const translateOpts = {
