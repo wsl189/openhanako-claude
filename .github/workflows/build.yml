@@ -88,19 +88,32 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ github.token }}
-          target_commitish: ${{ github.sha }}
-          draft: false
-          prerelease: false
-          make_latest: true
-          overwrite_files: true
-          generate_release_notes: true
-          files: |
+      - name: Create or update GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+
+          tag="${GITHUB_REF_NAME}"
+          files=(
             artifacts/**/*.dmg
             artifacts/**/*.zip
             artifacts/**/*.exe
             artifacts/**/*.yml
             artifacts/**/*.blockmap
+          )
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No release assets found under artifacts/"
+            exit 1
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists, uploading assets with overwrite."
+            gh release upload "$tag" "${files[@]}" --clobber
+            gh release edit "$tag" --latest
+          else
+            echo "Creating release $tag."
+            gh release create "$tag" "${files[@]}" --generate-notes --latest --verify-tag
+          fi
