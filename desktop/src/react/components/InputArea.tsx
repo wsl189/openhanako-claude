@@ -704,7 +704,9 @@ function InputAreaInner() {
 
   // ── Send message ──
   const handleSend = useCallback(async () => {
-    const text = inputText.trim();
+    // 优先读取 textarea 实时值，规避点击发送时 React state 尚未同步的问题（Windows + IME 更常见）。
+    const liveText = textareaRef.current?.value ?? inputText;
+    const text = liveText.trim();
     const draftModelIdBeforeEnsure = pendingNewSession ? resolveSelectedModelId() : '';
 
     // 斜杠命令拦截
@@ -1772,9 +1774,21 @@ function SendButton({ isStreaming, hasInput, disabled, onSend, onStop }: {
 
   return (
     <button
+      type="button"
       className={'send-btn' + (mode === 'queue' ? ' is-queue' : mode === 'stop' ? ' is-streaming' : '')}
       disabled={disabled}
-      onClick={mode === 'stop' ? onStop : onSend}
+      onMouseDown={(e) => {
+        // 防止按钮按下时 textarea 先失焦，导致输入法合成态在 Windows 下打断。
+        e.preventDefault();
+      }}
+      onClick={() => {
+        if (mode === 'stop') {
+          onStop();
+          return;
+        }
+        // 等待输入法 composition/input 先落盘，再触发发送。
+        requestAnimationFrame(() => { onSend(); });
+      }}
     >
       {mode === 'send' && (
         <span className="send-label">
