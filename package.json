@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "type": "module",
   "description": "Hanako - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -41,7 +41,7 @@
     "postinstall": "npm run rebuild:electron"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.97",
+    "@anthropic-ai/claude-agent-sdk": "0.2.113",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language-data": "^6.5.2",
     "@fastify/websocket": "^11.0.0",
