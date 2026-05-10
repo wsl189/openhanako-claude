@@ -19,6 +19,9 @@ import { usePushToTalk } from '../hooks/use-push-to-talk';
 import { SVG_ICONS } from '../utils/icons';
 import type { AttachedFile } from '../stores/input-slice';
 
+const CHAT_EDIT_MESSAGE_EVENT = 'hana:chat-edit-message';
+const CHAT_RESEND_MESSAGE_EVENT = 'hana:chat-resend-message';
+
 // ── Toast 通知 ──
 
 function showToast(text: string, type: 'success' | 'error' = 'success', duration = 20000) {
@@ -760,6 +763,64 @@ function InputAreaInner() {
     executeChatTask,
     resolveSelectedModelId,
   ]);
+
+  const resendUserMessage = useCallback(async (rawText: string) => {
+    const text = String(rawText || '').trim();
+    if (!text || !connected || sending) return;
+    const draftModelIdBeforeEnsure = pendingNewSession ? resolveSelectedModelId() : '';
+    setSending(true);
+    try {
+      if (!inputIsStreaming && pendingNewSession) {
+        const ok = await ensureSession();
+        if (!ok) return;
+        loadSessions();
+      }
+      const sessionPath = useStore.getState().currentSessionPath;
+      if (!sessionPath) return;
+      const task: QueuedChatTask = {
+        id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        sessionPath,
+        text,
+        finalText: text,
+        modelId: draftModelIdBeforeEnsure || undefined,
+        createdAt: Date.now(),
+      };
+      if (inputIsStreaming) {
+        setQueuedTasks((prev) => [...prev, task]);
+        return;
+      }
+      await executeChatTask(task, 'prompt');
+    } finally {
+      setSending(false);
+    }
+  }, [connected, sending, pendingNewSession, resolveSelectedModelId, inputIsStreaming, executeChatTask]);
+
+  useEffect(() => {
+    const onEdit = (event: Event) => {
+      const detail = (event as CustomEvent<{ text?: string }>).detail;
+      const text = String(detail?.text || '');
+      setInputText(text);
+      setSlashMenuOpen(false);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        const cursor = text.length;
+        el.setSelectionRange(cursor, cursor);
+      });
+    };
+    const onResend = (event: Event) => {
+      const detail = (event as CustomEvent<{ text?: string }>).detail;
+      void resendUserMessage(String(detail?.text || ''));
+    };
+
+    window.addEventListener(CHAT_EDIT_MESSAGE_EVENT, onEdit as EventListener);
+    window.addEventListener(CHAT_RESEND_MESSAGE_EVENT, onResend as EventListener);
+    return () => {
+      window.removeEventListener(CHAT_EDIT_MESSAGE_EVENT, onEdit as EventListener);
+      window.removeEventListener(CHAT_RESEND_MESSAGE_EVENT, onResend as EventListener);
+    };
+  }, [resendUserMessage]);
 
   // ── Steer (插话) ──
   const handleGuideTask = useCallback(async (task: QueuedChatTask) => {

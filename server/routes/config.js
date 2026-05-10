@@ -4,6 +4,10 @@
 import fs from "fs/promises";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { t } from "../i18n.js";
 import { debugLog } from "../../lib/debug-log.js";
 import { getRawConfig, getAllProviders, saveGlobalProviders, saveConfig, clearConfigCache } from "../../lib/memory/config-loader.js";
@@ -162,6 +166,129 @@ function extractGlobalMcpPatch(engine, partial) {
   return true;
 }
 
+function parseMcpHealthTimeoutMs() {
+  const raw = Number.parseInt(process.env.HANAKO_MCP_HEALTH_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return 8000;
+}
+
+function ensurePlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringifyError(error) {
+  const message = String(error?.message || error || "health check failed").trim();
+  return message || "health check failed";
+}
+
+async function withTimeout(taskPromise, timeoutMs, label) {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(label));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([taskPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function buildStreamableTransport(server) {
+  const headers = ensurePlainObject(server.headers) ? server.headers : undefined;
+  const requestInit = headers ? { headers } : undefined;
+  return new StreamableHTTPClientTransport(new URL(server.url), {
+    requestInit,
+  });
+}
+
+function buildSseTransport(server) {
+  const headers = ensurePlainObject(server.headers) ? server.headers : undefined;
+  const requestInit = headers ? { headers } : undefined;
+  const eventSourceInit = headers ? { headers } : undefined;
+  return new SSEClientTransport(new URL(server.url), {
+    requestInit,
+    eventSourceInit,
+  });
+}
+
+function buildStdioTransport(server) {
+  return new StdioClientTransport({
+    command: server.command,
+    args: Array.isArray(server.args) ? server.args : [],
+    env: ensurePlainObject(server.env) ? server.env : undefined,
+    stderr: "pipe",
+  });
+}
+
+async function connectMcpWithFallback(server, timeoutMs) {
+  const attempts = [];
+  const transportFactories = [];
+  if (server.type === "stdio") {
+    transportFactories.push(() => buildStdioTransport(server));
+  } else if (server.type === "sse") {
+    transportFactories.push(() => buildSseTransport(server));
+    transportFactories.push(() => buildStreamableTransport(server));
+  } else {
+    transportFactories.push(() => buildStreamableTransport(server));
+    transportFactories.push(() => buildSseTransport(server));
+  }
+  for (const createTransport of transportFactories) {
+    const client = new Client({ name: "hanako-mcp-health-check", version: "1.0.0" });
+    const transport = createTransport();
+    try {
+      await withTimeout(client.connect(transport), timeoutMs, "connect timeout");
+      return { client, transport };
+    } catch (error) {
+      attempts.push(stringifyError(error));
+      try { await transport.close(); } catch {}
+    }
+  }
+  throw new Error(attempts.join(" | "));
+}
+
+async function checkSingleMcpServerHealth(serverName, server, timeoutMs) {
+  const checkedAt = new Date().toISOString();
+  const startAt = Date.now();
+  if (server?.disabled) {
+    return {
+      status: "disabled",
+      latencyMs: 0,
+      checkedAt,
+      type: server?.type || "stdio",
+      message: "disabled",
+    };
+  }
+
+  let transport = null;
+  let client = null;
+  try {
+    const connected = await connectMcpWithFallback(server, timeoutMs);
+    transport = connected.transport;
+    client = connected.client;
+    await withTimeout(client.ping(), timeoutMs, "ping timeout");
+    return {
+      status: "ok",
+      latencyMs: Date.now() - startAt,
+      checkedAt,
+      type: server?.type || "stdio",
+      message: "",
+    };
+  } catch (error) {
+    return {
+      status: "error",
+      latencyMs: Date.now() - startAt,
+      checkedAt,
+      type: server?.type || "stdio",
+      message: `${serverName}: ${stringifyError(error)}`,
+    };
+  } finally {
+    try { await transport?.close?.(); } catch {}
+    try { await client?.close?.(); } catch {}
+  }
+}
+
 export default async function configRoute(app, { engine }) {
 
   // 读取配置（脱敏：隐藏 API key，附带 _raw 原始结构 + providers）
@@ -235,6 +362,56 @@ export default async function configRoute(app, { engine }) {
     } catch (err) {
       reply.code(500);
       return { error: err.message };
+    }
+  });
+
+  app.post("/api/config/mcp/health", async (req, reply) => {
+    try {
+      const rawBody = ensurePlainObject(req.body) ? req.body : {};
+      const incomingServers = ensurePlainObject(rawBody.servers) ? rawBody.servers : null;
+      const sourceServers = incomingServers || engine.getExternalMcpServers?.() || {};
+      const normalizedServers = {};
+
+      for (const [rawName, rawServer] of Object.entries(sourceServers)) {
+        const name = normalizeMcpServerKey(rawName);
+        if (!name) continue;
+        if (!ensurePlainObject(rawServer)) {
+          normalizedServers[name] = {
+            status: "error",
+            latencyMs: 0,
+            checkedAt: new Date().toISOString(),
+            type: "stdio",
+            message: `${name}: invalid MCP server config`,
+          };
+          continue;
+        }
+        try {
+          normalizedServers[name] = normalizeExternalMcpServer(rawServer);
+        } catch (error) {
+          normalizedServers[name] = {
+            status: "error",
+            latencyMs: 0,
+            checkedAt: new Date().toISOString(),
+            type: String(rawServer.type || "stdio"),
+            message: `${name}: ${stringifyError(error)}`,
+          };
+        }
+      }
+
+      const timeoutMs = parseMcpHealthTimeoutMs();
+      const resultEntries = await Promise.all(Object.entries(normalizedServers).map(async ([serverName, server]) => {
+        if (ensurePlainObject(server) && typeof server.status === "string" && server.status === "error") {
+          return [serverName, server];
+        }
+        const health = await checkSingleMcpServerHealth(serverName, server, timeoutMs);
+        return [serverName, health];
+      }));
+
+      const results = Object.fromEntries(resultEntries);
+      return { ok: true, timeoutMs, results };
+    } catch (error) {
+      reply.code(500);
+      return { error: stringifyError(error) };
     }
   });
 

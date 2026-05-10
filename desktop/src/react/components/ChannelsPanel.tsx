@@ -23,6 +23,7 @@ import { SVG_ICONS } from '../utils/icons';
 
 const CHANNEL_MESSAGE_ANCHOR_RATIO = 0.65;
 const CHANNEL_MENTION_MAX_MEMBERS = 8;
+const CHANNEL_EDIT_MESSAGE_EVENT = 'hana:channel-edit-message';
 
 // ── 稳定头像时间戳（避免每次渲染生成新 URL） ──
 let _avatarTs = Date.now();
@@ -988,6 +989,7 @@ export function ChannelMessages() {
   const userName = useStore((s) => s.userName);
   const userAvatarUrl = useStore((s) => s.userAvatarUrl);
   const currentAgentId = useStore((s) => s.currentAgentId);
+  const sendChannelMessage = useStore((s) => s.sendChannelMessage);
   const contentRef = useRef<HTMLDivElement>(null);
   const anchoredUserKeyRef = useRef<string | null>(null);
   const followReplyRef = useRef(false);
@@ -1019,6 +1021,18 @@ export function ChannelMessages() {
       }, 1500);
     }).catch(() => {});
   }, []);
+
+  const editMessage = useCallback((text: string) => {
+    window.dispatchEvent(new CustomEvent(CHANNEL_EDIT_MESSAGE_EVENT, {
+      detail: { text: String(text || '') },
+    }));
+  }, []);
+
+  const resendMessage = useCallback((text: string) => {
+    const payload = String(text || '').trim();
+    if (!payload) return;
+    void sendChannelMessage(payload);
+  }, [sendChannelMessage]);
 
   const getMessageKey = useCallback((msg: (typeof messages)[number], idx: number) => `${msg.timestamp}-${idx}`, []);
 
@@ -1186,6 +1200,7 @@ export function ChannelMessages() {
           || (!!userNameNorm && senderNorm === userNameNorm);
         const isSelf = senderInfo.isUser || isUserSenderAlias || isGroupUserFallback || (isDM && msg.sender === (currentAgentId || ''));
         const canCopy = senderNorm !== 'system' && String(msg.body || '').trim().length > 0;
+        const canOperateSelfMessage = isSelf && !isDM && canCopy;
         const copied = copiedMsgKey === msgKey;
         const el = (
           <div
@@ -1212,9 +1227,9 @@ export function ChannelMessages() {
                   className="channel-msg-text md-content"
                   dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.body || '') }}
                 />
-                {canCopy && (
+                {canCopy && !canOperateSelfMessage && (
                   <button
-                    className={`channel-msg-copy-btn${copied ? ' copied' : ''}`}
+                    className={`channel-msg-action-btn channel-msg-copy-btn${copied ? ' copied' : ''}`}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -1235,6 +1250,66 @@ export function ChannelMessages() {
                         )}
                     </svg>
                   </button>
+                )}
+                {canOperateSelfMessage && (
+                  <div className="channel-msg-self-actions">
+                    <button
+                      className={`channel-msg-action-btn channel-msg-copy-btn${copied ? ' copied' : ''}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        copyMessage(msgKey, msg.body || '');
+                      }}
+                      title={copied ? t('common.copied') : t('common.copyText')}
+                      aria-label={copied ? t('common.copied') : t('common.copyText')}
+                      type="button"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        {copied
+                          ? <polyline points="20 6 9 17 4 12" />
+                          : (
+                            <>
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            </>
+                          )}
+                      </svg>
+                    </button>
+                    <button
+                      className="channel-msg-action-btn channel-msg-edit-btn"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        editMessage(msg.body || '');
+                      }}
+                      title={t('common.edit')}
+                      aria-label={t('common.edit')}
+                      type="button"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                      </svg>
+                    </button>
+                    <button
+                      className="channel-msg-action-btn channel-msg-resend-btn"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        resendMessage(msg.body || '');
+                      }}
+                      title={t('channel.resend')}
+                      aria-label={t('channel.resend')}
+                      type="button"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M23 4v6h-6" />
+                        <path d="M1 20v-6h6" />
+                        <path d="M3.5 9a9 9 0 0 1 14.1-3.4L23 10" />
+                        <path d="M20.5 15a9 9 0 0 1-14.1 3.4L1 14" />
+                      </svg>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -1400,6 +1475,28 @@ export function ChannelInput() {
     setCommandActive(false);
     clearAttachedFiles();
   }, [currentChannel, clearAttachedFiles]);
+
+  useEffect(() => {
+    const handleEditMessage = (event: Event) => {
+      const detail = (event as CustomEvent<{ text?: string }>).detail;
+      const nextValue = String(detail?.text || '');
+      setInputValue(nextValue);
+      setMentionActive(false);
+      setCommandActive(false);
+      clearAttachedFiles();
+      requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        inputRef.current.focus();
+        const cursor = nextValue.length;
+        inputRef.current.setSelectionRange(cursor, cursor);
+      });
+    };
+
+    window.addEventListener(CHANNEL_EDIT_MESSAGE_EVENT, handleEditMessage as EventListener);
+    return () => {
+      window.removeEventListener(CHANNEL_EDIT_MESSAGE_EVENT, handleEditMessage as EventListener);
+    };
+  }, [clearAttachedFiles]);
 
   // 输入框自适应高度：最多展示 5 行，超出后内部滚动
   useEffect(() => {

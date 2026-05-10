@@ -2120,17 +2120,17 @@ html[data-platform="linux"] .tb-toggle-right {
 .message.user::before {
     content: "";
     position: absolute;
-    left: -34px;
+    left: -96px;
     top: -6px;
     bottom: -6px;
-    width: 34px;
+    width: 96px;
 }
 
 .message.user .user-text p:last-child {
     margin-bottom: 0;
 }
 
-.user-msg-copy-btn,
+.user-msg-action-btn,
 .assistant-final-reply .msg-copy-btn {
     position: absolute;
     width: 22px;
@@ -2153,27 +2153,39 @@ html[data-platform="linux"] .tb-toggle-right {
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
-.user-msg-copy-btn {
-    left: -30px;
+.user-msg-actions {
+    position: absolute;
+    left: -88px;
     top: 50%;
     transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 2;
 }
 
-.message.user:hover .user-msg-copy-btn,
-.message.user:focus-within .user-msg-copy-btn {
+.user-msg-actions .user-msg-action-btn {
+    position: static;
+    left: auto;
+    top: auto;
+    transform: none;
+}
+
+.message.user:hover .user-msg-action-btn,
+.message.user:focus-within .user-msg-action-btn {
     opacity: 0.9;
     pointer-events: auto;
 }
 
-.user-msg-copy-btn:hover,
+.user-msg-action-btn:hover,
 .assistant-final-reply .msg-copy-btn:hover {
     opacity: 1 !important;
     color: var(--text);
     border-color: var(--accent);
 }
 
-.user-msg-copy-btn:hover {
-    transform: translateY(calc(-50% - 1px));
+.user-msg-actions .user-msg-action-btn:hover {
+    transform: translateY(-1px);
 }
 
 .assistant-final-reply .msg-copy-btn:hover {
@@ -14208,7 +14220,7 @@ a.about-link:hover {
     flex-direction: row-reverse;
 }
 
-.channel-msg-copy-btn {
+.channel-msg-action-btn {
     position: absolute;
     top: -8px;
     right: -8px;
@@ -14237,29 +14249,41 @@ a.about-link:hover {
     left: auto;
 }
 
-/* 用户输入：复制按钮固定在气泡左侧 */
-.channel-msg-self .channel-msg-copy-btn {
-    left: -30px;
-    right: auto;
+/* 用户输入：操作按钮组固定在气泡左侧 */
+.channel-msg-self .channel-msg-self-actions {
+    position: absolute;
+    left: -88px;
     top: 50%;
     transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 2;
 }
 
-.channel-msg:hover .channel-msg-copy-btn,
-.channel-msg:focus-within .channel-msg-copy-btn {
+.channel-msg-self .channel-msg-self-actions .channel-msg-action-btn {
+    position: static;
+    top: auto;
+    right: auto;
+    left: auto;
+    transform: none;
+}
+
+.channel-msg:hover .channel-msg-action-btn,
+.channel-msg:focus-within .channel-msg-action-btn {
     opacity: 0.9;
     pointer-events: auto;
 }
 
-.channel-msg-copy-btn:hover {
+.channel-msg-action-btn:hover {
     opacity: 1 !important;
     color: var(--text);
     border-color: var(--accent);
     transform: translateY(-1px);
 }
 
-.channel-msg-self .channel-msg-copy-btn:hover {
-    transform: translateY(calc(-50% - 1px));
+.channel-msg-self .channel-msg-self-actions .channel-msg-action-btn:hover {
+    transform: translateY(-1px);
 }
 
 .channel-msg-copy-btn.copied {

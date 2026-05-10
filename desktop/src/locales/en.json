@@ -15,6 +15,7 @@
     "readOnly": "🔒 This is a private message between agents, view only",
     "inputPlaceholder": "Send a message...",
     "sendFailed": "Send failed",
+    "resend": "Resend",
     "resetContextFailed": "Failed to reset channel context",
     "resetFailed": "Failed to reset channel",
     "stopFailed": "Failed to stop unfinished replies",
