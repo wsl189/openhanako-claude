@@ -1423,14 +1423,6 @@ function InputPromptPanel({
             })}
           </div>
         ) : null}
-        <input
-          type="text"
-          className="input-prompt-answer"
-          value={answers[currentQuestionId] || ''}
-          disabled={isSubmitting}
-          placeholder={isZh ? '可选：补充说明（留空则使用已选项）' : 'Optional: add details (blank = selected option)'}
-          onChange={(e) => setAnswers((prev) => ({ ...prev, [currentQuestionId]: e.target.value }))}
-        />
       </div>
       <div className="input-prompt-actions">
         {askQuestions.length > 1 ? (
