@@ -1168,7 +1168,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(questionText).toContain("文件夹“archive”");
   });
 
-  it("renders dynamic privileged-system confirmation copy from command intent", async () => {
+  it("renders command text in privileged-system confirmation copy", async () => {
     const emitted = [];
     const confirmStore = {
       create: () => ({
@@ -1191,8 +1191,7 @@ describe("buildClaudeRuntimeConfig env", () => {
 
     expect(decision).toMatchObject({ behavior: "allow" });
     const questions = emitted[0]?.questions || [];
-    expect(String(questions[0]?.question || "")).toContain("重启系统服务 nginx");
-    expect(String(questions[0]?.question || "")).not.toContain("执行系统级高权限命令");
+    expect(String(questions[0]?.question || "")).toContain("请求执行：sudo systemctl restart nginx");
   });
 
   it("requires explicit text confirmation for high-risk calls in platform/channel sessions", async () => {
@@ -1365,7 +1364,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     }
   });
 
-  it("flags all configured high-risk categories", async () => {
+  it("flags only the enabled high-risk categories", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "hanako-risk-cases-"));
     try {
       const sessionPath = path.join(root, "sessions", "bridge", "owner", "cases.session.json");
@@ -1377,7 +1376,7 @@ describe("buildClaudeRuntimeConfig env", () => {
         sessionPath,
       });
 
-      const cases = [
+      const highRiskCases = [
         {
           name: "destructive_delete",
           tool: "Bash",
@@ -1393,6 +1392,18 @@ describe("buildClaudeRuntimeConfig env", () => {
           tool: "Bash",
           input: { command: "sudo systemctl restart nginx" },
         },
+      ];
+
+      for (const item of highRiskCases) {
+        const decision = await config.options.canUseTool(item.tool, item.input, {
+          signal: new AbortController().signal,
+          toolUseID: `risk-case-${item.name}`,
+        });
+        expect(decision).toMatchObject({ behavior: "deny" });
+        expect(String(decision.message || "")).toContain("高风险操作");
+      }
+
+      const nonHighRiskCases = [
         {
           name: "data_exfiltration",
           tool: "Bash",
@@ -1410,13 +1421,12 @@ describe("buildClaudeRuntimeConfig env", () => {
         },
       ];
 
-      for (const item of cases) {
+      for (const item of nonHighRiskCases) {
         const decision = await config.options.canUseTool(item.tool, item.input, {
           signal: new AbortController().signal,
-          toolUseID: `risk-case-${item.name}`,
+          toolUseID: `non-risk-case-${item.name}`,
         });
-        expect(decision).toMatchObject({ behavior: "deny" });
-        expect(String(decision.message || "")).toContain("高风险操作");
+        expect(decision).toMatchObject({ behavior: "allow" });
       }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

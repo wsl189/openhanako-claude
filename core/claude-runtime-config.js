@@ -127,9 +127,6 @@ const HIGH_RISK_CODE_LABELS = {
   destructive_delete: "删除类危险操作",
   irreversible_git: "不可逆 Git 操作",
   privileged_system: "系统权限类操作",
-  data_exfiltration: "可能的数据外传操作",
-  sensitive_write: "敏感路径写入",
-  cron_mutation: "定时任务变更",
 };
 
 function uniq(list = []) {
@@ -849,70 +846,6 @@ function truncateText(text = "", max = 160) {
   return raw.length > max ? `${raw.slice(0, max - 1)}…` : raw;
 }
 
-function isCronMutationOperation(payload = {}) {
-  const action = String(payload.action || payload.operation || "").trim().toLowerCase();
-  if (["add", "create", "remove", "delete", "toggle", "enable", "disable", "pause", "resume", "update"].includes(action)) {
-    return true;
-  }
-  const command = String(payload.command || "").trim().toLowerCase();
-  if (!command) return false;
-  return /\bcron\s+(add|create|remove|delete|toggle|enable|disable|pause|resume|update)\b/.test(command);
-}
-
-function isCronToolName(toolName = "") {
-  const name = String(toolName || "").trim().toLowerCase();
-  return name === "cron" || name.endsWith("__cron");
-}
-
-function isSensitiveWritePath(targetPath = "") {
-  const normalized = path.resolve(String(targetPath || ""));
-  if (!normalized) return false;
-
-  const unixRules = [
-    "/etc",
-    "/usr",
-    "/bin",
-    "/sbin",
-    "/var",
-    "/private/etc",
-    "/private/var",
-    "/System",
-  ];
-  if (process.platform !== "win32") {
-    if (unixRules.some((base) => isPathInside(normalized, base) || normalized === base)) return true;
-  }
-
-  const home = String(process.env.HOME || "").trim();
-  if (home) {
-    const homeSensitive = [
-      path.join(home, ".ssh"),
-      path.join(home, ".gnupg"),
-      path.join(home, ".aws"),
-      path.join(home, ".config"),
-      path.join(home, ".kube"),
-      path.join(home, ".docker"),
-    ];
-    if (homeSensitive.some((base) => isPathInside(normalized, base) || normalized === base)) return true;
-  }
-
-  if (process.platform === "win32") {
-    const winPath = normalized.toLowerCase();
-    const markers = [
-      "\\windows\\",
-      "\\program files\\",
-      "\\program files (x86)\\",
-      "\\system32\\",
-      "\\users\\default\\",
-      "\\appdata\\roaming\\",
-      "\\appdata\\local\\",
-      "\\.ssh\\",
-    ];
-    if (markers.some((marker) => winPath.includes(marker))) return true;
-  }
-
-  return false;
-}
-
 function makeHighRiskDecision(code, summary, signature) {
   return {
     highRisk: true,
@@ -991,70 +924,14 @@ function buildDestructiveDeleteConfirmTextZh(deleteTargets = []) {
 
 function buildIrreversibleGitConfirmTextZh(command = "") {
   const cmd = String(command || "").trim();
-  if (!cmd) return "执行不可逆的 Git 变更";
-  if (/\bgit\s+reset\s+--hard\b/i.test(cmd)) return "执行 Git 强制回退（reset --hard）";
-  if (/\bgit\s+checkout\s+--\s+/i.test(cmd)) return "执行 Git 文件覆盖恢复（checkout --）";
-  if (/\bgit\s+restore\b[^\n\r;]*\s--source\b/i.test(cmd)) return "执行 Git 指定来源覆盖恢复（restore --source）";
-  if (/\bgit\s+clean\b[^\n\r;]*\b-f\b/i.test(cmd)) return "清理未跟踪文件（git clean -f）";
-  return "执行不可逆的 Git 变更";
+  if (!cmd) return "请求执行不可逆 Git 操作";
+  return `请求执行：${cmd}`;
 }
 
 function buildPrivilegedSystemConfirmTextZh(command = "") {
   const cmd = String(command || "").trim();
-  if (!cmd) return "执行系统级高权限命令";
-
-  const systemctlMatch = cmd.match(/\bsystemctl\s+(restart|start|stop|enable|disable)\s+([A-Za-z0-9_.@-]+)/i);
-  if (systemctlMatch?.[1] && systemctlMatch?.[2]) {
-    const op = String(systemctlMatch[1]).toLowerCase();
-    const service = String(systemctlMatch[2]).trim();
-    const opLabel = ({
-      restart: "重启",
-      start: "启动",
-      stop: "停止",
-      enable: "启用",
-      disable: "禁用",
-    })[op] || "变更";
-    return `${opLabel}系统服务 ${service}`;
-  }
-
-  if (/\bchmod\b/i.test(cmd)) return "修改文件权限（chmod）";
-  if (/\bchown\b/i.test(cmd)) return "修改文件所有者（chown）";
-  if (/\bschtasks\b/i.test(cmd)) return "修改系统计划任务（schtasks）";
-  if (/\breg\b\s+(?:add|delete)\b/i.test(cmd)) return "修改系统注册表（reg）";
-  if (/\bsudo\b/i.test(cmd) || /\bsu(?:\s|$)/i.test(cmd) || /\bdoas\b/i.test(cmd) || /\bpkexec\b/i.test(cmd)) {
-    return "执行提权命令";
-  }
-  return "执行系统级高权限命令";
-}
-
-function buildDataExfiltrationConfirmTextZh(command = "") {
-  const cmd = String(command || "").trim();
-  if (!cmd) return "执行可能外传数据的网络命令";
-  if (/\bcurl\b[^\n\r;]*(?:\s-F\s+['"]?@|\s--form\s+['"]?@|\s--data-binary\s+@|\s--upload-file\s+)/i.test(cmd)) {
-    return "通过 curl 上传文件到网络地址";
-  }
-  if (/\bwget\b[^\n\r;]*\s--post-file=/i.test(cmd)) return "通过 wget 上传文件到网络地址";
-  if (/\bscp\b/i.test(cmd)) return "通过 scp 传输文件到远程主机";
-  if (/\brsync\b[^\n\r;]*\b(?:@|:\/\/)/i.test(cmd)) return "通过 rsync 同步文件到远程目标";
-  return "执行可能外传数据的网络命令";
-}
-
-function buildSensitiveWriteConfirmTextZh(targetPath = "") {
-  const target = String(targetPath || "").trim();
-  if (!target) return "写入敏感路径";
-  const base = path.basename(target);
-  if (/^id_rsa|id_ed25519|authorized_keys$/i.test(base)) return "修改 SSH 密钥相关文件";
-  if (/^config$/i.test(base) && /\/\.ssh\//i.test(target.replace(/\\/g, "/"))) return "修改 SSH 配置";
-  return "写入敏感路径文件";
-}
-
-function buildCronMutationConfirmTextZh(action = "") {
-  const a = String(action || "").trim().toLowerCase();
-  if (/\b(add|create)\b/.test(a)) return "新增定时任务";
-  if (/\b(remove|delete)\b/.test(a)) return "删除定时任务";
-  if (/\b(update)\b/.test(a)) return "更新定时任务";
-  if (/\b(toggle|enable|disable|pause|resume)\b/.test(a)) return "变更定时任务状态";
-  return "修改定时任务配置";
+  if (!cmd) return "请求执行系统权限命令";
+  return `请求执行：${cmd}`;
 }
 
 function normalizeConfirmationActionText(text = "") {
@@ -1127,12 +1004,6 @@ function describeHighRiskActionZh(risk = {}) {
       return "执行不可逆的 Git 变更";
     case "privileged_system":
       return "执行系统级高权限命令";
-    case "data_exfiltration":
-      return "执行可能外传数据的网络命令";
-    case "sensitive_write":
-      return "写入敏感路径";
-    case "cron_mutation":
-      return "修改定时任务配置";
     default:
       return "执行高风险操作";
   }
@@ -1204,55 +1075,6 @@ function classifyHighRiskOperation(toolName, input = {}, opts = {}) {
       return decision;
     }
 
-    if (
-      /\bscp\b/i.test(command)
-      || /\brsync\b[^\n\r;]*\b(?:@|:\/\/)/i.test(command)
-      || /\bcurl\b[^\n\r;]*(?:\s-F\s+['"]?@|\s--form\s+['"]?@|\s--data-binary\s+@|\s--upload-file\s+)/i.test(command)
-      || /\bwget\b[^\n\r;]*\s--post-file=/i.test(command)
-    ) {
-      const decision = makeHighRiskDecision(
-        "data_exfiltration",
-        `Bash network transfer command: ${truncateText(command)}`,
-        `bash:exfil:${command}`,
-      );
-      decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
-        ...decision,
-        confirmQuestionZh: buildDataExfiltrationConfirmTextZh(command),
-      }, payload);
-      return decision;
-    }
-  }
-
-  if (normalizedTool === "Write" || normalizedTool === "Edit") {
-    const targetPath = resolveToolTargetPath(normalizedTool, payload, cwd);
-    if (targetPath) {
-      if ((workspace && !isPathInside(targetPath, workspace)) || isSensitiveWritePath(targetPath)) {
-        const decision = makeHighRiskDecision(
-          "sensitive_write",
-          `${normalizedTool} target path: ${targetPath}`,
-          `${normalizedTool.toLowerCase()}:${targetPath}`,
-        );
-        decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
-          ...decision,
-          confirmQuestionZh: buildSensitiveWriteConfirmTextZh(targetPath),
-        }, payload);
-        return decision;
-      }
-    }
-  }
-
-  if (isCronToolName(normalizedTool) && isCronMutationOperation(payload)) {
-    const action = String(payload.action || payload.operation || payload.command || "cron mutation").trim();
-    const decision = makeHighRiskDecision(
-      "cron_mutation",
-      `Cron change: ${truncateText(action)}`,
-      `cron:${action}`,
-    );
-    decision.confirmQuestionZh = resolveHighRiskConfirmQuestionZh({
-      ...decision,
-      confirmQuestionZh: buildCronMutationConfirmTextZh(action),
-    }, payload);
-    return decision;
   }
 
   return { highRisk: false };
