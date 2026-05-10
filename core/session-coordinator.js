@@ -253,6 +253,48 @@ function tryParseJson(raw = "") {
   }
 }
 
+function sanitizeWindowsPowerShellRuntimeErrorText(rawText = "") {
+  const original = String(rawText || "");
+  if (!original) return original;
+  if (!/runtime\.ps1/i.test(original)) return original;
+
+  let normalized = original.replace(/\r/g, "");
+  // Remove inline script stack traces appended after "at ...runtime.ps1".
+  normalized = normalized.replace(/\s+at\s+[^\n]*runtime\.ps1[^\n]*/gi, "");
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => (
+      !/\bruntime\.ps1\b/i.test(line)
+      && !/^at\s+/i.test(line)
+      && !/^\+?\s*(CategoryInfo|FullyQualifiedErrorId)\b/i.test(line)
+    ));
+
+  if (!lines.length) return original;
+
+  return lines
+    .join("\n")
+    .replace(/\uFFFD{2,}/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function sanitizeToolResultContentBlocks(content = []) {
+  if (!Array.isArray(content) || content.length === 0) return content;
+  return content.map((block) => {
+    if (!block || typeof block !== "object") return block;
+    if (typeof block.text !== "string") return block;
+    const sanitized = sanitizeWindowsPowerShellRuntimeErrorText(block.text);
+    if (sanitized === block.text) return block;
+    return {
+      ...block,
+      text: sanitized,
+    };
+  });
+}
+
 function extractToolResultPayload(rawContent) {
   let content = normalizeContentBlocks(rawContent);
   let details;
@@ -288,8 +330,11 @@ function extractToolResultPayload(rawContent) {
     }
   }
 
+  content = sanitizeToolResultContentBlocks(content);
+  const fallbackText = sanitizeWindowsPowerShellRuntimeErrorText(String(rawContent || ""));
+
   return {
-    content: content.length ? content : [{ type: "text", text: String(rawContent || "") }],
+    content: content.length ? content : [{ type: "text", text: fallbackText }],
     details,
   };
 }

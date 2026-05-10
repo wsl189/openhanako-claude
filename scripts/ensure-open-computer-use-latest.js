@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 
+function isTruthy(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || "").trim());
+}
+
 function run(bin, args, opts = {}) {
   const res = spawnSync(bin, args, {
     stdio: "inherit",
@@ -14,6 +18,13 @@ function run(bin, args, opts = {}) {
 }
 
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+const argv = process.argv.slice(2);
+const shouldSkip = argv.includes("--skip") || isTruthy(process.env.HANAKO_SKIP_OPEN_COMPUTER_USE_REFRESH);
+
+if (shouldSkip) {
+  console.log("[prepack] skipping open-computer-use refresh for this build target.");
+  process.exit(0);
+}
 
 console.log("[prepack] refreshing open-computer-use to latest...");
 run(npmCmd, [

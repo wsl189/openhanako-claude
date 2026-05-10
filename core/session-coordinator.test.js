@@ -500,6 +500,48 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     }));
   });
 
+  it("strips Windows PowerShell runtime.ps1 stack traces from tool error output", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-ocu-powershell-stacktrace";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "tool-ocu-1",
+          name: "mcp__open_computer_use__get_app_state",
+          input: { app: "掘金量化终端" },
+        }],
+      },
+    }, sessionPath);
+
+    const translated = coordinator._translateClaudeEvent({
+      type: "user",
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "tool-ocu-1",
+          is_error: true,
+          content: [{
+            type: "text",
+            text: "appNotFound(\"掘金量化终端\") at �� Resolve-App��C:\\Users\\foo\\AppData\\Local\\Temp\\open-computer-use-windows-123\\runtime.ps1:322 ��",
+          }],
+        }],
+      },
+    }, sessionPath);
+
+    expect(translated).toContainEqual(expect.objectContaining({
+      type: "tool_end",
+      toolCallId: "tool-ocu-1",
+      success: false,
+      content: [{
+        type: "text",
+        text: "appNotFound(\"掘金量化终端\")",
+      }],
+    }));
+  });
+
   it("prefers explicit tool_end success over details.error for custom tools", () => {
     const coordinator = new SessionCoordinator({});
     const sessionPath = "/tmp/session-custom-tool-success";

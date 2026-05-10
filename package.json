@@ -36,7 +36,7 @@
     "dist": "npm run prepack:refresh-open-computer-use && npm run build:renderer && electron-builder --mac",
     "prepare:win": "node scripts/download-git-portable.js",
     "dist:publish": "npm run prepack:refresh-open-computer-use && npm run prepare:win && npm run build:renderer && electron-builder --mac --win --publish always",
-    "dist:win": "npm run prepack:refresh-open-computer-use && npm run prepare:win && npm run build:renderer && electron-builder --win nsis",
+    "dist:win": "npm run prepack:refresh-open-computer-use -- --skip && npm run prepare:win && npm run build:renderer && electron-builder --win nsis",
     "test": "vitest run",
     "test:watch": "vitest",
     "postinstall": "npm run rebuild:electron"

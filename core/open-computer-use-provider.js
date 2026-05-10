@@ -24,6 +24,10 @@ function isTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || "").trim());
 }
 
+function isFalsy(value) {
+  return /^(0|false|no|off)$/i.test(String(value || "").trim());
+}
+
 function resolveOpenComputerUseEntryPath(env = {}) {
   const explicitEntry = String(
     env?.HANAKO_OPEN_COMPUTER_USE_ENTRY
@@ -39,7 +43,21 @@ function resolveOpenComputerUseEntryPath(env = {}) {
   }
 }
 
-export function resolveOpenComputerUseExternalServer(env = process.env) {
+function resolveOpenComputerUseWindowsExecutable(entryPath, runtime = process) {
+  const platform = String(runtime?.platform || "").trim();
+  if (platform !== "win32") return "";
+
+  const arch = String(runtime?.arch || "").trim().toLowerCase();
+  const archDir = arch === "x64" ? "amd64" : arch === "arm64" ? "arm64" : "";
+  if (!archDir) return "";
+
+  const binDir = path.dirname(entryPath);
+  const packageRoot = path.resolve(binDir, "..");
+  const executablePath = path.join(packageRoot, "dist", "windows", archDir, "open-computer-use.exe");
+  return fs.existsSync(executablePath) ? executablePath : "";
+}
+
+export function resolveOpenComputerUseExternalServer(env = process.env, runtime = process) {
   if (isTruthy(env?.HANAKO_OPEN_COMPUTER_USE_DISABLED || env?.HANA_OPEN_COMPUTER_USE_DISABLED)) {
     return null;
   }
@@ -52,29 +70,65 @@ export function resolveOpenComputerUseExternalServer(env = process.env) {
       || env?.HANA_OPEN_COMPUTER_USE_COMMAND
       || "",
   ).trim();
-  const command = explicitCommand || process.execPath;
+  const defaultCommand = String(runtime?.execPath || process.execPath);
 
   const argsRaw = String(
     env?.HANAKO_OPEN_COMPUTER_USE_ARGS
       || env?.HANA_OPEN_COMPUTER_USE_ARGS
       || "",
   ).trim();
-  const args = argsRaw
-    ? parseCommandArgs(argsRaw)
-    : (explicitCommand ? ["mcp"] : [entryPath, "mcp"]);
+  const explicitArgs = argsRaw ? parseCommandArgs(argsRaw) : [];
+  const defaultWindowsExecutable = (!explicitCommand && explicitArgs.length === 0)
+    ? resolveOpenComputerUseWindowsExecutable(entryPath, runtime)
+    : "";
+  const command = explicitCommand || defaultWindowsExecutable || defaultCommand;
+  const args = explicitArgs.length > 0
+    ? explicitArgs
+    : (explicitCommand || defaultWindowsExecutable ? ["mcp"] : [entryPath, "mcp"]);
 
   const commandBase = path.basename(command).toLowerCase();
   const looksLikeNodeBinary = commandBase === "node"
     || commandBase === "node.exe"
     || commandBase.startsWith("node-v");
   const shouldRunAsNode = isTruthy(env?.HANAKO_OPEN_COMPUTER_USE_FORCE_RUN_AS_NODE)
-    || (!explicitCommand && (
-      String(process?.versions?.electron || "").trim().length > 0
+    || (!defaultWindowsExecutable && !explicitCommand && (
+      String(runtime?.versions?.electron || "").trim().length > 0
       || /electron/i.test(commandBase)
       || !looksLikeNodeBinary
     ));
+  const isWindowsRuntime = String(runtime?.platform || "").trim() === "win32";
+  const disableWindowsAppLaunch = isTruthy(
+    env?.HANAKO_OPEN_COMPUTER_USE_DISABLE_WINDOWS_APP_LAUNCH
+      || env?.HANA_OPEN_COMPUTER_USE_DISABLE_WINDOWS_APP_LAUNCH,
+  );
+  const explicitWindowsAppLaunch = String(
+    env?.HANAKO_OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH
+      || env?.HANA_OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH
+      || env?.OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH
+      || "",
+  ).trim();
+  const shouldAllowWindowsAppLaunch = isWindowsRuntime
+    && !disableWindowsAppLaunch
+    && (explicitWindowsAppLaunch ? isTruthy(explicitWindowsAppLaunch) : true);
+  const disableWindowsFocusActions = isTruthy(
+    env?.HANAKO_OPEN_COMPUTER_USE_DISABLE_WINDOWS_FOCUS_ACTIONS
+      || env?.HANA_OPEN_COMPUTER_USE_DISABLE_WINDOWS_FOCUS_ACTIONS,
+  );
+  const explicitWindowsFocusActions = String(
+    env?.HANAKO_OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS
+      || env?.HANA_OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS
+      || env?.OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS
+      || "",
+  ).trim();
+  const shouldAllowWindowsFocusActions = isWindowsRuntime
+    && !disableWindowsFocusActions
+    && (explicitWindowsFocusActions ? isTruthy(explicitWindowsFocusActions) : true);
 
-  const serverEnv = shouldRunAsNode ? { ELECTRON_RUN_AS_NODE: "1" } : undefined;
+  const serverEnv = {};
+  if (shouldRunAsNode) serverEnv.ELECTRON_RUN_AS_NODE = "1";
+  if (shouldAllowWindowsAppLaunch) serverEnv.OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH = "1";
+  if (shouldAllowWindowsFocusActions) serverEnv.OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS = "1";
+  const normalizedServerEnv = Object.keys(serverEnv).length > 0 ? serverEnv : undefined;
 
   return {
     name: "open_computer_use",
@@ -82,7 +136,7 @@ export function resolveOpenComputerUseExternalServer(env = process.env) {
       type: "stdio",
       command,
       args,
-      ...(serverEnv ? { env: serverEnv } : {}),
+      ...(normalizedServerEnv ? { env: normalizedServerEnv } : {}),
     },
   };
 }
