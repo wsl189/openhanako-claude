@@ -10166,6 +10166,38 @@ body.resizing .jian-sidebar-inner {
     margin: 0 auto;
 }
 
+.mcp-add-tile {
+    width: 100%;
+    min-height: 96px;
+    border: 1.5px dashed rgba(var(--accent-rgb), 0.45);
+    border-radius: var(--radius-md);
+    background: rgba(var(--accent-rgb), 0.05);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    transition: all 0.18s ease;
+}
+
+.mcp-add-tile:hover {
+    color: var(--text);
+    border-color: rgba(var(--accent-rgb), 0.75);
+    background: rgba(var(--accent-rgb), 0.12);
+}
+
+.mcp-add-tile-plus {
+    font-size: 1.4rem;
+    font-weight: 500;
+    line-height: 1;
+}
+
+.mcp-add-tile-text {
+    font-size: 0.84rem;
+}
+
 .mcp-add-btn {
     width: auto;
     min-width: 120px;
