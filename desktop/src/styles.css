@@ -10161,6 +10161,11 @@ body.resizing .jian-sidebar-inner {
     gap: var(--space-md);
 }
 
+.mcp-top-actions {
+    max-width: 760px;
+    margin: 0 auto;
+}
+
 .mcp-add-btn {
     width: auto;
     min-width: 120px;
@@ -10184,6 +10189,13 @@ body.resizing .jian-sidebar-inner {
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     box-shadow: 0 1px 3px var(--shadow);
+    cursor: pointer;
+    transition: border-color 0.18s ease, transform 0.18s ease;
+}
+
+.mcp-server-item:hover {
+    border-color: rgba(var(--accent-rgb), 0.35);
+    transform: translateY(-1px);
 }
 
 .mcp-server-main {
@@ -10196,6 +10208,31 @@ body.resizing .jian-sidebar-inner {
     align-items: center;
     gap: var(--space-sm);
     min-width: 0;
+}
+
+.mcp-status-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-muted);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+}
+
+.mcp-status-ok {
+    background: #26c96f;
+}
+
+.mcp-status-error {
+    background: #ff5b5b;
+}
+
+.mcp-status-checking {
+    background: #f8b84e;
+}
+
+.mcp-status-disabled {
+    background: var(--text-muted);
 }
 
 .mcp-server-name {
@@ -10244,6 +10281,45 @@ body.resizing .jian-sidebar-inner {
 .mcp-server-meta {
     display: flex;
     gap: var(--space-md);
+}
+
+.mcp-modal-card {
+    width: min(840px, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+    padding: 1rem;
+}
+
+.mcp-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.mcp-modal-title {
+    margin: 0;
+    font-size: 0.96rem;
+    font-weight: 700;
+}
+
+.mcp-modal-close {
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.mcp-modal-close:hover {
+    color: var(--text);
+    border-color: rgba(var(--accent-rgb), 0.35);
 }
 
 /* 思考强度选择条 */
@@ -15013,6 +15089,13 @@ a.about-link:hover {
     width: 100%;
     height: 100%;
     border: none;
+}
+
+/* PPT 预览（先转 PDF 再嵌入） */
+.preview-panel-body .preview-ppt {
+    width: 100%;
+    height: 100%;
+    background: #fff;
 }
 
 /* CSV 表格预览 */

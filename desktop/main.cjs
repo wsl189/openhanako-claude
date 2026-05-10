@@ -289,6 +289,130 @@ function firstExisting(paths = []) {
   return "";
 }
 
+function getSofficeCandidates() {
+  if (process.platform === "win32") {
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const localAppData = process.env.LOCALAPPDATA || "";
+    return [
+      path.join(programFiles, "LibreOffice", "program", "soffice.exe"),
+      path.join(programFilesX86, "LibreOffice", "program", "soffice.exe"),
+      path.join(localAppData, "Programs", "LibreOffice", "program", "soffice.exe"),
+      "soffice.exe",
+    ];
+  }
+  if (process.platform === "darwin") {
+    return [
+      "/opt/homebrew/bin/soffice",
+      "/usr/local/bin/soffice",
+      "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+      "soffice",
+    ];
+  }
+  return ["/usr/bin/soffice", "/usr/local/bin/soffice", "soffice"];
+}
+
+function getPptPreviewSidecarPath(filePath) {
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+  return path.join(dir, `.${base}.preview.pdf`);
+}
+
+function ensurePptPreviewSidecarFromPdf(pdfPath, pptPath) {
+  try {
+    if (!pdfPath || !pptPath) return;
+    const sidecarPath = getPptPreviewSidecarPath(pptPath);
+    fs.copyFileSync(pdfPath, sidecarPath);
+  } catch {
+    // sidecar 写入失败不影响主流程（仍可用缓存 PDF 预览）
+  }
+}
+
+function readPptPreviewSidecarBase64(filePath, pptStat) {
+  try {
+    const sidecarPath = getPptPreviewSidecarPath(filePath);
+    if (!fs.existsSync(sidecarPath)) return null;
+    const sidecarStat = fs.statSync(sidecarPath);
+    if (!sidecarStat.isFile() || sidecarStat.size <= 0) return null;
+    // sidecar 时间不早于 ppt，视为可用
+    if (pptStat && sidecarStat.mtimeMs < pptStat.mtimeMs) return null;
+    return fs.readFileSync(sidecarPath).toString("base64");
+  } catch {
+    return null;
+  }
+}
+
+async function buildPptPreviewPdfBase64(filePath) {
+  if (!filePath || !path.isAbsolute(filePath)) return null;
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return null;
+    if (stat.size > 80 * 1024 * 1024) return null;
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext !== ".ppt" && ext !== ".pptx") return null;
+
+    const sidecarBase64 = readPptPreviewSidecarBase64(filePath, stat);
+    if (sidecarBase64) return sidecarBase64;
+
+    const crypto = require("crypto");
+    const tmpRoot = path.join(os.tmpdir(), "hanako-ppt-preview");
+    fs.mkdirSync(tmpRoot, { recursive: true });
+
+    const key = crypto
+      .createHash("sha1")
+      .update(`${filePath}:${stat.mtimeMs}:${stat.size}`)
+      .digest("hex")
+      .slice(0, 16);
+    const outDir = path.join(tmpRoot, key);
+    fs.mkdirSync(outDir, { recursive: true });
+
+    // 命中缓存（同一路径+mtime+size）
+    const cached = fs.readdirSync(outDir).find((n) => n.toLowerCase().endsWith(".pdf"));
+    if (cached) {
+      const pdfPath = path.join(outDir, cached);
+      ensurePptPreviewSidecarFromPdf(pdfPath, filePath);
+      return fs.readFileSync(pdfPath).toString("base64");
+    }
+
+    const args = [
+      "--headless",
+      "--nologo",
+      "--nodefault",
+      "--nolockcheck",
+      "--norestore",
+      "--convert-to",
+      "pdf",
+      "--outdir",
+      outDir,
+      filePath,
+    ];
+    const candidates = getSofficeCandidates();
+
+    let converted = false;
+    for (const cmd of candidates) {
+      if (cmd.includes("/") && !fs.existsSync(cmd)) continue;
+      const ok = await new Promise((resolve) => {
+        execFile(cmd, args, { windowsHide: true, timeout: 120_000 }, (err) => resolve(!err));
+      });
+      if (ok) {
+        converted = true;
+        break;
+      }
+    }
+    if (!converted) return null;
+
+    const pdfs = fs.readdirSync(outDir).filter((n) => n.toLowerCase().endsWith(".pdf"));
+    if (pdfs.length === 0) return null;
+
+    const pdfPath = path.join(outDir, pdfs[0]);
+    const pdfStat = fs.statSync(pdfPath);
+    if (!pdfStat.isFile() || pdfStat.size <= 0 || pdfStat.size > 150 * 1024 * 1024) return null;
+    ensurePptPreviewSidecarFromPdf(pdfPath, filePath);
+    return fs.readFileSync(pdfPath).toString("base64");
+  } catch { return null; }
+}
+
 function findBashInPathOnWindows() {
   try {
     const out = execFileSync("where", ["bash.exe"], {
@@ -2884,20 +3008,7 @@ ipcMain.handle("read-docx-pdf-base64", async (_event, filePath) => {
       outDir,
       filePath,
     ];
-    const candidates = (() => {
-      if (process.platform === "win32") {
-        return ["soffice.exe"];
-      }
-      if (process.platform === "darwin") {
-        return [
-          "/opt/homebrew/bin/soffice",
-          "/usr/local/bin/soffice",
-          "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-          "soffice",
-        ];
-      }
-      return ["/usr/bin/soffice", "/usr/local/bin/soffice", "soffice"];
-    })();
+    const candidates = getSofficeCandidates();
 
     let converted = false;
     for (const cmd of candidates) {
@@ -2920,6 +3031,17 @@ ipcMain.handle("read-docx-pdf-base64", async (_event, filePath) => {
     if (!pdfStat.isFile() || pdfStat.size <= 0 || pdfStat.size > 100 * 1024 * 1024) return null;
     return fs.readFileSync(pdfPath).toString("base64");
   } catch { return null; }
+});
+
+// 读取 ppt/pptx 文件并通过 LibreOffice 转为 PDF（用于右侧预览）
+ipcMain.handle("read-ppt-pdf-base64", async (_event, filePath) => {
+  return buildPptPreviewPdfBase64(filePath);
+});
+
+// 预热 ppt/pptx 预览：后台提前触发转换，减少用户打开预览时等待
+ipcMain.handle("warm-ppt-pdf-preview", async (_event, filePath) => {
+  const base64 = await buildPptPreviewPdfBase64(filePath);
+  return !!base64;
 });
 
 // 读取 xlsx 文件并转为 HTML 表格（ExcelJS）

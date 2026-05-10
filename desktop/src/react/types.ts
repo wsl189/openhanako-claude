@@ -150,6 +150,8 @@ export interface PlatformApi {
   readFileBase64(path: string): Promise<string | null>;
   readDocxHtml(path: string): Promise<string | null>;
   readDocxPdfBase64?(path: string): Promise<string | null>;
+  readPptPdfBase64?(path: string): Promise<string | null>;
+  warmPptPdfPreview?(path: string): Promise<boolean>;
   readXlsxHtml(path: string): Promise<string | null>;
   openEditorWindow(data: { filePath: string; title: string; type: string; language?: string | null }): void;
   onEditorDockFile?(callback: (data: { filePath: string; title: string; type: string; language?: string | null }) => void): void;

@@ -160,6 +160,43 @@ function listWorkspaceFiles(dir) {
   return files.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
 }
 
+function isPptFileByPath(filePath) {
+  const ext = path.extname(String(filePath || "")).toLowerCase();
+  return ext === ".ppt" || ext === ".pptx";
+}
+
+function getPptPreviewSidecarPath(filePath) {
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+  return path.join(dir, `.${base}.preview.pdf`);
+}
+
+function removeLinkedPptPreviewSidecar(pptPath, dirRoot) {
+  try {
+    if (!isPptFileByPath(pptPath)) return;
+    const sidecar = getPptPreviewSidecarPath(pptPath);
+    if (!isInsidePath(sidecar, dirRoot)) return;
+    if (fs.existsSync(sidecar)) fs.rmSync(sidecar, { force: true });
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
+function moveLinkedPptPreviewSidecar(oldPptPath, newPptPath, dirRoot) {
+  try {
+    if (!isPptFileByPath(oldPptPath) || !isPptFileByPath(newPptPath)) return;
+    const oldSidecar = getPptPreviewSidecarPath(oldPptPath);
+    const newSidecar = getPptPreviewSidecarPath(newPptPath);
+    if (!isInsidePath(oldSidecar, dirRoot) || !isInsidePath(newSidecar, dirRoot)) return;
+    if (!fs.existsSync(oldSidecar)) return;
+    if (fs.existsSync(newSidecar)) return;
+    fs.renameSync(oldSidecar, newSidecar);
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
 function isSessionPathAllowed(sessionPath, engine) {
   const rawInput = String(sessionPath || "").trim();
   if (!rawInput) return false;
@@ -656,6 +693,7 @@ export default async function deskRoute(app, { engine, hub }) {
         if (!fs.existsSync(src)) return { error: "not found" };
         if (fs.existsSync(dest)) return { error: "target already exists" };
         fs.renameSync(src, dest);
+        moveLinkedPptPreviewSidecar(src, dest, dir);
         return { ok: true, files: listWorkspaceFiles(dir) };
       }
 
@@ -682,6 +720,7 @@ export default async function deskRoute(app, { engine, hub }) {
           if (fs.existsSync(dest)) { results.push({ name: n, error: "target already exists" }); continue; }
           try {
             fs.renameSync(src, dest);
+            moveLinkedPptPreviewSidecar(src, dest, dir);
             results.push({ name: n, ok: true });
           } catch (err) {
             results.push({ name: n, error: err.message });
@@ -695,7 +734,11 @@ export default async function deskRoute(app, { engine, hub }) {
         const rmTarget = path.join(dir, path.basename(name));
         if (!isInsidePath(rmTarget, dir)) return { error: "invalid name" };
         if (!fs.existsSync(rmTarget)) return { error: "not found" };
+        const stat = fs.statSync(rmTarget);
         fs.rmSync(rmTarget, { recursive: true, force: true });
+        if (stat.isFile()) {
+          removeLinkedPptPreviewSidecar(rmTarget, dir);
+        }
         return { ok: true, files: listWorkspaceFiles(dir) };
       }
 

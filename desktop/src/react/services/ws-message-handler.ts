@@ -41,6 +41,21 @@ const REACT_CHAT_EVENTS = new Set([
   'compaction_start', 'compaction_end',
 ]);
 
+const _pptPreviewWarmInFlight = new Set<string>();
+
+function maybeWarmPptPreview(msg: any): void {
+  const filePath = typeof msg?.filePath === 'string' ? msg.filePath.trim() : '';
+  if (!filePath) return;
+  const extFromPath = (filePath.split('.').pop() || '').toLowerCase();
+  const ext = String(msg?.ext || extFromPath).trim().toLowerCase().replace(/^\./, '');
+  if (ext !== 'ppt' && ext !== 'pptx') return;
+  if (_pptPreviewWarmInFlight.has(filePath)) return;
+  _pptPreviewWarmInFlight.add(filePath);
+  Promise.resolve(window.platform?.warmPptPdfPreview?.(filePath))
+    .catch(() => {})
+    .finally(() => _pptPreviewWarmInFlight.delete(filePath));
+}
+
 function resolvePromptSessionKey(sessionPath: string | null | undefined): string {
   const state = useStore.getState();
   return resolveInputSessionKey(
@@ -291,6 +306,9 @@ export function handleServerMessage(msg: any): void {
     // artifact 需要通知 artifacts shim 更新预览
     if (msg.type === 'artifact' && state.currentTab === 'chat') {
       handleArtifact(msg);
+    }
+    if (msg.type === 'file_output') {
+      maybeWarmPptPreview(msg);
     }
     return;
   }

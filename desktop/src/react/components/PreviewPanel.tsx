@@ -156,6 +156,25 @@ async function renderDocxPreview(container: HTMLDivElement, artifact: Artifact):
   }
 }
 
+async function renderPptPreview(container: HTMLDivElement, artifact: Artifact): Promise<void> {
+  container.innerHTML = '<div class="preview-docx-loading">Rendering slides...</div>';
+  if (!artifact.filePath || !window.platform?.readPptPdfBase64) {
+    container.innerHTML = '<div class="preview-docx-loading">Unable to render this presentation.</div>';
+    return;
+  }
+  const pdfBase64 = await window.platform.readPptPdfBase64(artifact.filePath);
+  if (!container.isConnected) return;
+  if (!pdfBase64) {
+    container.innerHTML = '<div class="preview-docx-loading">Unable to render this presentation.</div>';
+    return;
+  }
+  const iframe = document.createElement('iframe');
+  iframe.className = 'preview-pdf';
+  iframe.src = `data:application/pdf;base64,${pdfBase64}`;
+  container.innerHTML = '';
+  container.appendChild(iframe);
+}
+
 export function PreviewPanel() {
   const previewOpen = useStore(s => s.previewOpen);
   const currentArtifactId = useStore(s => s.currentArtifactId);
@@ -269,6 +288,13 @@ export function PreviewPanel() {
           iframe.src = `data:application/pdf;base64,${artifact.content}`;
         }
         body.appendChild(iframe);
+        break;
+      }
+      case 'ppt': {
+        const div = document.createElement('div');
+        div.className = 'preview-ppt';
+        body.appendChild(div);
+        void renderPptPreview(div, artifact);
         break;
       }
       case 'csv': {

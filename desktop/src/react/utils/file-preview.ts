@@ -25,6 +25,7 @@ export const PREVIEWABLE_EXTS: Record<string, string> = {
   csv: 'csv', pdf: 'pdf',
   png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', bmp: 'image',
   docx: 'docx', xlsx: 'xlsx', xls: 'xlsx',
+  ppt: 'ppt', pptx: 'ppt',
 };
 
 export const BINARY_PREVIEW_TYPES = new Set(['image', 'pdf']);
@@ -37,6 +38,7 @@ export async function readFileForPreview(filePath: string, ext: string): Promise
   if (!p) return null;
   if (previewType === 'docx') return p.readFileBase64?.(filePath) ?? p.readDocxHtml?.(filePath) ?? null;
   if (previewType === 'xlsx') return p.readXlsxHtml?.(filePath) ?? null;
+  if (previewType === 'ppt') return p.readPptPdfBase64?.(filePath) ?? null;
   if (BINARY_PREVIEW_TYPES.has(previewType)) return p.readFileBase64?.(filePath) ?? null;
   return p.readFile?.(filePath) ?? null;
 }
@@ -93,6 +95,23 @@ export async function openFilePreviewWithOptions(
     openPreview(artifact, {
       replaceRightSidebar: opts.replaceRightSidebar === true,
       preferredWidth: 740,
+    });
+    return;
+  }
+
+  if (normExt === 'ppt' || normExt === 'pptx') {
+    const artifact: Artifact = {
+      id: `file-${filePath}`,
+      type: 'ppt',
+      title: fileName,
+      content: '',
+      filePath,
+      ext: normExt,
+    };
+    upsertArtifact(artifact);
+    openPreview(artifact, {
+      replaceRightSidebar: opts.replaceRightSidebar === true,
+      preferredWidth: 760,
     });
     return;
   }
