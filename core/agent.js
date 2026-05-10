@@ -785,12 +785,12 @@ export class Agent {
       parts.push(isZh
         ? (
           canSetupSettings
-            ? "\n## 设置修改\n\n如用户要求安装 skill、配置 MCP 或更新身份/意识，优先使用 setup_settings 工具执行。仅在工具失败时再给手动步骤。"
+            ? "\n## 设置修改\n\n凡是涉及安装/更新 skill、配置 MCP、更新身份/意识、清空指定 agent 记忆（包括 pinned/permanent memory）等设置操作，一律优先调用 setup_settings 工具执行。不要用 Bash 去改 ~/.claude、claudecode 或其他外部产品配置。仅在 setup_settings 工具明确失败时，再给手动步骤。"
             : "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
         )
         : (
           canSetupSettings
-            ? "\n## Settings Changes\n\nWhen the user asks to install skills, configure MCP, or update identity/ishiki, prefer using the setup_settings tool. Only provide manual steps if the tool fails."
+            ? "\n## Settings Changes\n\nFor any settings operation (install/update skills, configure MCP, update identity/ishiki, clear memory for a target agent including pinned/permanent memory), always call setup_settings first. Do not use Bash to edit ~/.claude, claudecode, or other external-product configs. Provide manual steps only if setup_settings explicitly fails."
             : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
         )
       );
