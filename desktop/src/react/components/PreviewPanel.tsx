@@ -27,6 +27,8 @@ import type { Artifact } from '../types';
 
 const INLINE_EDITABLE_TYPES = new Set(['code', 'csv']);
 const DETACHABLE_EDIT_TYPES = new Set(['markdown', 'code', 'csv']);
+type DiffLineTone = 'add' | 'remove' | 'context';
+type DiffLine = { tone: DiffLineTone; text: string };
 
 function isEditable(artifact: Artifact | null): boolean {
   if (!artifact) return false;
@@ -49,6 +51,31 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes.buffer;
+}
+
+function parseDiffLines(artifact: Artifact): DiffLine[] {
+  const rawMetaLines = (artifact.meta as { diffLines?: unknown } | undefined)?.diffLines;
+  if (Array.isArray(rawMetaLines)) {
+    const lines: DiffLine[] = [];
+    for (const item of rawMetaLines) {
+      if (!item || typeof item !== 'object') continue;
+      const toneRaw = String((item as { tone?: unknown }).tone || '').toLowerCase();
+      const text = String((item as { text?: unknown }).text ?? '');
+      const tone: DiffLineTone = toneRaw === 'add'
+        ? 'add'
+        : (toneRaw === 'remove' ? 'remove' : 'context');
+      lines.push({ tone, text });
+    }
+    if (lines.length > 0) return lines;
+  }
+
+  const lines = String(artifact.content || '').split('\n');
+  return lines.map((line) => {
+    if (line.startsWith('+') && !line.startsWith('+++')) return { tone: 'add', text: line.slice(1) };
+    if (line.startsWith('-') && !line.startsWith('---')) return { tone: 'remove', text: line.slice(1) };
+    if (line.startsWith(' ')) return { tone: 'context', text: line.slice(1) };
+    return { tone: 'context', text: line };
+  });
 }
 
 function enhanceMarkdownImages(container: HTMLElement, baseFilePath?: string): void {
@@ -325,6 +352,25 @@ export function PreviewPanel() {
           table.appendChild(tbody);
         }
         wrap.appendChild(table);
+        body.appendChild(wrap);
+        break;
+      }
+      case 'diff': {
+        const wrap = document.createElement('div');
+        wrap.className = 'preview-diff';
+        for (const line of parseDiffLines(artifact)) {
+          const row = document.createElement('div');
+          row.className = `preview-diff-line ${line.tone}`;
+          const prefix = document.createElement('span');
+          prefix.className = 'preview-diff-prefix';
+          prefix.textContent = line.tone === 'add' ? '+' : (line.tone === 'remove' ? '-' : ' ');
+          const text = document.createElement('span');
+          text.className = 'preview-diff-text';
+          text.textContent = line.text || '\u200B';
+          row.appendChild(prefix);
+          row.appendChild(text);
+          wrap.appendChild(row);
+        }
         body.appendChild(wrap);
         break;
       }

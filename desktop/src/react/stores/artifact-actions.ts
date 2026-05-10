@@ -48,7 +48,8 @@ export function openPreview(
   s.setCurrentArtifactId(artifact.id);
   if (replaceRightSidebar) {
     _restoreJianAfterClose = s.jianOpen;
-    if (s.jianOpen) s.setJianOpen(false);
+    s.setJianOpen(false);
+    s.setJianAutoCollapsed(false);
   } else {
     _restoreJianAfterClose = false;
   }

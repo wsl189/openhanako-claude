@@ -35,13 +35,13 @@ const TOOL_ARG_SUMMARY_KEYS = [
   // skill 工具关键字段
   "skill", "skill_name", "skillName", "skill_path", "skillPath", "github_url", "githubUrl",
   // 编辑/写入工具关键信息：让前端展开时能展示“实际写入/替换内容”
-  "content", "old_string", "new_string", "old_text", "new_text", "replace_all", "offset", "limit", "lineno",
+  "content", "old_string", "new_string", "old_text", "new_text", "oldString", "newString", "filePath", "replace_all", "offset", "limit", "lineno",
 ];
 const TOOL_ARG_DEFAULT_TEXT_MAX_LEN = 1_600;
 const TOOL_ARG_LONG_TEXT_MAX_LEN = 12_000;
 const TOOL_ARG_ARRAY_MAX_ITEMS = 12;
 const TOOL_ARG_OBJECT_MAX_KEYS = 40;
-const TOOL_ARG_LONG_TEXT_KEYS = new Set(["content", "old_string", "new_string", "old_text", "new_text"]);
+const TOOL_ARG_LONG_TEXT_KEYS = new Set(["content", "old_string", "new_string", "old_text", "new_text", "oldString", "newString"]);
 const TOOL_RESULT_DETAIL_SUMMARY_KEYS = [
   "error", "summary", "message", "action", "status",
   "url", "count", "filePath", "label", "ext",
@@ -194,6 +194,27 @@ function extractToolResultTextForHistory(content) {
   return clipToolResultText(text);
 }
 
+function compactStructuredPatchForHistory(rawPatch) {
+  if (!Array.isArray(rawPatch)) return undefined;
+  const HUNK_LIMIT = 48;
+  const LINE_LIMIT = 300;
+  const out = [];
+  for (const hunk of rawPatch.slice(0, HUNK_LIMIT)) {
+    if (!hunk || typeof hunk !== "object") continue;
+    const lines = Array.isArray(hunk.lines)
+      ? hunk.lines.slice(0, LINE_LIMIT).map((line) => compactToolArgValue(line, "new_text", 2))
+      : [];
+    out.push({
+      oldStart: Number.isFinite(hunk.oldStart) ? hunk.oldStart : undefined,
+      oldLines: Number.isFinite(hunk.oldLines) ? hunk.oldLines : undefined,
+      newStart: Number.isFinite(hunk.newStart) ? hunk.newStart : undefined,
+      newLines: Number.isFinite(hunk.newLines) ? hunk.newLines : undefined,
+      lines,
+    });
+  }
+  return out.length ? out : undefined;
+}
+
 function compactToolDetailsForHistory(details) {
   if (!details || typeof details !== "object") return undefined;
   const out = {};
@@ -210,6 +231,28 @@ function compactToolDetailsForHistory(details) {
       }))
       .filter((item) => typeof item.filePath === "string" && item.filePath.trim());
     if (!out.files.length) delete out.files;
+  }
+  const rawPatch = Array.isArray(details.structuredPatch)
+    ? details.structuredPatch
+    : (Array.isArray(details.structured_patch) ? details.structured_patch : null);
+  if (Array.isArray(rawPatch) && rawPatch.length > 0) {
+    const patch = compactStructuredPatchForHistory(rawPatch);
+    if (patch) out.structuredPatch = patch;
+  }
+  if (typeof details.originalFile === "string") {
+    out.originalFile = compactToolArgValue(details.originalFile, "old_text", 0);
+  }
+  if (typeof details.oldString === "string") {
+    out.oldString = compactToolArgValue(details.oldString, "old_text", 0);
+  }
+  if (typeof details.newString === "string") {
+    out.newString = compactToolArgValue(details.newString, "new_text", 0);
+  }
+  if (typeof details.content === "string") {
+    out.content = compactToolArgValue(details.content, "new_text", 0);
+  }
+  if (typeof details.userModified === "boolean") {
+    out.userModified = details.userModified;
   }
   return Object.keys(out).length ? out : undefined;
 }

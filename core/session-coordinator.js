@@ -317,16 +317,86 @@ function normalizeTodoWriteItems(rawTodos) {
     .filter((todo) => todo.text);
 }
 
-function mergeTodoWriteDetails(toolName, existingDetails, toolUseResult) {
-  if (!isTodoWriteToolName(toolName)) return existingDetails;
-  const result = toolUseResult && typeof toolUseResult === "object" ? toolUseResult : {};
-  const todos = normalizeTodoWriteItems(
-    result.newTodos || result.todos || existingDetails?.todos,
+function isWriteLikeToolName(name = "") {
+  const normalized = String(name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return (
+    normalized === "write"
+    || normalized === "writefile"
+    || normalized === "edit"
+    || normalized === "editdiff"
+    || normalized === "applypatch"
   );
-  if (!todos) return existingDetails;
+}
+
+function compactStructuredPatch(rawPatch) {
+  if (!Array.isArray(rawPatch)) return undefined;
+  const HUNK_LIMIT = 48;
+  const LINE_LIMIT = 300;
+  const out = [];
+  for (const hunk of rawPatch.slice(0, HUNK_LIMIT)) {
+    if (!hunk || typeof hunk !== "object") continue;
+    const lines = Array.isArray(hunk.lines)
+      ? hunk.lines
+        .slice(0, LINE_LIMIT)
+        .map((line) => String(line ?? ""))
+      : [];
+    out.push({
+      oldStart: Number.isFinite(hunk.oldStart) ? hunk.oldStart : undefined,
+      oldLines: Number.isFinite(hunk.oldLines) ? hunk.oldLines : undefined,
+      newStart: Number.isFinite(hunk.newStart) ? hunk.newStart : undefined,
+      newLines: Number.isFinite(hunk.newLines) ? hunk.newLines : undefined,
+      lines,
+    });
+  }
+  return out.length ? out : undefined;
+}
+
+function mergeToolUseResultDetails(toolName, existingDetails, toolUseResult) {
+  const base = (existingDetails && typeof existingDetails === "object") ? existingDetails : {};
+  const result = (toolUseResult && typeof toolUseResult === "object") ? toolUseResult : {};
+
+  if (isTodoWriteToolName(toolName)) {
+    const todos = normalizeTodoWriteItems(
+      result.newTodos || result.todos || base.todos,
+    );
+    if (!todos) return existingDetails;
+    return {
+      ...base,
+      todos,
+    };
+  }
+
+  if (!isWriteLikeToolName(toolName)) return existingDetails;
+
+  const filePath = typeof result.filePath === "string"
+    ? result.filePath
+    : (typeof result.file_path === "string" ? result.file_path : undefined);
+  const content = typeof result.content === "string" ? result.content : undefined;
+  const originalFile = typeof result.originalFile === "string" ? result.originalFile : undefined;
+  const oldString = typeof result.oldString === "string"
+    ? result.oldString
+    : (typeof result.old_string === "string" ? result.old_string : undefined);
+  const newString = typeof result.newString === "string"
+    ? result.newString
+    : (typeof result.new_string === "string" ? result.new_string : undefined);
+  const structuredPatch = compactStructuredPatch(result.structuredPatch || result.structured_patch);
+  const type = typeof result.type === "string" ? result.type : undefined;
+  const userModified = typeof result.userModified === "boolean" ? result.userModified : undefined;
+
+  if (!filePath && !content && !originalFile && !oldString && !newString && !structuredPatch && !type && userModified === undefined) {
+    return existingDetails;
+  }
+
   return {
-    ...(existingDetails && typeof existingDetails === "object" ? existingDetails : {}),
-    todos,
+    ...base,
+    ...(filePath ? { filePath } : {}),
+    ...(type ? { type } : {}),
+    ...(content !== undefined ? { content } : {}),
+    ...(originalFile !== undefined ? { originalFile } : {}),
+    ...(oldString !== undefined ? { oldString } : {}),
+    ...(newString !== undefined ? { newString } : {}),
+    ...(structuredPatch ? { structuredPatch } : {}),
+    ...(userModified !== undefined ? { userModified } : {}),
   };
 }
 
@@ -705,7 +775,7 @@ export class SessionCoordinator {
         // 自定义 MCP 工具由 onToolEnd 注入详细事件，避免重复落 tool_end。
         if (resolvedToolMeta.custom) continue;
         const payload = extractToolResultPayload(block.content);
-        const details = mergeTodoWriteDetails(
+        const details = mergeToolUseResultDetails(
           resolvedToolMeta.name || "",
           payload.details,
           event.tool_use_result,

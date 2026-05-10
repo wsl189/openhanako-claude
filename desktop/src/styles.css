@@ -5313,6 +5313,149 @@ html[data-platform="darwin"] .sv-topbar-title {
     margin-left: 1.5em;
 }
 
+.chat-edit-summary {
+    width: calc(100% - 4rem);
+    max-width: 1420px;
+    margin: 0 auto -0.35rem;
+    position: relative;
+    z-index: 2;
+    border: 1px solid color-mix(in oklab, var(--line) 78%, transparent);
+    border-bottom-color: color-mix(in oklab, var(--line) 56%, transparent);
+    border-radius: 12px 12px 0 0;
+    background: color-mix(in oklab, var(--bg-card) 88%, var(--bg) 12%);
+    box-shadow: 0 10px 26px -22px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    animation: input-prompt-rise 160ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.chat-edit-summary-head {
+    width: 100%;
+    min-height: 2.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.42rem 0.5rem 0.42rem 0.64rem;
+}
+
+.chat-edit-summary-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: none;
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.chat-edit-summary-title {
+    min-width: 0;
+    color: color-mix(in oklab, var(--text) 90%, var(--text-muted) 10%);
+    font-size: 0.98rem;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.chat-edit-summary-plus {
+    color: #36c98b;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.chat-edit-summary-minus {
+    color: #ea5a62;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.chat-edit-summary-actions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.24rem;
+}
+
+.chat-edit-summary-action,
+.chat-edit-summary-expand {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.65rem;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 140ms ease;
+}
+
+.chat-edit-summary-action {
+    padding: 0 0.52rem;
+}
+
+.chat-edit-summary-expand {
+    width: 1.65rem;
+    padding: 0;
+    font-size: 0.9rem;
+}
+
+.chat-edit-summary-action:hover:not(:disabled),
+.chat-edit-summary-expand:hover:not(:disabled) {
+    color: var(--text);
+    border-color: color-mix(in oklab, var(--line) 70%, transparent);
+    background: color-mix(in oklab, var(--bg) 92%, var(--line) 8%);
+}
+
+.chat-edit-summary-action:disabled,
+.chat-edit-summary-expand:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.chat-edit-summary-list {
+    border-top: 1px solid color-mix(in oklab, var(--line) 54%, transparent);
+}
+
+.chat-edit-summary-file {
+    width: 100%;
+    min-height: 2.15rem;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: none;
+    border-top: 1px solid color-mix(in oklab, var(--line) 52%, transparent);
+    background: transparent;
+    padding: 0.42rem 0.64rem;
+    text-align: left;
+    color: inherit;
+    cursor: pointer;
+    transition: background 140ms ease;
+}
+
+.chat-edit-summary-file:first-child {
+    border-top: none;
+}
+
+.chat-edit-summary-file:hover,
+.chat-edit-summary-file.active {
+    background: color-mix(in oklab, var(--accent) 9%, var(--bg-card) 91%);
+}
+
+.chat-edit-summary-file-path {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.82rem;
+    color: color-mix(in oklab, var(--text) 88%, var(--text-muted) 12%);
+}
+
 /* 输入框内第二行 */
 .input-bottom-bar {
     display: flex;
@@ -7354,6 +7497,10 @@ body.resizing .jian-sidebar-inner {
 }
 
 .queued-chat-list + .input-wrapper {
+    border-top-left-radius: 10px;
+}
+
+.chat-edit-summary + .input-wrapper {
     border-top-left-radius: 10px;
 }
 
@@ -15065,6 +15212,62 @@ a.about-link:hover {
     white-space: pre;
     color: var(--text);
     margin: 0;
+}
+
+.preview-panel-body .preview-diff {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    border: 1px solid color-mix(in oklab, var(--line) 75%, transparent);
+    border-radius: 10px;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--bg-card) 88%, var(--bg) 12%);
+}
+
+.preview-panel-body .preview-diff-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.14rem 0.5rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.preview-panel-body .preview-diff-line + .preview-diff-line {
+    border-top: 1px solid color-mix(in oklab, var(--line) 86%, transparent);
+}
+
+.preview-panel-body .preview-diff-line.add {
+    background: rgba(54, 201, 139, 0.17);
+}
+
+.preview-panel-body .preview-diff-line.remove {
+    background: rgba(234, 90, 98, 0.17);
+}
+
+.preview-panel-body .preview-diff-prefix {
+    width: 0.8rem;
+    flex: 0 0 auto;
+    text-align: center;
+    opacity: 0.9;
+}
+
+.preview-panel-body .preview-diff-line.add .preview-diff-prefix {
+    color: #30bd83;
+}
+
+.preview-panel-body .preview-diff-line.remove .preview-diff-prefix {
+    color: #db4e58;
+}
+
+.preview-panel-body .preview-diff-line.context .preview-diff-prefix {
+    color: color-mix(in oklab, var(--text-muted) 80%, transparent);
+}
+
+.preview-panel-body .preview-diff-text {
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
 /* docx 预览（docx-preview，失败时回退 mammoth HTML） */

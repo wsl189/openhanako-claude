@@ -17,7 +17,17 @@ import { getWebSocket } from '../services/websocket';
 import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { usePushToTalk } from '../hooks/use-push-to-talk';
 import { SVG_ICONS } from '../utils/icons';
+import {
+  basename,
+  buildDiffContent,
+  extractLatestEditSummary,
+  type DiffLine,
+  type FileChangeSummary,
+  type MessageEditSummary,
+} from '../utils/chat-edit-summary';
+import { openPreview } from '../stores/artifact-actions';
 import type { AttachedFile } from '../stores/input-slice';
+import type { Artifact } from '../types';
 
 const CHAT_EDIT_MESSAGE_EVENT = 'hana:chat-edit-message';
 const CHAT_RESEND_MESSAGE_EVENT = 'hana:chat-resend-message';
@@ -131,6 +141,7 @@ function InputAreaInner() {
   const pendingNewSession = useStore(s => s.pendingNewSession);
   const pendingSessionModel = useStore(s => s.pendingSessionModel);
   const currentSessionPath = useStore(s => s.currentSessionPath);
+  const chatSessions = useStore(s => s.chatSessions);
   const sessionTodos = useStore(s => s.sessionTodos);
   const attachedFiles = useStore(s => s.attachedFiles);
   const docContextAttached = useStore(s => s.docContextAttached);
@@ -321,6 +332,11 @@ function InputAreaInner() {
     () => queuedTasks.filter((task) => task.sessionPath === currentSessionPath),
     [queuedTasks, currentSessionPath],
   );
+  const latestEditSummary = useMemo(() => {
+    if (!currentSessionPath || inputIsStreaming) return null;
+    const session = chatSessions[currentSessionPath];
+    return extractLatestEditSummary(session?.items);
+  }, [chatSessions, currentSessionPath, inputIsStreaming]);
 
   // Focus trigger from store
   const inputFocusTrigger = useStore(s => s.inputFocusTrigger);
@@ -908,6 +924,11 @@ function InputAreaInner() {
   return (
     <>
       <TodoDisplay todos={sessionTodos} isStreaming={inputIsStreaming} />
+      {latestEditSummary && (
+        <ChatEditSummaryBar
+          summary={latestEditSummary}
+        />
+      )}
 
       {attachedFiles.length > 0 && (
         <AttachedFilesBar
@@ -1090,6 +1111,97 @@ function QueuedChatTaskList({
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ChatEditSummaryBar({
+  summary,
+}: {
+  summary: MessageEditSummary;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [activeFilePath, setActiveFilePath] = useState('');
+  const zh = String((window as any).i18n?.locale || '').startsWith('zh');
+
+  const summaryText = useMemo(() => (
+    zh
+      ? `${summary.files.length} 个文件已更改`
+      : `${summary.files.length} changed file${summary.files.length > 1 ? 's' : ''}`
+  ), [summary.files.length, zh]);
+
+  const openFileDiffPreview = useCallback((file: FileChangeSummary) => {
+    const ext = file.filePath.includes('.')
+      ? file.filePath.split('.').pop()?.toLowerCase() || ''
+      : '';
+    const artifact: Artifact = {
+      id: `chat-edit-diff-${summary.messageId}-${file.filePath}`,
+      type: 'diff',
+      title: `${basename(file.filePath)} · Diff`,
+      filePath: file.filePath,
+      ext,
+      language: ext || undefined,
+      content: buildDiffContent(file.diffLines),
+      meta: { diffLines: file.diffLines },
+    };
+    setActiveFilePath(file.filePath);
+    openPreview(artifact, { replaceRightSidebar: true });
+  }, [summary.messageId]);
+
+  const handleReview = useCallback(() => {
+    const first = summary.files[0];
+    if (!first) return;
+    openFileDiffPreview(first);
+  }, [openFileDiffPreview, summary.files]);
+
+  return (
+    <div className={`chat-edit-summary${expanded ? ' expanded' : ''}`}>
+      <div className="chat-edit-summary-head">
+        <button
+          type="button"
+          className="chat-edit-summary-main"
+          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+        >
+          <span className="chat-edit-summary-title">{summaryText}</span>
+          <span className="chat-edit-summary-plus">+{summary.totalPlus}</span>
+          <span className="chat-edit-summary-minus">-{summary.totalMinus}</span>
+        </button>
+        <div className="chat-edit-summary-actions">
+          <button
+            type="button"
+            className="chat-edit-summary-action"
+            onClick={handleReview}
+            disabled={summary.files.length === 0}
+          >
+            {zh ? '审核' : 'Review'}
+          </button>
+          <button
+            type="button"
+            className="chat-edit-summary-expand"
+            onClick={() => setExpanded((prev) => !prev)}
+            aria-label={expanded ? (zh ? '收起' : 'Collapse') : (zh ? '展开' : 'Expand')}
+          >
+            {expanded ? '▴' : '▾'}
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="chat-edit-summary-list">
+          {summary.files.map((file) => (
+            <button
+              type="button"
+              key={file.filePath}
+              className={`chat-edit-summary-file${activeFilePath === file.filePath ? ' active' : ''}`}
+              onClick={() => openFileDiffPreview(file)}
+            >
+              <span className="chat-edit-summary-file-path">{file.filePath}</span>
+              <span className="chat-edit-summary-plus">+{file.plus}</span>
+              <span className="chat-edit-summary-minus">-{file.minus}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

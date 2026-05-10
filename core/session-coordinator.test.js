@@ -279,6 +279,71 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     }));
   });
 
+  it("merges write-like tool_use_result details for diff preview data", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-write-diff";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "edit-1",
+          name: "Edit",
+          input: {
+            file_path: "/tmp/poem.txt",
+            old_string: "春眠不觉晓",
+            new_string: "处处闻啼鸟",
+          },
+        }],
+      },
+    }, sessionPath);
+
+    const translated = coordinator._translateClaudeEvent({
+      type: "user",
+      tool_use_result: {
+        file_path: "/tmp/poem.txt",
+        oldString: "春眠不觉晓",
+        newString: "处处闻啼鸟",
+        structured_patch: [{
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: ["-春眠不觉晓", "+处处闻啼鸟"],
+        }],
+        userModified: false,
+      },
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "edit-1",
+          content: "updated",
+        }],
+      },
+    }, sessionPath);
+
+    expect(translated).toContainEqual(expect.objectContaining({
+      type: "tool_end",
+      name: "Edit",
+      toolCallId: "edit-1",
+      success: true,
+      details: expect.objectContaining({
+        filePath: "/tmp/poem.txt",
+        oldString: "春眠不觉晓",
+        newString: "处处闻啼鸟",
+        userModified: false,
+        structuredPatch: [{
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: ["-春眠不觉晓", "+处处闻啼鸟"],
+        }],
+      }),
+    }));
+  });
+
   it("does not parse text tool markup fallback in assistant content", () => {
     const coordinator = new SessionCoordinator({});
     const content = [{

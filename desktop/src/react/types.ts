@@ -77,6 +77,7 @@ export interface Artifact {
   language?: string | null;
   filePath?: string;
   ext?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface DeskFile {
