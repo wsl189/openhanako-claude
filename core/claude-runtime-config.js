@@ -3,6 +3,7 @@ import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { createCustomToolsMcpServer } from "../lib/claude/custom-tool-adapter.js";
+import { getBuiltinExternalMcpServers } from "./builtin-mcp-servers.js";
 import {
   MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH,
   MINIMAX_MCP_WEB_SEARCH_SWITCH,
@@ -1935,10 +1936,16 @@ export function buildClaudeRuntimeConfig({
   const minimaxMcpAllowedTools = useMiniMaxMcp
     ? buildMcpExactAllowedTools(MINIMAX_MCP_SERVER_KEY, enabledMiniMaxMcpTools)
     : [];
+  const configuredExternalServers = agent?._engine?.getExternalMcpServers?.() || {};
+  const builtinExternalServers = getBuiltinExternalMcpServers(runtimeEnv);
+  const mergedExternalServers = {
+    ...(configuredExternalServers && typeof configuredExternalServers === "object" ? configuredExternalServers : {}),
+    ...(builtinExternalServers && typeof builtinExternalServers === "object" ? builtinExternalServers : {}),
+  };
   const externalMcp = noTools
     ? { servers: {}, allowedTools: [] }
     : resolveExternalMcpServers(agent?.config || {}, {
-      externalServers: agent?._engine?.getExternalMcpServers?.() || {},
+      externalServers: mergedExternalServers,
     });
   const allowedTools = uniq([
     ...builtinEnabled,

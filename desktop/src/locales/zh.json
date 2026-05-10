@@ -1046,6 +1046,7 @@
       "deleteTitle": "删除 {name}？",
       "deleteDesc": "这会从全局配置移除此 MCP，新对话将不再加载它。",
       "deleted": "已删除 MCP",
+      "builtinNotDeletable": "内置 MCP 不可删除",
       "nameRequired": "请输入 MCP 名称",
       "commandRequired": "请输入启动命令",
       "urlRequired": "请输入服务 URL",

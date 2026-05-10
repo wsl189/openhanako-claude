@@ -23,6 +23,7 @@ import path from "path";
 import YAML from "js-yaml";
 import { saveConfig, getAllProviders, saveGlobalProviders, clearConfigCache } from "../../lib/memory/config-loader.js";
 import { rebuildIndex } from "../../lib/tools/experience.js";
+import { getBuiltinExternalMcpServers, getBuiltinExternalMcpServerNames } from "../../core/builtin-mcp-servers.js";
 
 // ── 工具函数 ──
 
@@ -191,13 +192,19 @@ function normalizeMcpPatch(rawMcp) {
 
 function injectGlobalMcpConfig(engine, config) {
   const globalServers = engine.getExternalMcpServers?.() || {};
+  const builtinServers = getBuiltinExternalMcpServers(process.env);
+  const mergedServers = {
+    ...(globalServers && typeof globalServers === "object" ? globalServers : {}),
+    ...(builtinServers && typeof builtinServers === "object" ? builtinServers : {}),
+  };
   const disabledServers = Array.isArray(config?.mcp?.disabled_servers)
     ? config.mcp.disabled_servers.map(name => normalizeMcpServerKey(name)).filter(Boolean)
     : [];
   config.mcp = {
     ...(config.mcp || {}),
-    external_servers: globalServers,
+    external_servers: mergedServers,
     disabled_servers: disabledServers,
+    builtin_servers: getBuiltinExternalMcpServerNames(process.env),
   };
 }
 
@@ -205,12 +212,14 @@ function promoteLegacyExternalMcpServers(engine, config, configPath) {
   const legacyServers = config?.mcp?.external_servers;
   if (!legacyServers || typeof legacyServers !== "object" || Array.isArray(legacyServers)) return;
   const currentGlobal = engine.getExternalMcpServers?.() || {};
+  const builtinServerNames = new Set(getBuiltinExternalMcpServerNames(process.env));
   const globalPatch = {};
   const cleanupPatch = {};
   for (const [rawName, rawServer] of Object.entries(legacyServers)) {
     const name = normalizeMcpServerKey(rawName);
     if (!name) continue;
     cleanupPatch[name] = null;
+    if (builtinServerNames.has(name)) continue;
     if (rawServer === null || currentGlobal[name] !== undefined) continue;
     globalPatch[name] = rawServer;
   }
@@ -233,10 +242,27 @@ function promoteLegacyExternalMcpServers(engine, config, configPath) {
 function extractGlobalMcpPatch(engine, partial) {
   if (!partial?.mcp || typeof partial.mcp !== "object") return false;
   if (partial.mcp.external_servers === undefined) return false;
-  engine.patchExternalMcpServers?.(partial.mcp.external_servers);
+  const builtinServerNames = new Set(getBuiltinExternalMcpServerNames(process.env));
+  const patch = {};
+  const blocked = [];
+  for (const [rawName, value] of Object.entries(partial.mcp.external_servers || {})) {
+    const name = normalizeMcpServerKey(rawName);
+    if (!name) continue;
+    if (builtinServerNames.has(name)) {
+      blocked.push(name);
+      continue;
+    }
+    patch[name] = value;
+  }
+  if (blocked.length > 0) {
+    throw new Error(`built-in MCP cannot be modified: ${blocked.join(", ")}`);
+  }
+  if (Object.keys(patch).length > 0) {
+    engine.patchExternalMcpServers?.(patch);
+  }
   delete partial.mcp.external_servers;
   if (Object.keys(partial.mcp).length === 0) delete partial.mcp;
-  return true;
+  return Object.keys(patch).length > 0;
 }
 
 function buildDefaultPersonaSet(productDir, kind, ctx) {

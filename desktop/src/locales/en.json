@@ -1046,6 +1046,7 @@
       "deleteTitle": "Delete {name}?",
       "deleteDesc": "This removes the MCP from global settings. New chats will no longer load it.",
       "deleted": "MCP deleted",
+      "builtinNotDeletable": "Built-in MCP cannot be deleted",
       "nameRequired": "Enter an MCP name",
       "commandRequired": "Enter a command",
       "urlRequired": "Enter a service URL",

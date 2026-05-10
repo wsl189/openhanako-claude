@@ -67,6 +67,11 @@ export function McpTab() {
   const serverEntries = useMemo(() => Object.entries(servers)
     .filter(([, value]) => value && typeof value === 'object')
     .sort(([a], [b]) => a.localeCompare(b)), [servers]);
+  const builtinServerNames = useMemo(() => {
+    const raw = settingsConfig?.mcp?.builtin_servers;
+    if (!Array.isArray(raw)) return new Set<string>();
+    return new Set(raw.map(item => normalizeName(String(item || ''))).filter(Boolean));
+  }, [settingsConfig]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingServerName, setEditingServerName] = useState<string | null>(null);
@@ -258,14 +263,17 @@ export function McpTab() {
           <div className="pin-empty">{t('settings.mcp.empty')}</div>
         ) : (
           <div className="mcp-server-list">
-            {serverEntries.map(([serverName, server]) => (
+            {serverEntries.map(([serverName, server]) => {
+              const isBuiltin = builtinServerNames.has(serverName);
+              return (
               <div
                 className="mcp-server-item"
                 key={serverName}
-                role="button"
-                tabIndex={0}
-                onClick={() => openEditModal(serverName, server)}
+                role={isBuiltin ? undefined : 'button'}
+                tabIndex={isBuiltin ? -1 : 0}
+                onClick={isBuiltin ? undefined : () => openEditModal(serverName, server)}
                 onKeyDown={(ev) => {
+                  if (isBuiltin) return;
                   if (ev.key === 'Enter' || ev.key === ' ') {
                     ev.preventDefault();
                     openEditModal(serverName, server);
@@ -282,24 +290,30 @@ export function McpTab() {
                     <span className={`mcp-server-type${server.disabled ? ' disabled' : ''}`}>
                       {server.disabled ? t('settings.mcp.statusDisabled') : (server.type || 'stdio')}
                     </span>
+                    {isBuiltin && (
+                      <span className="mcp-server-type">{t('settings.mcp.builtinMcp')}</span>
+                    )}
                   </div>
                 </div>
-                <button
-                  className="provider-item-action delete"
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    setPendingDelete({
-                      name: serverName,
-                      label: serverName,
-                    });
-                  }}
-                  disabled={deletingName === serverName}
-                  title={t('settings.mcp.delete')}
-                >
-                  {deletingName === serverName ? '...' : 'x'}
-                </button>
+                {!isBuiltin && (
+                  <button
+                    className="provider-item-action delete"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      setPendingDelete({
+                        name: serverName,
+                        label: serverName,
+                      });
+                    }}
+                    disabled={deletingName === serverName}
+                    title={t('settings.mcp.delete')}
+                  >
+                    {deletingName === serverName ? '...' : 'x'}
+                  </button>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

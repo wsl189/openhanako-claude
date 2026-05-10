@@ -10,6 +10,7 @@ function createConfig(overrides = {}) {
   const mergedEnv = {
     HANAKO_BROWSER_PROVIDER: "embedded",
     HANAKO_CLAUDE_IN_CHROME_INSTALLED: "0",
+    HANAKO_OPEN_COMPUTER_USE_DISABLED: "1",
     ...envOverride,
   };
   return buildClaudeRuntimeConfig({
@@ -481,6 +482,67 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.mcpServers.context7).toBeUndefined();
     expect(config.options.allowedTools).toEqual([]);
     expect(config.diagnostics?.externalMcpServers).toEqual([]);
+  });
+
+  it("attaches built-in open_computer_use MCP server by default", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_OPEN_COMPUTER_USE_DISABLED: "0",
+      },
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+        },
+      },
+    });
+
+    const server = config.options.mcpServers.open_computer_use;
+    expect(server?.type).toBe("stdio");
+    expect(server?.command).toBe(process.execPath);
+    expect(Array.isArray(server?.args)).toBe(true);
+    expect(server?.args?.[1]).toBe("mcp");
+    expect(String(server?.args?.[0] || "")).toContain(
+      path.join("open-computer-use", "bin", "open-computer-use"),
+    );
+    expect(config.options.allowedTools).toContain("mcp__open_computer_use__*");
+    expect(config.diagnostics?.externalMcpServers).toContain("open_computer_use");
+  });
+
+  it("can disable built-in open_computer_use MCP server via env switch", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_OPEN_COMPUTER_USE_DISABLED: "1",
+      },
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.open_computer_use).toBeUndefined();
+    expect(config.options.allowedTools).toEqual(["Read"]);
+    expect(config.diagnostics?.externalMcpServers).toEqual([]);
+  });
+
+  it("supports explicit open_computer_use command override", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_OPEN_COMPUTER_USE_DISABLED: "0",
+        HANAKO_OPEN_COMPUTER_USE_COMMAND: "open-computer-use",
+      },
+      toolProfile: {
+        tools: {
+          builtin_enabled: ["Read"],
+        },
+      },
+    });
+
+    expect(config.options.mcpServers.open_computer_use).toEqual({
+      type: "stdio",
+      command: "open-computer-use",
+      args: ["mcp"],
+    });
   });
 
   it("keeps tool settings and Skill availability visible in noMemory tool sessions", () => {
