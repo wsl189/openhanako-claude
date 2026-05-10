@@ -24,10 +24,6 @@ function isTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || "").trim());
 }
 
-function isFalsy(value) {
-  return /^(0|false|no|off)$/i.test(String(value || "").trim());
-}
-
 function resolveOpenComputerUseEntryPath(env = {}) {
   const explicitEntry = String(
     env?.HANAKO_OPEN_COMPUTER_USE_ENTRY
@@ -96,38 +92,9 @@ export function resolveOpenComputerUseExternalServer(env = process.env, runtime 
       || /electron/i.test(commandBase)
       || !looksLikeNodeBinary
     ));
-  const isWindowsRuntime = String(runtime?.platform || "").trim() === "win32";
-  const disableWindowsAppLaunch = isTruthy(
-    env?.HANAKO_OPEN_COMPUTER_USE_DISABLE_WINDOWS_APP_LAUNCH
-      || env?.HANA_OPEN_COMPUTER_USE_DISABLE_WINDOWS_APP_LAUNCH,
-  );
-  const explicitWindowsAppLaunch = String(
-    env?.HANAKO_OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH
-      || env?.HANA_OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH
-      || env?.OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH
-      || "",
-  ).trim();
-  const shouldAllowWindowsAppLaunch = isWindowsRuntime
-    && !disableWindowsAppLaunch
-    && (explicitWindowsAppLaunch ? isTruthy(explicitWindowsAppLaunch) : true);
-  const disableWindowsFocusActions = isTruthy(
-    env?.HANAKO_OPEN_COMPUTER_USE_DISABLE_WINDOWS_FOCUS_ACTIONS
-      || env?.HANA_OPEN_COMPUTER_USE_DISABLE_WINDOWS_FOCUS_ACTIONS,
-  );
-  const explicitWindowsFocusActions = String(
-    env?.HANAKO_OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS
-      || env?.HANA_OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS
-      || env?.OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS
-      || "",
-  ).trim();
-  const shouldAllowWindowsFocusActions = isWindowsRuntime
-    && !disableWindowsFocusActions
-    && (explicitWindowsFocusActions ? isTruthy(explicitWindowsFocusActions) : true);
 
   const serverEnv = {};
   if (shouldRunAsNode) serverEnv.ELECTRON_RUN_AS_NODE = "1";
-  if (shouldAllowWindowsAppLaunch) serverEnv.OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH = "1";
-  if (shouldAllowWindowsFocusActions) serverEnv.OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS = "1";
   const normalizedServerEnv = Object.keys(serverEnv).length > 0 ? serverEnv : undefined;
 
   return {

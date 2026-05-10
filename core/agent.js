@@ -649,6 +649,7 @@ export class Agent {
       : [...runtimeCustomNames];
     const hasMiniMaxMcpWebSearch = enabledCustom.includes(MINIMAX_MCP_WEB_SEARCH_SWITCH);
     const hasMiniMaxMcpUnderstandImage = enabledCustom.includes(MINIMAX_MCP_UNDERSTAND_IMAGE_SWITCH);
+    const isWindowsRuntime = process.platform === "win32";
     const externalMcpTools = [
       ...resolveExternalMcpServers(this._config, {
         externalServers: this._engine?.getExternalMcpServers?.() || {},
@@ -869,7 +870,7 @@ export class Agent {
           ? "当用户要求使用自己已登录的 Chrome（例如复用登录态、处理 OAuth、操作真实标签页）时，优先使用 mcp__claude_in_chrome__* 工具。每轮浏览器自动化建议先调用 mcp__claude_in_chrome__tabs_context_mcp。"
           : "When the user asks to use their logged-in Chrome (session reuse, OAuth, real tabs), prioritize mcp__claude_in_chrome__* tools. Start each browser automation flow with mcp__claude_in_chrome__tabs_context_mcp.");
       }
-      if (hasOpenComputerUse) {
+      if (hasOpenComputerUse && !isWindowsRuntime) {
         parts.push(isZh
           ? "使用 mcp__open_computer_use__* 时，先调用 mcp__open_computer_use__list_apps 获取可用应用列表；后续 get_app_state/click/type_text 等工具的 app 参数必须优先使用 list_apps 返回的精确应用名或标识符，不要自行猜测。若报 app not found（Windows 更常见），立即重新调用 list_apps 并改用列表中最匹配项后重试。"
           : "When using mcp__open_computer_use__* tools, call mcp__open_computer_use__list_apps first. For follow-up tools (get_app_state/click/type_text, etc.), set the app field to an exact app name or identifier from list_apps instead of guessing. If app not found occurs (common on Windows), call list_apps again and retry with the closest returned match.");

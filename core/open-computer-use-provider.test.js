@@ -42,10 +42,6 @@ describe("resolveOpenComputerUseExternalServer", () => {
         type: "stdio",
         command: path.join(root, "dist", "windows", "amd64", "open-computer-use.exe"),
         args: ["mcp"],
-        env: {
-          OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH: "1",
-          OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS: "1",
-        },
       });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -73,8 +69,6 @@ describe("resolveOpenComputerUseExternalServer", () => {
         args: [entryPath, "mcp"],
         env: {
           ELECTRON_RUN_AS_NODE: "1",
-          OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH: "1",
-          OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS: "1",
         },
       });
     } finally {
@@ -102,17 +96,13 @@ describe("resolveOpenComputerUseExternalServer", () => {
         type: "stdio",
         command: "open-computer-use",
         args: ["mcp"],
-        env: {
-          OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH: "1",
-          OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS: "1",
-        },
       });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("supports disabling Windows app launch fallback via env", () => {
+  it("ignores Windows app-launch/focus env toggles", () => {
     const root = mkTempDir("hanako-ocu-provider-win-disable-launch-");
     try {
       const entryPath = createFakeOpenComputerUsePackage(root, { includeWindowsExe: true });
