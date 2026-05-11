@@ -1789,7 +1789,7 @@
     },
     "cron": {
       "label": "Scheduled Tasks",
-      "description": "Create and manage scheduled tasks. Scheduled tasks run automatically in the background, spawning an independent session to execute the specified prompt when triggered.\nActions:\n- list: View all tasks\n- add(type, schedule, prompt, label?, model?): Create a task\n  - type \"at\": One-time, schedule is an ISO time string\n  - type \"every\": Interval, schedule is milliseconds (e.g. 3600000 = 1 hour)\n  - type \"cron\": Cron expression (e.g. \"0 7 * * *\" = every day at 7 AM)\n  - model: Optional, specify the model for task execution (defaults to the chat model)\n- remove(id): Delete a task\n- toggle(id): Enable/disable a task\n\nFor add, write prompt as an execution instruction: include task goal, decision criteria, and whether to notify. If notification is needed, specify notify title/body/target clearly. Avoid slogan-like one-liner reminders only.",
+      "description": "Create and manage scheduled tasks. Scheduled tasks run automatically in the background, spawning an independent session to execute the specified prompt when triggered.\nActions:\n- list: View all tasks\n- add(type, schedule, prompt, label?, model?, notifyTarget?, notifyPlatform?): Create a task\n  - type \"at\": One-time, schedule is an ISO time string\n  - type \"every\": Interval, schedule is milliseconds (e.g. 3600000 = 1 hour)\n  - type \"cron\": Cron expression (e.g. \"0 7 * * *\" = every day at 7 AM)\n  - model: Optional, specify the model for task execution (defaults to the chat model)\n  - notifyTarget: Optional, local | platform | auto\n  - notifyPlatform: Optional, wechat | telegram | feishu | qq (when set, delivery is pinned to that platform)\n- remove(id): Delete a task\n- toggle(id): Enable/disable a task\n\nFor add, write prompt as an execution instruction: include task goal, decision criteria, and whether to notify. If notification is needed, specify notify title/body/target clearly; when a platform is specified, include notify platform/strict explicitly.",
       "actionDesc": "Action type",
       "typeDesc": "Schedule type: at | every | cron (optional; inferred from schedule when omitted)",
       "scheduleDesc": "Schedule parameter: at=ISO time; every=1m/5m/1h/60000; cron=5-field expression (e.g. 0 7 * * *). Do not use \"every minute\" with type=cron",
@@ -1800,7 +1800,7 @@
     },
     "notify": {
       "label": "Notification",
-      "description": "Send a system notification (desktop popup) to the user.\nUse cases:\n- The user says 'remind me about xxx', 'notify me when...', 'don't let me forget xxx'\n- A scheduled task prompt explicitly includes notification intent\n- A monitoring/scheduled task discovers something requiring user attention\nIf everything is normal with no issues, do not call this tool.",
+      "description": "Send a notification to the user.\nUse cases:\n- The user says 'remind me about xxx', 'notify me when...', 'don't let me forget xxx'\n- A scheduled task prompt explicitly includes notification intent\n- A monitoring/scheduled task discovers something requiring user attention\nParameters:\n- target=local: desktop popup only\n- target=platform: platform DM (can be paired with platform for an exact destination)\n- target=auto: prefer platform, fallback to desktop if needed\n- strict=true: when a platform is specified, do not fallback to desktop on failure\nIf everything is normal with no issues, do not call this tool.",
       "titleDesc": "Notification title (brief)",
       "bodyDesc": "Notification content"
     },

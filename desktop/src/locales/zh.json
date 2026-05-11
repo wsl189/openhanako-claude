@@ -1789,7 +1789,7 @@
     },
     "cron": {
       "label": "定时任务",
-      "description": "创建和管理定时任务。定时任务在后台自动执行，到时间时会开一个独立 session 运行指定的 prompt。\n操作：\n- list：查看所有任务\n- add(type, schedule, prompt, label?, model?)：创建任务\n  - type \"at\"：一次性，schedule 为 ISO 时间字符串\n  - type \"every\"：间隔，schedule 为毫秒数（如 3600000 = 1 小时）\n  - type \"cron\"：cron 表达式（如 \"0 7 * * *\" = 每天早上 7 点）\n  - model：可选，指定执行任务使用的模型（不填则使用默认对话模型）\n- remove(id)：删除任务\n- toggle(id)：启用/禁用任务\n\nadd 时建议把 prompt 写成“执行指令”，写清：任务目标、什么时候需要提醒；若需要提醒，明确调用 notify工具 以及 title/body/target参数。避免只写一句口号式提醒文案。",
+      "description": "创建和管理定时任务。定时任务在后台自动执行，到时间时会开一个独立 session 运行指定的 prompt。\n操作：\n- list：查看所有任务\n- add(type, schedule, prompt, label?, model?, notifyTarget?, notifyPlatform?)：创建任务\n  - type \"at\"：一次性，schedule 为 ISO 时间字符串\n  - type \"every\"：间隔，schedule 为毫秒数（如 3600000 = 1 小时）\n  - type \"cron\"：cron 表达式（如 \"0 7 * * *\" = 每天早上 7 点）\n  - model：可选，指定执行任务使用的模型（不填则使用默认对话模型）\n  - notifyTarget：可选，local | platform | auto\n  - notifyPlatform：可选，wechat | telegram | feishu | qq（指定后固定发到该平台）\n- remove(id)：删除任务\n- toggle(id)：启用/禁用任务\n\nadd 时建议把 prompt 写成“执行指令”，写清：任务目标、什么时候需要提醒；若需要提醒，明确调用 notify工具 以及 title/body/target，指定平台时补充 platform/strict 参数。避免只写一句口号式提醒文案。",
       "actionDesc": "操作类型",
       "typeDesc": "调度类型：at | every | cron（可省略，系统会尝试按 schedule 自动推断）",
       "scheduleDesc": "调度参数：at=ISO 时间；every=1m/5m/1h/60000；cron=五段表达式（如 0 7 * * *）。不要写 \"every minute\" + type=cron",
@@ -1800,7 +1800,7 @@
     },
     "notify": {
       "label": "通知",
-      "description": "向用户发送系统通知（桌面弹窗）。\n使用场景：\n- 用户说「提醒我 xxx」「到时候通知我」「记得叫我 xxx」\n- 定时任务的 prompt 中明确包含「通知」「提醒」等意图\n- 巡检/定时任务中发现需要用户关注的事项\n如果一切正常、无异常，不要调用此工具。",
+      "description": "向用户发送通知。\n使用场景：\n- 用户说「提醒我 xxx」「到时候通知我」「记得叫我 xxx」\n- 定时任务的 prompt 中明确包含「通知」「提醒」等意图\n- 巡检/定时任务中发现需要用户关注的事项\n参数说明：\n- target=local：仅本地弹窗\n- target=platform：发平台私聊（可配合 platform 指定具体平台）\n- target=auto：优先平台，失败可回退本地\n- strict=true：指定平台失败时不要回退本地\n如果一切正常、无异常，不要调用此工具。",
       "titleDesc": "通知标题（简短）",
       "bodyDesc": "通知内容"
     },

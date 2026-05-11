@@ -206,15 +206,21 @@ export class Hub {
 
   /**
    * 统一通知出口：
-   * - target=platform: 优先发平台私聊，失败回退本地弹窗
+   * - target=platform: 发平台私聊，默认失败回退本地弹窗
    * - target=auto: 优先发平台，失败再本地弹窗
    * - target=local: 仅本地弹窗
+   * - 指定 platform 时，只在该平台内尝试；strict=true 时失败不回退本地
    */
-  async notify({ title, body, target = "auto", agentId = null, source = "notify_tool", ...meta } = {}) {
+  async notify({ title, body, target = "auto", platform = null, strict = false, agentId = null, source = "notify_tool", ...meta } = {}) {
     const normalized = (() => {
       const v = String(target || "auto").toLowerCase();
       return (v === "local" || v === "platform" || v === "auto") ? v : "auto";
     })();
+    const normalizedPlatform = (() => {
+      const v = String(platform || "").trim().toLowerCase();
+      return (v === "wechat" || v === "telegram" || v === "feishu" || v === "qq") ? v : null;
+    })();
+    const strictMode = strict === true;
 
     const text = [String(title || "").trim(), String(body || "").trim()]
       .filter(Boolean)
@@ -223,15 +229,22 @@ export class Hub {
 
     if (normalized !== "local" && text && this._bridgeManager?.sendProactive) {
       try {
-        const sent = await this._bridgeManager.sendProactive(text, { agentId });
+        const sent = await this._bridgeManager.sendProactive(text, {
+          agentId,
+          platform: normalizedPlatform,
+          strict: strictMode,
+        });
         if (sent) {
           return { delivered: "platform", ...sent };
         }
-      } catch {}
+      } catch (err) {
+        if (strictMode) throw err;
+      }
+      if (strictMode) throw new Error("指定平台发送失败");
     }
 
     this._eventBus.emit(
-      { type: "notification", title, body, agentId, source, ...meta },
+      { type: "notification", title, body, agentId, source, platform: normalizedPlatform, strict: strictMode, ...meta },
       null,
     );
     return { delivered: "local" };
@@ -258,6 +271,8 @@ export class Hub {
           title,
           body,
           target: opts?.target || "auto",
+          platform: opts?.platform || null,
+          strict: opts?.strict === true,
           agentId: path.basename(agent?.agentDir || "") || null,
           source: "notify_tool",
         });

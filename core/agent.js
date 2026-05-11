@@ -34,6 +34,7 @@ import { createSetupSettingsTool } from "../lib/tools/setup-settings-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
 import { resolveBrowserProvider } from "./browser-provider.js";
 import { resolveExternalMcpServers } from "./claude-runtime-config.js";
+import { normalizeBridgeBots } from "../lib/bridge/session-key.js";
 import { t } from "../server/i18n.js";
 
 export class Agent {
@@ -796,6 +797,58 @@ export class Agent {
         )
       );
     }
+
+    const boundPlatforms = (() => {
+      try {
+        const prefs = this._engine?.getPreferences?.() || {};
+        const bridge = prefs.bridge || {};
+        const out = [];
+        const add = (name) => { if (!out.includes(name)) out.push(name); };
+        const isTargetAgent = (value) => String(value || "").trim() === agentId;
+
+        const wechatCfg = bridge.wechat || {};
+        if (isTargetAgent(wechatCfg.agentId) && String(wechatCfg.botToken || "").trim()) add("wechat");
+
+        for (const platform of ["telegram", "feishu", "qq"]) {
+          const cfg = bridge[platform] || {};
+          const bots = normalizeBridgeBots(platform, cfg);
+          const matched = bots.some((bot) => {
+            if (!isTargetAgent(bot?.agentId)) return false;
+            if (bot?.enabled === false) return false;
+            if (platform === "telegram") return !!String(bot?.token || "").trim();
+            if (platform === "feishu") return !!String(bot?.appId || bot?.appID || "").trim() && !!String(bot?.appSecret || bot?.appsecret || "").trim();
+            if (platform === "qq") return !!String(bot?.appID || bot?.appId || "").trim() && !!String(bot?.appSecret || bot?.token || "").trim();
+            return false;
+          });
+          if (matched) add(platform);
+        }
+
+        return out;
+      } catch {
+        return [];
+      }
+    })();
+
+    parts.push(isZh
+      ? [
+          "",
+          "## 平台提醒路由",
+          "",
+          `当前此 agent 绑定的平台：${boundPlatforms.length ? boundPlatforms.join(" / ") : "（无）"}`,
+          "- 当用户明确指定平台（如“微信提醒我”）时，创建定时任务或调用 notify 必须显式设置目标平台。",
+          "- 指定平台时，notify 必须使用：target=platform、platform=<用户指定平台>、strict=true。",
+          "- 如果用户指定的平台不在绑定列表或当前不可达，必须明确告知失败原因，不要悄悄改发到其他平台。",
+        ].join("\n")
+      : [
+          "",
+          "## Platform Notification Routing",
+          "",
+          `Platforms currently bound to this agent: ${boundPlatforms.length ? boundPlatforms.join(" / ") : "(none)"}`,
+          "- When the user explicitly names a platform (for example, \"remind me on WeChat\"), scheduled jobs or notify calls must set that platform explicitly.",
+          "- For a specified platform, notify must use: target=platform, platform=<user-specified platform>, strict=true.",
+          "- If the specified platform is not bound or unavailable, clearly report the failure reason and do not silently switch to another platform.",
+        ].join("\n")
+    );
 
     if (includeToolAvailability) {
       parts.push(isZh

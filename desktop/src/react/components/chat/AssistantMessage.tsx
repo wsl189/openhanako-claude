@@ -1028,6 +1028,8 @@ const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, stat
   const label = (jobData.label as string) || (jobData.prompt as string)?.slice(0, 40) || '';
   const scheduleType = String(jobData.type || '');
   const schedule = String(jobData.schedule || '');
+  const notifyTarget = String(jobData.notifyTarget || '').trim().toLowerCase();
+  const notifyPlatform = String(jobData.notifyPlatform || '').trim().toLowerCase();
 
   useEffect(() => {
     setStatus(initialStatus);
@@ -1045,6 +1047,26 @@ const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, stat
     if (scheduleType === 'cron') return wt('automation.cardScheduleCron', { schedule });
     return '';
   }, [scheduleType, schedule]);
+
+  const notifyText = useMemo(() => {
+    const wt = (key: string, vars?: Record<string, string>) => (window as any).t?.(key, vars) || '';
+    const targetMap: Record<string, string> = {
+      local: wt('common.local') || 'local',
+      platform: wt('common.platform') || 'platform',
+      auto: 'auto',
+    };
+    const platformMap: Record<string, string> = {
+      wechat: wt('settings.bridge.wechat') || 'wechat',
+      telegram: 'Telegram',
+      feishu: 'Feishu',
+      qq: 'QQ',
+    };
+
+    if (!notifyTarget && !notifyPlatform) return '';
+    const targetLabel = targetMap[notifyTarget] || notifyTarget || 'auto';
+    const platformLabel = platformMap[notifyPlatform] || notifyPlatform;
+    return platformLabel ? `notify: ${targetLabel}/${platformLabel}` : `notify: ${targetLabel}`;
+  }, [notifyTarget, notifyPlatform]);
 
   const handleApprove = async () => {
     try {
@@ -1088,6 +1110,7 @@ const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, stat
             {status === 'approved' ? ((window as any).t?.('automation.cardCreated') || '已创建') : (window as any).t('common.rejected')}
           </div>
           {scheduleText ? <div className="cron-confirm-meta">{scheduleText}</div> : null}
+          {notifyText ? <div className="cron-confirm-meta">{notifyText}</div> : null}
         </div>
         <div className="cron-confirm-title">{label}</div>
       </div>
@@ -1099,6 +1122,7 @@ const CronConfirmCard = memo(function CronConfirmCard({ confirmId, jobData, stat
       <div className="cron-confirm-head">
         <div className="cron-confirm-status pending">{(window as any).t('automation.cardPending')}</div>
         {scheduleText ? <div className="cron-confirm-meta">{scheduleText}</div> : null}
+        {notifyText ? <div className="cron-confirm-meta">{notifyText}</div> : null}
       </div>
       <div className="cron-confirm-title">{label}</div>
       <div className="cron-confirm-actions">

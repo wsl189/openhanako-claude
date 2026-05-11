@@ -244,6 +244,11 @@ export default async function deskRoute(app, { engine, hub }) {
     return (v === "local" || v === "platform" || v === "auto") ? v : fallback;
   }
 
+  function normalizeNotifyPlatform(value) {
+    const v = String(value || "").trim().toLowerCase();
+    return (v === "wechat" || v === "telegram" || v === "feishu" || v === "qq") ? v : "";
+  }
+
   function resolveCronTarget(input = {}) {
     const explicitAgentId = typeof input.agentId === "string" ? input.agentId.trim() : "";
     if (explicitAgentId) {
@@ -467,6 +472,7 @@ export default async function deskRoute(app, { engine, hub }) {
           label: params.label,
           model: params.model,
           notifyTarget: normalizeNotifyTarget(params.notifyTarget, "auto"),
+          notifyPlatform: normalizeNotifyPlatform(params.notifyPlatform),
         });
         return {
           ok: true,
@@ -517,6 +523,9 @@ export default async function deskRoute(app, { engine, hub }) {
 
         if (partial.notifyTarget !== undefined) {
           partial.notifyTarget = normalizeNotifyTarget(partial.notifyTarget, current.notifyTarget || "auto");
+        }
+        if (partial.notifyPlatform !== undefined) {
+          partial.notifyPlatform = normalizeNotifyPlatform(partial.notifyPlatform);
         }
 
         const job = store.updateJob(id, partial);

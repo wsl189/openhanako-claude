@@ -470,6 +470,8 @@ export class AgentManager {
         title,
         body,
         target: opts?.target || "auto",
+        platform: opts?.platform || null,
+        strict: opts?.strict === true,
         agentId: path.basename(ag.agentDir || ""),
         source: "notify_tool",
       });
