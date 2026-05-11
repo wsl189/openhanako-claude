@@ -657,7 +657,6 @@ export class Agent {
     ];
     if (hasMiniMaxMcpWebSearch) externalMcpTools.push("mcp__MiniMax__web_search");
     if (hasMiniMaxMcpUnderstandImage) externalMcpTools.push("mcp__MiniMax__understand_image");
-    const hasClaudeInChrome = externalMcpTools.includes("mcp__claude_in_chrome__*");
     const hasOpenComputerUse = externalMcpTools.includes("mcp__open_computer_use__*");
     const hasTool = (name) => enabledBuiltin.includes(name) || enabledCustom.includes(name);
     const formatToolList = (list = []) => {
@@ -787,12 +786,12 @@ export class Agent {
       parts.push(isZh
         ? (
           canSetupSettings
-            ? "\n## 设置修改\n\n凡是涉及安装/更新 skill、配置 MCP、更新身份/意识、清空指定 agent 记忆（包括 pinned/permanent memory）等设置操作，一律优先调用 setup_settings 工具执行。不要用 Bash 去改 ~/.claude、claudecode 或其他外部产品配置。仅在 setup_settings 工具明确失败时，再给手动步骤。"
+            ? "\n## 设置修改\n\n凡是涉及创建/删除 agent、切换每个 agent 的工具开关、设置默认工作区、设置默认模型、安装/更新 skill、配置 MCP、更新身份/意识、清空指定 agent 记忆（包括 pinned/permanent memory）等设置操作，一律优先调用 setup_settings 工具执行。所有设置只允许落在 Hanako 自己的目录与配置里（如 ~/.hanako、当前 agent 目录）；严禁写入 ~/.claude、CLAUDE_CONFIG_DIR、claudecode 或其他外部产品配置。仅在 setup_settings 工具明确失败时，再给手动步骤。"
             : "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
         )
         : (
           canSetupSettings
-            ? "\n## Settings Changes\n\nFor any settings operation (install/update skills, configure MCP, update identity/ishiki, clear memory for a target agent including pinned/permanent memory), always call setup_settings first. Do not use Bash to edit ~/.claude, claudecode, or other external-product configs. Provide manual steps only if setup_settings explicitly fails."
+            ? "\n## Settings Changes\n\nFor any settings operation (create/delete agents, per-agent tool toggles, default workspace, default model, install/update skills, configure MCP, update identity/ishiki, clear memory for a target agent including pinned/permanent memory), always call setup_settings first. All settings must stay inside Hanako-owned directories/configs (for example ~/.hanako and the current agent directory). Never write ~/.claude, CLAUDE_CONFIG_DIR, claudecode, or any external-product config. Provide manual steps only if setup_settings explicitly fails."
             : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
         )
       );
@@ -855,20 +854,10 @@ export class Agent {
         parts.push(isZh
           ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
           : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser.");
-      } else if (!hasSearchTool && hasClaudeInChrome) {
+      } else if (!hasSearchTool && !hasEmbeddedBrowser) {
         parts.push(isZh
-          ? "如果当前没有可用搜索工具且需要联网检索，请使用 mcp__claude_in_chrome__* 工具访问已登录 Chrome，并先调用 mcp__claude_in_chrome__tabs_context_mcp 获取标签页上下文。"
-          : "If no search tool is available and web lookup is needed, use mcp__claude_in_chrome__* tools against logged-in Chrome, and call mcp__claude_in_chrome__tabs_context_mcp first.");
-      } else if (!hasSearchTool && !hasEmbeddedBrowser && !hasClaudeInChrome) {
-        parts.push(isZh
-          ? "当前无可用联网检索工具（search/browser/claude-in-chrome）；需要联网信息时请明确说明能力受限。"
-          : "No web lookup tools are available (search/browser/claude-in-chrome). If internet data is required, clearly state this limitation.");
-      }
-
-      if (hasClaudeInChrome) {
-        parts.push(isZh
-          ? "当用户要求使用自己已登录的 Chrome（例如复用登录态、处理 OAuth、操作真实标签页）时，优先使用 mcp__claude_in_chrome__* 工具。每轮浏览器自动化建议先调用 mcp__claude_in_chrome__tabs_context_mcp。"
-          : "When the user asks to use their logged-in Chrome (session reuse, OAuth, real tabs), prioritize mcp__claude_in_chrome__* tools. Start each browser automation flow with mcp__claude_in_chrome__tabs_context_mcp.");
+          ? "当前无可用联网检索工具（search/browser）；需要联网信息时请明确说明能力受限。"
+          : "No web lookup tools are available (search/browser). If internet data is required, clearly state this limitation.");
       }
       if (hasOpenComputerUse && !isWindowsRuntime) {
         parts.push(isZh

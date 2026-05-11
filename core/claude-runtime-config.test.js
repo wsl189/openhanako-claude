@@ -610,7 +610,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.allowedTools).toEqual([]);
   });
 
-  it("allows a user-configured claude_in_chrome external MCP server", () => {
+  it("filters removed claude_in_chrome external MCP server", () => {
     const config = createConfig({
       agent: {
         config: {
@@ -633,17 +633,13 @@ describe("buildClaudeRuntimeConfig env", () => {
       },
     });
 
-    expect(config.options.mcpServers.claude_in_chrome).toEqual({
-      type: "stdio",
-      command: "node",
-      args: ["/tmp/custom-browser-mcp.js", "--claude-in-chrome-mcp"],
-    });
-    expect(config.options.allowedTools).toContain("mcp__claude_in_chrome__*");
+    expect(config.options.mcpServers.claude_in_chrome).toBeUndefined();
+    expect(config.options.allowedTools).not.toContain("mcp__claude_in_chrome__*");
     expect(config.options.allowedTools).toContain("Read");
-    expect(config.diagnostics?.externalMcpServers).toContain("claude_in_chrome");
+    expect(config.diagnostics?.externalMcpServers || []).not.toContain("claude_in_chrome");
   });
 
-  it("does not auto-attach claude_in_chrome MCP without external config", () => {
+  it("does not auto-attach removed claude_in_chrome MCP", () => {
     const config = createConfig({
       env: {
         HANAKO_BROWSER_PROVIDER: "auto",

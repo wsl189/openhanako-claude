@@ -26,6 +26,7 @@ import { rebuildIndex } from "../../lib/tools/experience.js";
 import { getBuiltinExternalMcpServers, getBuiltinExternalMcpServerNames } from "../../core/builtin-mcp-servers.js";
 
 // ── 工具函数 ──
+const REMOVED_EXTERNAL_MCP_SERVER_NAMES = new Set(["claude_in_chrome"]);
 
 function validateId(id) {
   return id && !id.includes("..") && !id.includes("/") && !id.includes("\\");
@@ -103,6 +104,10 @@ function normalizeMcpServerKey(name) {
   return String(name || "").trim().replace(/[^A-Za-z0-9_]/g, "_");
 }
 
+function isRemovedExternalMcpServer(name) {
+  return REMOVED_EXTERNAL_MCP_SERVER_NAMES.has(normalizeMcpServerKey(name));
+}
+
 function parseMcpArgs(rawArgs) {
   if (Array.isArray(rawArgs)) {
     return rawArgs.map(v => String(v || "").trim()).filter(Boolean);
@@ -176,6 +181,7 @@ function normalizeMcpPatch(rawMcp) {
     for (const [rawName, rawServer] of Object.entries(rawMcp.external_servers)) {
       const name = normalizeMcpServerKey(rawName);
       if (!name) throw new Error("mcp server name is required");
+      if (isRemovedExternalMcpServer(name)) continue;
       out.external_servers[name] = rawServer === null ? null : normalizeExternalMcpServer(rawServer);
     }
   }
@@ -193,10 +199,18 @@ function normalizeMcpPatch(rawMcp) {
 function injectGlobalMcpConfig(engine, config) {
   const globalServers = engine.getExternalMcpServers?.() || {};
   const builtinServers = getBuiltinExternalMcpServers(process.env);
-  const mergedServers = {
-    ...(globalServers && typeof globalServers === "object" ? globalServers : {}),
-    ...(builtinServers && typeof builtinServers === "object" ? builtinServers : {}),
-  };
+  const mergedServers = {};
+  const sources = [
+    (globalServers && typeof globalServers === "object" ? globalServers : {}),
+    (builtinServers && typeof builtinServers === "object" ? builtinServers : {}),
+  ];
+  for (const source of sources) {
+    for (const [rawName, value] of Object.entries(source)) {
+      const name = normalizeMcpServerKey(rawName);
+      if (!name || isRemovedExternalMcpServer(name)) continue;
+      mergedServers[name] = value;
+    }
+  }
   const disabledServers = Array.isArray(config?.mcp?.disabled_servers)
     ? config.mcp.disabled_servers.map(name => normalizeMcpServerKey(name)).filter(Boolean)
     : [];
@@ -219,6 +233,7 @@ function promoteLegacyExternalMcpServers(engine, config, configPath) {
     const name = normalizeMcpServerKey(rawName);
     if (!name) continue;
     cleanupPatch[name] = null;
+    if (isRemovedExternalMcpServer(name)) continue;
     if (builtinServerNames.has(name)) continue;
     if (rawServer === null || currentGlobal[name] !== undefined) continue;
     globalPatch[name] = rawServer;
@@ -248,6 +263,7 @@ function extractGlobalMcpPatch(engine, partial) {
   for (const [rawName, value] of Object.entries(partial.mcp.external_servers || {})) {
     const name = normalizeMcpServerKey(rawName);
     if (!name) continue;
+    if (isRemovedExternalMcpServer(name)) continue;
     if (builtinServerNames.has(name)) {
       blocked.push(name);
       continue;

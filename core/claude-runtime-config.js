@@ -59,6 +59,7 @@ export const CLAUDE_INTERACTIVE_BUILTIN_TOOL_NAMES = [
 const MINIMAX_MCP_SERVER_KEY = "MiniMax";
 const RESERVED_MCP_SERVER_KEYS = new Set([
   "hanako",
+  "claude_in_chrome",
 ]);
 const MINIMAX_MCP_TOOL_BY_SWITCH = {
   [MINIMAX_MCP_WEB_SEARCH_SWITCH]: "web_search",

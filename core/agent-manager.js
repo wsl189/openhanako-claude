@@ -229,27 +229,16 @@ export class AgentManager {
     if (primaryChat) {
       config = config.replace(/chat: ""/, `chat: "${primaryChat}"`);
     }
-    // 新建助手默认开启所有自定义工具（写入显式白名单，避免 UI 显示为全关）
-    const defaultCustomEnabled = [...new Set(
-      (currentAgent?.getAllCustomTools?.() || [])
-        .map((tool) => String(tool?.name || "").trim())
-        .filter(Boolean),
-    )].sort();
-    if (defaultCustomEnabled.length > 0) {
-      const serialized = defaultCustomEnabled
-        .map((name) => `"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
-        .join(", ");
-      config = config.replace(
-        /(^\s*custom_enabled:\s*)\[[^\]]*\].*$/m,
-        `$1[${serialized}]`,
-      );
-    }
-
     // Sandbox is globally disabled, so new agents should not carry per-agent
     // sandbox mode/path config. Keep Claude permission strategy permissive.
     try {
       const parsed = YAML.load(config) || {};
       delete parsed.sandbox;
+      // Remove custom_enabled to keep "all custom tools enabled" semantics.
+      // (missing custom_enabled => allow all custom tools)
+      if (parsed.tools && typeof parsed.tools === "object") {
+        delete parsed.tools.custom_enabled;
+      }
       const claude = (parsed.claude && typeof parsed.claude === "object")
         ? parsed.claude
         : {};
