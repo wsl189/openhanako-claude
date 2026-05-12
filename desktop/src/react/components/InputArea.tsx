@@ -208,7 +208,6 @@ function InputAreaInner() {
   const chatSessions = useStore(s => s.chatSessions);
   const sessionTodos = useStore(s => s.sessionTodos);
   const attachedFiles = useStore(s => s.attachedFiles);
-  const docContextAttached = useStore(s => s.docContextAttached);
   const artifacts = useStore(s => s.artifacts);
   const currentArtifactId = useStore(s => s.currentArtifactId);
   const previewOpen = useStore(s => s.previewOpen);
@@ -245,12 +244,12 @@ function InputAreaInner() {
   const [queuedTasks, setQueuedTasks] = useState<QueuedChatTask[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachFileInputRef = useRef<HTMLInputElement>(null);
   const isComposing = useRef(false);
   const processingQueuedTaskRef = useRef(false);
   const voiceAnchorRef = useRef<{ prefix: string; suffix: string; interim: string } | null>(null);
   const textDraftBySessionRef = useRef<Record<string, string>>({});
   const attachmentDraftBySessionRef = useRef<Record<string, AttachedFile[]>>({});
-  const docContextDraftBySessionRef = useRef<Record<string, boolean>>({});
 
   const buildVoiceAnchoredText = useCallback((anchor: { prefix: string; suffix: string }, rawText: string) => {
     const text = String(rawText || '').trim();
@@ -413,35 +412,29 @@ function InputAreaInner() {
   const removeAttachedFile = useStore(s => s.removeAttachedFile);
   const setAttachedFiles = useStore(s => s.setAttachedFiles);
   const clearAttachedFiles = useStore(s => s.clearAttachedFiles);
-  const toggleDocContext = useStore(s => s.toggleDocContext);
-  const setDocContextAttached = useStore(s => s.setDocContextAttached);
 
-  // 按 session 保存输入草稿（文本 / 附件 / 文档上下文开关）
+  // 按 session 保存输入草稿（文本 / 附件）
   useEffect(() => {
     textDraftBySessionRef.current[inputSessionKey] = inputText;
   }, [inputText, inputSessionKey]);
 
   useEffect(() => {
     attachmentDraftBySessionRef.current[inputSessionKey] = attachedFiles.map((file) => ({ ...file }));
-    docContextDraftBySessionRef.current[inputSessionKey] = docContextAttached;
-  }, [attachedFiles, docContextAttached, inputSessionKey]);
+  }, [attachedFiles, inputSessionKey]);
 
   useEffect(() => {
     const prevKey = prevInputSessionKeyRef.current;
     if (prevKey !== inputSessionKey) {
       textDraftBySessionRef.current[prevKey] = inputText;
       attachmentDraftBySessionRef.current[prevKey] = attachedFiles.map((file) => ({ ...file }));
-      docContextDraftBySessionRef.current[prevKey] = docContextAttached;
     }
     prevInputSessionKeyRef.current = inputSessionKey;
 
     const nextText = textDraftBySessionRef.current[inputSessionKey] ?? '';
     const nextFiles = (attachmentDraftBySessionRef.current[inputSessionKey] || []).map((file) => ({ ...file }));
-    const nextDocContextAttached = !!docContextDraftBySessionRef.current[inputSessionKey];
 
     setInputText(nextText);
     setAttachedFiles(nextFiles);
-    setDocContextAttached(nextDocContextAttached);
     setSlashMenuOpen(false);
   }, [inputSessionKey]);
 
@@ -471,6 +464,7 @@ function InputAreaInner() {
     return { path: art.filePath, name: art.title || art.filePath.split('/').pop() || '' };
   }, [previewOpen, currentArtifactId, artifacts]);
   const hasDoc = !!currentDoc;
+  const autoDocContextAttached = hasDoc;
 
   // ── 统一命令发送 ──
 
@@ -481,7 +475,7 @@ function InputAreaInner() {
     const text = inputText.trim();
     const safeAttachedFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path));
     const hasFiles = safeAttachedFiles.length > 0;
-    if (!sessionPath || (!text && !hasFiles && !(docContextAttached && currentDoc))) return null;
+    if (!sessionPath || (!text && !hasFiles && !(autoDocContextAttached && currentDoc))) return null;
 
     const imageFiles = hasFiles ? safeAttachedFiles.filter(f => !f.isDirectory && isImageFile(f.name)) : [];
     let finalText = text;
@@ -518,7 +512,7 @@ function InputAreaInner() {
     }
 
     let docForRender: { path: string; name: string } | null = null;
-    if (docContextAttached && currentDoc) {
+    if (autoDocContextAttached && currentDoc) {
       const docBlock = `[参考文档] ${currentDoc.path}`;
       finalText = finalText ? `${finalText}\n\n${docBlock}` : docBlock;
       docForRender = currentDoc;
@@ -556,13 +550,12 @@ function InputAreaInner() {
       modelId,
       createdAt: Date.now(),
     };
-  }, [inputText, attachedFiles, docContextAttached, currentDoc]);
+  }, [inputText, attachedFiles, autoDocContextAttached, currentDoc]);
 
   const clearComposerAfterTaskCapture = useCallback(() => {
     setInputText('');
     clearAttachedFiles();
-    if (docContextAttached) setDocContextAttached(false);
-  }, [clearAttachedFiles, docContextAttached, setDocContextAttached]);
+  }, [clearAttachedFiles]);
 
   const executeChatTask = useCallback(async (task: QueuedChatTask, mode: 'prompt' | 'steer' = 'prompt') => {
     const ws = getWebSocket();
@@ -710,8 +703,39 @@ function InputAreaInner() {
   }, []);
 
   // Can send?
-  const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || (docContextAttached && hasDoc);
+  const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || autoDocContextAttached;
   const canSubmit = hasContent && connected && !sending;
+
+  const appendPickedFiles = useCallback((files: FileList | null) => {
+    if (!files || files.length === 0) return;
+
+    const maxAttachments = 9;
+    let count = attachedFiles.length;
+    const seenPathSet = new Set(attachedFiles.map((file) => file.path));
+
+    for (const file of Array.from(files)) {
+      if (count >= maxAttachments) break;
+      const absolutePath = window.platform?.getFilePath?.(file);
+      if (!absolutePath || isHttpUrlPath(absolutePath) || seenPathSet.has(absolutePath)) continue;
+
+      addAttachedFile({
+        path: absolutePath,
+        name: file.name || absolutePath.split('/').pop() || absolutePath,
+        isDirectory: false,
+      });
+      seenPathSet.add(absolutePath);
+      count += 1;
+    }
+  }, [addAttachedFile, attachedFiles]);
+
+  const handleAttachPickerChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    appendPickedFiles(e.target.files);
+    e.currentTarget.value = '';
+  }, [appendPickedFiles]);
+
+  const handlePickAttachments = useCallback(() => {
+    attachFileInputRef.current?.click();
+  }, []);
 
   // ── Auto resize ──
   useEffect(() => {
@@ -818,7 +842,7 @@ function InputAreaInner() {
     }
 
     const hasFiles = attachedFiles.filter((f) => !isHttpUrlPath(f.path)).length > 0;
-    if ((!text && !hasFiles && !docContextAttached) || !connected) return;
+    if ((!text && !hasFiles && !autoDocContextAttached) || !connected) return;
     if (sending) return;
     setSending(true);
 
@@ -846,7 +870,7 @@ function InputAreaInner() {
   }, [
     inputText,
     attachedFiles,
-    docContextAttached,
+    autoDocContextAttached,
     connected,
     inputIsStreaming,
     sending,
@@ -933,7 +957,6 @@ function InputAreaInner() {
     setQueuedTasks((prev) => prev.filter((item) => item.id !== task.id));
     setInputText(task.text);
     setAttachedFiles((task.attachments || []).map((file) => ({ ...file })));
-    setDocContextAttached(false);
     requestAnimationFrame(() => {
       const el = textareaRef.current;
       if (!el) return;
@@ -941,7 +964,7 @@ function InputAreaInner() {
       const pos = el.value.length;
       el.setSelectionRange(pos, pos);
     });
-  }, [setAttachedFiles, setDocContextAttached]);
+  }, [setAttachedFiles]);
 
   // ── Stop generation ──
   const handleStop = useCallback(() => {
@@ -1080,11 +1103,26 @@ function InputAreaInner() {
 
         <div className="input-bottom-bar">
           <div className="input-actions">
-            <DocContextButton
-              active={docContextAttached}
-              disabled={!hasDoc}
-              onToggle={toggleDocContext}
-            />
+            <div className="attach-menu-wrap">
+              <button
+                type="button"
+                className="attach-menu-trigger"
+                title={t('input.addAttachment')}
+                aria-label={t('input.addAttachment')}
+                onClick={handlePickAttachments}
+              >
+                <span className="attach-menu-plus">+</span>
+              </button>
+              <input
+                ref={attachFileInputRef}
+                className="attach-menu-file-input"
+                type="file"
+                multiple
+                onChange={handleAttachPickerChange}
+              />
+            </div>
+          </div>
+          <div className="input-controls">
             {voiceSupported && (
               <span
                 className={`voice-mic-indicator state-${voiceState}${voiceState !== 'idle' ? ' active' : ''}`}
@@ -1107,8 +1145,6 @@ function InputAreaInner() {
                 </span>
               </span>
             )}
-          </div>
-          <div className="input-controls">
             <ContextRing />
             <ModelSelector
               models={models}
@@ -1671,34 +1707,6 @@ function AttachedFilesBar({ files, onRemove }: {
         </span>
       ))}
     </div>
-  );
-}
-
-// ── Doc Context Button ──
-
-function DocContextButton({ active, disabled, onToggle }: {
-  active: boolean;
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  const { t } = useI18n();
-
-  return (
-    <button
-      className={'desk-context-btn' + (active ? ' active' : '')}
-      title={t('input.docContext')}
-      disabled={disabled}
-      onClick={onToggle}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="16" y1="13" x2="8" y2="13" />
-        <line x1="16" y1="17" x2="8" y2="17" />
-        <polyline points="10 9 9 9 8 9" />
-      </svg>
-      <span className="desk-context-label">{t('input.docContext')}</span>
-    </button>
   );
 }
 

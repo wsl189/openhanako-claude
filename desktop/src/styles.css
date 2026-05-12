@@ -5470,6 +5470,41 @@ html[data-platform="darwin"] .sv-topbar-title {
     gap: 0.2rem;
 }
 
+.attach-menu-wrap {
+    display: inline-flex;
+    align-items: center;
+}
+
+.attach-menu-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 1.32rem;
+    font-weight: 500;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    transition: color 120ms var(--ease-out), transform 120ms var(--ease-out);
+    -webkit-app-region: no-drag;
+}
+
+.attach-menu-plus {
+    display: inline-block;
+    transform: translateY(-1px);
+}
+
+.attach-menu-trigger:hover {
+    color: var(--accent);
+    transform: scale(1.06);
+}
+
+.attach-menu-file-input {
+    display: none;
+}
+
 .voice-mic-indicator {
     --voice-level: 0;
     position: relative;
