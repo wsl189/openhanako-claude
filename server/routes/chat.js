@@ -360,6 +360,20 @@ function getImageBlockPayload(block, defaultMime = "image/png") {
   return { base64, mimeType };
 }
 
+const CHAT_IMAGE_MIME_ALIASES = {
+  "image/jpg": "image/jpeg",
+  "image/pjpeg": "image/jpeg",
+  "image/x-jpeg": "image/jpeg",
+  "image/x-png": "image/png",
+};
+const CHAT_ALLOWED_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+function normalizeChatImageMime(mimeType = "") {
+  const normalized = String(mimeType || "").trim().toLowerCase();
+  if (!normalized) return "";
+  return CHAT_IMAGE_MIME_ALIASES[normalized] || normalized;
+}
+
 function shouldUseStructuredStreamForSession(engine, sessionPath) {
   const session = sessionPath ? engine.getSessionByPath(sessionPath) : engine.session;
   if (!session || typeof session !== "object") return false;
@@ -1276,23 +1290,31 @@ export default async function chatRoute(app, { engine, hub }) {
       if (msg.type === "prompt" && (msg.text || msg.images?.length)) {
         // 图片校验：最多 10 张，单张 ≤ 20MB，仅允许常见图片 MIME
         if (msg.images?.length) {
-          const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
           const MAX_IMAGES = 10;
           const MAX_BYTES = 20 * 1024 * 1024; // 20MB base64 ≈ 15MB 原始
           if (msg.images.length > MAX_IMAGES) {
             wsSend(ws, { type: "error", message: t("error.maxImages", { max: MAX_IMAGES }) });
             return;
           }
+          const normalizedImages = [];
           for (const img of msg.images) {
-            if (!img?.mimeType || !ALLOWED_MIME.has(img.mimeType)) {
-              wsSend(ws, { type: "error", message: t("error.unsupportedImageFormat", { mime: img?.mimeType || "unknown" }) });
+            const normalizedMime = normalizeChatImageMime(img?.mimeType || "");
+            if (!normalizedMime || !CHAT_ALLOWED_IMAGE_MIME.has(normalizedMime)) {
+              wsSend(ws, { type: "error", message: t("error.unsupportedImageFormat", { mime: img?.mimeType || normalizedMime || "unknown" }) });
               return;
             }
-            if (img.data && img.data.length > MAX_BYTES) {
+            const normalizedBase64 = String(img?.data || "").replace(/\s+/g, "");
+            if (normalizedBase64 && normalizedBase64.length > MAX_BYTES) {
               wsSend(ws, { type: "error", message: t("error.imageTooLarge") });
               return;
             }
+            normalizedImages.push({
+              type: "image",
+              data: normalizedBase64,
+              mimeType: normalizedMime,
+            });
           }
+          msg.images = normalizedImages;
         }
         // 只发图片没文字时补一个占位文本，防止空 text 导致某些 API 异常
         let promptText = msg.text || "";

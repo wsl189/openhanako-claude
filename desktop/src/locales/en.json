@@ -1413,6 +1413,9 @@
     "cronNoJobs": "No scheduled tasks",
     "cronAddNeedParams": "Error: add requires type, schedule, prompt parameters",
     "cronEveryMustBeNumber": "Error: schedule for every type must be a positive integer (milliseconds)",
+    "cronInvalidSchedule": "Error: cron schedule must be a valid 5-field expression (for example, 30 9 * * 1-5). Do not use fields like 9:30.",
+    "cronAtMustBeTime": "Error: schedule for at type must be a parseable time (ISO time recommended).",
+    "cronAmbiguousTimeMaybeAt": "Error: this looks like a one-time reminder time (for example, \"today/tomorrow at 3 PM\"). Do not create a daily cron job; use type=at with a concrete time.",
     "cronCreated": "Scheduled task created: {label} ({id})",
     "cronConfirmed": "User confirmed, scheduled task created: {label} ({id})",
     "cronRejected": "User cancelled scheduled task \"{label}\"",
@@ -1789,18 +1792,18 @@
     },
     "cron": {
       "label": "Scheduled Tasks",
-      "description": "Create and manage scheduled tasks. Scheduled tasks run automatically in the background, spawning an independent session to execute the specified prompt when triggered.\nActions:\n- list: View all tasks\n- add(type, schedule, prompt, label?, model?, notifyTarget?, notifyPlatform?): Create a task\n  - type \"at\": One-time, schedule is an ISO time string\n  - type \"every\": Interval, schedule is milliseconds (e.g. 3600000 = 1 hour)\n  - type \"cron\": Cron expression (e.g. \"0 7 * * *\" = every day at 7 AM)\n  - model: Optional, specify the model for task execution (defaults to the chat model)\n  - notifyTarget: Optional, local | platform | auto\n  - notifyPlatform: Optional, wechat | telegram | feishu | qq (when set, delivery is pinned to that platform)\n- remove(id): Delete a task\n- toggle(id): Enable/disable a task\n\nFor add, write prompt as an execution instruction: include task goal, decision criteria, and whether to notify. If notification is needed, specify notify title/body/target clearly; when a platform is specified, include notify platform/strict explicitly.",
+      "description": "Create and manage scheduled tasks. Scheduled tasks run automatically in the background, spawning an independent session to execute the specified prompt when triggered.\nActions:\n- list: View all tasks\n- add(type, schedule, prompt, label?, model?, notifyTarget?, notifyPlatform?): Create a task\n  - type \"at\": One-time, schedule is an ISO time string\n  - type \"every\": Interval, schedule is milliseconds (e.g. 3600000 = 1 hour)\n  - type \"cron\": Cron expression (e.g. \"0 7 * * *\" = every day at 7 AM)\n  - prompt: Required. This is the execution agent's task instruction after trigger (not a completion result or status report)\n  - model: Optional, specify the model for task execution (defaults to the chat model)\n  - notifyTarget: Optional, local | platform\n  - notifyPlatform: Optional, wechat | telegram | feishu | qq (when set, delivery is pinned to that platform)\n- remove(id): Delete a task\n- toggle(id): Enable/disable a task\n\nRecommended prompt structure:\n- Action: what to do on each trigger\n- Criteria: business success/failure conditions only (not timing/frequency)\n- Notification rule: how to call notify when needed (title/body/target; add platform/strict when platform-specific)\n- Do not repeat schedule frequency/time in prompt (for example, \"every minute\"); frequency is controlled by schedule/type",
       "actionDesc": "Action type",
       "typeDesc": "Schedule type: at | every | cron (optional; inferred from schedule when omitted)",
-      "scheduleDesc": "Schedule parameter: at=ISO time; every=1m/5m/1h/60000; cron=5-field expression (e.g. 0 7 * * *). Do not use \"every minute\" with type=cron",
-      "promptDesc": "Execution instruction for when the task triggers (required for add). Recommend specifying: what to do, when to call notify, and notify title/body/target",
+      "scheduleDesc": "Schedule parameter: at=ISO time; every=1m/5m/1h/60000; cron=5-field expression (e.g. 0 7 * * *). Do not use \"every minute\" with type=cron. If the user only says a time point like \"3 PM\" without recurring words (daily/weekly), prefer type=at (one-time).",
+      "promptDesc": "prompt is the execution instruction for the agent after trigger, not a completion result or status report. Include action, business criteria, and notify rule when needed; do not repeat frequency/time in prompt because schedule/type already controls it (required for add).",
       "labelDesc": "Task display label (optional)",
       "modelDesc": "Specify execution model (optional, defaults to the chat model)",
       "idDesc": "Task ID (required for remove/toggle)"
     },
     "notify": {
       "label": "Notification",
-      "description": "Send a notification to the user.\nUse cases:\n- The user says 'remind me about xxx', 'notify me when...', 'don't let me forget xxx'\n- A scheduled task prompt explicitly includes notification intent\n- A monitoring/scheduled task discovers something requiring user attention\nParameters:\n- target=local: desktop popup only\n- target=platform: platform DM (can be paired with platform for an exact destination)\n- target=auto: prefer platform, fallback to desktop if needed\n- strict=true: when a platform is specified, do not fallback to desktop on failure\nIf everything is normal with no issues, do not call this tool.",
+      "description": "Send a notification to the user.\nUse cases:\n- The user says 'remind me about xxx', 'notify me when...', 'don't let me forget xxx'\n- A scheduled task prompt explicitly includes notification intent\n- A monitoring/scheduled task discovers something requiring user attention\nParameters:\n- target=local: desktop popup only\n- target=platform: platform DM (can be paired with platform for an exact destination)\n- strict=true: when a platform is specified, do not fallback to desktop on failure\nIf everything is normal with no issues, do not call this tool.",
       "titleDesc": "Notification title (brief)",
       "bodyDesc": "Notification content"
     },
@@ -1827,6 +1830,10 @@
       "recordDescription": "Record a lesson learned to the experience library. Use when: the user points out a mistake and explains the correct approach, you discover an effective method after trying multiple approaches, or the user explicitly says 'from now on do/don't do this'. Each entry should be concise and direct, one sentence.",
       "recordCategoryDesc": "Category for the experience, a 2-4 word phrase, e.g. 'tool usage', 'search tips', 'response style'",
       "recordContentDesc": "The specific experience content, concise and direct, one sentence"
+    },
+    "setupSettings": {
+      "label": "Setup Settings",
+      "description": "Apply Hanako internal setup in one step: create/update/delete agents, set default model/workspace and tool permissions, update identity/ishiki, install skills from SKILL.md, configure MCP servers (stdio/sse/http), and clear memory (optionally including pinned memory). Supports dry_run for validation without writing changes."
     },
     "outputFile": {
       "label": "Present Files",

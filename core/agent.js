@@ -18,7 +18,6 @@ import { createPresentFilesTool } from "../lib/tools/output-file-tool.js";
 import { createArtifactTool } from "../lib/tools/artifact-tool.js";
 import { createChannelTool } from "../lib/tools/channel-tool.js";
 import { createAskAgentTool } from "../lib/tools/ask-agent-tool.js";
-import { createBrowserTool } from "../lib/tools/browser-tool.js";
 import {
   createMiniMaxMcpSwitchTools,
   MINIMAX_MCP_WEB_SEARCH_SWITCH,
@@ -32,7 +31,6 @@ import { createGenerateImagesTool } from "../lib/tools/generate-images-tool.js";
 import { createPdf2MdTool } from "../lib/tools/pdf2md-tool.js";
 import { createSetupSettingsTool } from "../lib/tools/setup-settings-tool.js";
 import { runCompatChecks } from "../lib/compat/index.js";
-import { resolveBrowserProvider } from "./browser-provider.js";
 import { resolveExternalMcpServers } from "./claude-runtime-config.js";
 import { normalizeBridgeBots } from "../lib/bridge/session-key.js";
 import { t } from "../server/i18n.js";
@@ -87,9 +85,7 @@ export class Agent {
     this._presentFilesTool = null;
     this._artifactTool = null;
     this._channelTool = null;
-    this._browserTool = null;
     this._minimaxMcpSwitchTools = [];
-    this._browserProvider = null;
     this._notifyTool = null;
     this._describeImagesTool = null;
     this._generateImagesTool = null;
@@ -259,10 +255,6 @@ export class Agent {
     });
     this._presentFilesTool = createPresentFilesTool();
     this._artifactTool = createArtifactTool();
-    this._browserProvider = this._resolveBrowserProvider();
-    this._browserTool = this._browserProvider.useEmbeddedBrowser
-      ? createBrowserTool()
-      : null;
     this._minimaxMcpSwitchTools = createMiniMaxMcpSwitchTools();
     this._notifyTool = createNotifyTool({
       onNotify: (title, body, opts) => this._notifyHandler?.(title, body, opts),
@@ -432,7 +424,6 @@ export class Agent {
       this._artifactTool,
       this._channelTool,
       this._askAgentTool,
-      this._browserTool,
       ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
@@ -454,7 +445,6 @@ export class Agent {
       this._artifactTool,
       this._channelTool,
       this._askAgentTool,
-      this._browserTool,
       ...this._minimaxMcpSwitchTools,
       this._describeImagesTool,
       this._generateImagesTool,
@@ -475,16 +465,6 @@ export class Agent {
     if (localName) return localName;
     const isZh = String(this._config?.locale || "").startsWith("zh");
     return isZh ? "用户" : "User";
-  }
-
-  _resolveBrowserProvider() {
-    const agentId = path.basename(this.agentDir || "");
-    const workspace = this._engine?.getHomeFolder?.(agentId)
-      || this._config?.desk?.home_folder
-      || "";
-    const cwd = this._engine?.cwd || process.cwd();
-    this._browserProvider = resolveBrowserProvider(process.env, { cwd, workspace });
-    return this._browserProvider;
   }
 
   // ════════════════════════════
@@ -836,6 +816,7 @@ export class Agent {
           "",
           `当前此 agent 绑定的平台：${boundPlatforms.length ? boundPlatforms.join(" / ") : "（无）"}`,
           "- 当用户明确指定平台（如“微信提醒我”）时，创建定时任务或调用 notify 必须显式设置目标平台。",
+          "- 创建 cron 时，用户指定平台必须同时写入 cron add 顶层参数：notifyTarget=platform、notifyPlatform=<指定平台>；不要只把平台写在 prompt 文本里。",
           "- 指定平台时，notify 必须使用：target=platform、platform=<用户指定平台>、strict=true。",
           "- 如果用户指定的平台不在绑定列表或当前不可达，必须明确告知失败原因，不要悄悄改发到其他平台。",
         ].join("\n")
@@ -845,8 +826,34 @@ export class Agent {
           "",
           `Platforms currently bound to this agent: ${boundPlatforms.length ? boundPlatforms.join(" / ") : "(none)"}`,
           "- When the user explicitly names a platform (for example, \"remind me on WeChat\"), scheduled jobs or notify calls must set that platform explicitly.",
+          "- When creating cron jobs, if the user specified a platform, you must also set cron add top-level args: notifyTarget=platform and notifyPlatform=<specified platform>; do not leave platform only inside prompt text.",
           "- For a specified platform, notify must use: target=platform, platform=<user-specified platform>, strict=true.",
           "- If the specified platform is not bound or unavailable, clearly report the failure reason and do not silently switch to another platform.",
+        ].join("\n")
+    );
+
+    parts.push(isZh
+      ? [
+          "",
+          "## 定时任务 prompt 写法（创建 cron 时）",
+          "",
+          "- 当你调用 cron add 时，传入的 prompt 是“触发后给执行 agent 的任务指令”，不是写给用户看的回复，也不是完成态汇报。",
+          "- prompt 至少写清 3 件事：执行动作、判断条件、需要提醒时的 notify 规则。",
+          "- 判断条件只描述“任务是否成功/异常”的业务条件，不要写频率或时间。",
+          "- 用户只说“下午3点/今晚8点”等时间点、但没有明确“每天/每周”等重复词时，默认按一次性提醒处理（type=at），不要擅自创建每天 cron。",
+          "- 不要在 prompt 里写“每分钟/每小时/每天几点”等频率或时点；这些由 schedule/type 参数表达。",
+          "- 避免只写“提醒我xxx/记得xxx”这类口语短句；改成可执行指令（例如：触发后调用 notify，title=..., body=...）。",
+        ].join("\n")
+      : [
+          "",
+          "## Cron Prompt Writing (when creating cron jobs)",
+          "",
+          "- When you call cron add, the prompt parameter is the task instruction for the execution agent after trigger, not a user-facing reply or completion report.",
+          "- The prompt should include at least three parts: action, criteria, and notify rule (when alerting is needed).",
+          "- Criteria should only describe business success/failure conditions, not timing/frequency conditions.",
+          "- If the user only gives a time point like \"3 PM\" or \"tonight at 8\" without explicit recurring words (daily/weekly), default to a one-time reminder (type=at); do not assume a daily cron.",
+          "- Do not put schedule frequency or time points in prompt (for example, \"every minute\" or \"at 9:00\"); express those in schedule/type parameters.",
+          "- Avoid colloquial short prompts like \"remind me to ...\"; rewrite them into executable instructions (for example: call notify with title/body).",
         ].join("\n")
     );
 
@@ -881,7 +888,7 @@ export class Agent {
             "",
             "## 工具与技能的区别",
             "",
-            "- 工具（tools）是可调用的执行能力，例如 Read、Bash、notify、pdf2md、browser。",
+            "- 工具（tools）是可调用的执行能力，例如 Read、Bash、notify、pdf2md。",
             "- Skill（大写）如果出现在标准 Claude 工具列表里，只表示“加载/应用某个技能”的内置工具；它本身不是某个具体技能。",
             "- 技能（skills）是按 SKILL.md 编写的任务规范/工作流。需要使用技能时，先用 Skill 工具加载匹配技能，再按技能说明执行。",
             "- 不要把具体技能名称说成工具；也不要把工具名称说成技能。",
@@ -892,7 +899,7 @@ export class Agent {
             "",
             "## Tools vs Skills",
             "",
-            "- Tools are callable execution capabilities, such as Read, Bash, notify, pdf2md, and browser.",
+            "- Tools are callable execution capabilities, such as Read, Bash, notify, and pdf2md.",
             "- If `Skill` appears in the standard Claude tool list, it only means the built-in tool for loading/applying a skill; it is not a concrete skill itself.",
             "- Skills are task instructions/workflows defined by SKILL.md. When a skill is needed, use the Skill tool to load the matching skill, then follow that skill's instructions.",
             "- Do not describe concrete skill names as tools, and do not describe tool names as skills.",
@@ -902,15 +909,10 @@ export class Agent {
       );
 
       const hasSearchTool = hasMiniMaxMcpWebSearch;
-      const hasEmbeddedBrowser = hasTool("browser");
-      if (!hasSearchTool && hasEmbeddedBrowser) {
+      if (!hasSearchTool) {
         parts.push(isZh
-          ? "如果当前没有可用的搜索工具，且需要联网检索信息，请直接使用 browser 工具操作浏览器完成搜索。"
-          : "If no search tool is available and web lookup is needed, use the browser tool directly to search in a browser.");
-      } else if (!hasSearchTool && !hasEmbeddedBrowser) {
-        parts.push(isZh
-          ? "当前无可用联网检索工具（search/browser）；需要联网信息时请明确说明能力受限。"
-          : "No web lookup tools are available (search/browser). If internet data is required, clearly state this limitation.");
+          ? "当前无可用联网检索工具（search）；需要联网信息时请明确说明能力受限。"
+          : "No web lookup tools are available (search). If internet data is required, clearly state this limitation.");
       }
       if (hasOpenComputerUse && !isWindowsRuntime) {
         parts.push(isZh

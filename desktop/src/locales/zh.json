@@ -1413,6 +1413,9 @@
     "cronNoJobs": "没有定时任务",
     "cronAddNeedParams": "错误：add 需要 type, schedule, prompt 参数",
     "cronEveryMustBeNumber": "错误：every 类型的 schedule 必须是正整数（毫秒）",
+    "cronInvalidSchedule": "错误：cron 类型的 schedule 必须是合法的五段表达式（例如 30 9 * * 1-5）。不要写 9:30 这类字段。",
+    "cronAtMustBeTime": "错误：at 类型的 schedule 必须是可解析时间（推荐 ISO 时间）。",
+    "cronAmbiguousTimeMaybeAt": "错误：当前看起来是一次性时间提醒（如“今天/明天下午3点”），不要创建成每天任务。请改用 type=at，并给出具体时间。",
     "cronCreated": "已创建定时任务: {label} ({id})",
     "cronConfirmed": "用户已确认，定时任务已创建: {label} ({id})",
     "cronRejected": "用户取消了定时任务「{label}」的创建",
@@ -1789,18 +1792,18 @@
     },
     "cron": {
       "label": "定时任务",
-      "description": "创建和管理定时任务。定时任务在后台自动执行，到时间时会开一个独立 session 运行指定的 prompt。\n操作：\n- list：查看所有任务\n- add(type, schedule, prompt, label?, model?, notifyTarget?, notifyPlatform?)：创建任务\n  - type \"at\"：一次性，schedule 为 ISO 时间字符串\n  - type \"every\"：间隔，schedule 为毫秒数（如 3600000 = 1 小时）\n  - type \"cron\"：cron 表达式（如 \"0 7 * * *\" = 每天早上 7 点）\n  - model：可选，指定执行任务使用的模型（不填则使用默认对话模型）\n  - notifyTarget：可选，local | platform | auto\n  - notifyPlatform：可选，wechat | telegram | feishu | qq（指定后固定发到该平台）\n- remove(id)：删除任务\n- toggle(id)：启用/禁用任务\n\nadd 时建议把 prompt 写成“执行指令”，写清：任务目标、什么时候需要提醒；若需要提醒，明确调用 notify工具 以及 title/body/target，指定平台时补充 platform/strict 参数。避免只写一句口号式提醒文案。",
+      "description": "创建和管理定时任务。定时任务在后台自动执行，到时间时会开一个独立 session 由 agent 运行指定的 prompt。\n操作：\n- list：查看所有任务\n- add(type, schedule, prompt, label?, model?, notifyTarget?, notifyPlatform?)：创建任务\n  - type \"at\"：一次性，schedule 为 ISO 时间字符串\n  - type \"every\"：间隔，schedule 为毫秒数（如 3600000 = 1 小时）\n  - type \"cron\"：cron 表达式（如 \"0 7 * * *\" = 每天早上 7 点）\n  - prompt：必填，定时任务触发后执行 agent 的任务指令（不是任务结果或状态汇报）\n  - model：可选，指定执行任务使用的模型（不填则使用默认对话模型）\n  - notifyTarget：可选，local | platform\n  - notifyPlatform：可选，wechat | telegram | feishu | qq（指定后固定发到该平台）\n- remove(id)：删除任务\n- toggle(id)：启用/禁用任务\n\nprompt 推荐写法：\n- 执行动作：本次触发要做什么\n- 判断条件：只写任务成功/异常的业务判断，不写频率或时间\n- 通知规则：需要提醒时如何调用 notify（title/body/target；指定平台时补 platform/strict）\n- 不要在 prompt 里重复执行频率/时间（例如“每分钟”）；频率由 schedule/type 控制",
       "actionDesc": "操作类型",
       "typeDesc": "调度类型：at | every | cron（可省略，系统会尝试按 schedule 自动推断）",
-      "scheduleDesc": "调度参数：at=ISO 时间；every=1m/5m/1h/60000；cron=五段表达式（如 0 7 * * *）。不要写 \"every minute\" + type=cron",
-      "promptDesc": "到时间时执行的任务指令（add 时必填）。建议写清：做什么、何时调用 notify、notify 的 title/body/target",
+      "scheduleDesc": "调度参数：at=ISO 时间；every=1m/5m/1h/60000；cron=五段表达式（如 0 7 * * *）。不要写 \"every minute\" + type=cron。若只说“下午3点”且无“每天/每周”等重复词，优先用 type=at（一次性）",
+      "promptDesc": "prompt 是定时任务触发后执行 agent 的任务指令，不是任务结果或状态汇报。请写清执行动作、业务判断条件和需要时的 notify 规则；不要在 prompt 重复执行频率或时间，频率由 schedule/type 控制（add 时必填）。",
       "labelDesc": "任务显示标签（可选）",
       "modelDesc": "指定执行模型（可选，不填则使用默认对话模型）",
       "idDesc": "任务 ID（remove/toggle 时必填）"
     },
     "notify": {
       "label": "通知",
-      "description": "向用户发送通知。\n使用场景：\n- 用户说「提醒我 xxx」「到时候通知我」「记得叫我 xxx」\n- 定时任务的 prompt 中明确包含「通知」「提醒」等意图\n- 巡检/定时任务中发现需要用户关注的事项\n参数说明：\n- target=local：仅本地弹窗\n- target=platform：发平台私聊（可配合 platform 指定具体平台）\n- target=auto：优先平台，失败可回退本地\n- strict=true：指定平台失败时不要回退本地\n如果一切正常、无异常，不要调用此工具。",
+      "description": "向用户发送通知。\n使用场景：\n- 用户说「提醒我 xxx」「到时候通知我」「记得叫我 xxx」\n- 定时任务的 prompt 中明确包含「通知」「提醒」等意图\n- 巡检/定时任务中发现需要用户关注的事项\n参数说明：\n- target=local：仅本地弹窗\n- target=platform：发平台私聊（可配合 platform 指定具体平台）\n- strict=true：指定平台失败时不要回退本地\n如果一切正常、无异常，不要调用此工具。",
       "titleDesc": "通知标题（简短）",
       "bodyDesc": "通知内容"
     },
@@ -1827,6 +1830,10 @@
       "recordDescription": "将一条经验教训记录到经验库。在以下情况使用：用户指出你犯了错误并说明正确做法、你尝试多种方法后发现了有效做法、用户明确说「以后要/不要这样做」。每条经验应简洁直接，一句话概括。",
       "recordCategoryDesc": "经验所属分类，2-4 字短语，如「工具使用」「搜索技巧」「回答风格」",
       "recordContentDesc": "具体的经验内容，简洁直接，一句话"
+    },
+    "setupSettings": {
+      "label": "设置助手",
+      "description": "用于一次性应用 Hanako 内部设置：支持创建/更新/删除助手，配置默认模型与工作区、工具权限、identity/ishiki，安装技能（SKILL.md），配置 MCP（stdio/sse/http），以及清理记忆（可选包含置顶记忆）。支持 dry_run 只校验不落盘。"
     },
     "outputFile": {
       "label": "呈现文件",

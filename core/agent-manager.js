@@ -469,7 +469,7 @@ export class AgentManager {
       this._d.getHub()?.notify?.({
         title,
         body,
-        target: opts?.target || "auto",
+        target: opts?.target || (opts?.platform ? "platform" : "local"),
         platform: opts?.platform || null,
         strict: opts?.strict === true,
         agentId: path.basename(ag.agentDir || ""),

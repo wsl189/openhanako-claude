@@ -239,7 +239,7 @@ function resolveSessionDeskDir(sessionPath, engine) {
 export default async function deskRoute(app, { engine, hub }) {
   const ACTIVITY_LIST_LIMIT = 50;
 
-  function normalizeNotifyTarget(value, fallback = "auto") {
+  function normalizeNotifyTarget(value, fallback = "local") {
     const v = String(value ?? fallback).toLowerCase();
     return (v === "local" || v === "platform" || v === "auto") ? v : fallback;
   }
@@ -471,7 +471,7 @@ export default async function deskRoute(app, { engine, hub }) {
           prompt: params.prompt,
           label: params.label,
           model: params.model,
-          notifyTarget: normalizeNotifyTarget(params.notifyTarget, "auto"),
+          notifyTarget: normalizeNotifyTarget(params.notifyTarget, "local"),
           notifyPlatform: normalizeNotifyPlatform(params.notifyPlatform),
         });
         return {
@@ -522,7 +522,7 @@ export default async function deskRoute(app, { engine, hub }) {
         }
 
         if (partial.notifyTarget !== undefined) {
-          partial.notifyTarget = normalizeNotifyTarget(partial.notifyTarget, current.notifyTarget || "auto");
+          partial.notifyTarget = normalizeNotifyTarget(partial.notifyTarget, current.notifyTarget || "local");
         }
         if (partial.notifyPlatform !== undefined) {
           partial.notifyPlatform = normalizeNotifyPlatform(partial.notifyPlatform);

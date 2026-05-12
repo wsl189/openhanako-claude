@@ -207,18 +207,21 @@ export class Hub {
   /**
    * 统一通知出口：
    * - target=platform: 发平台私聊，默认失败回退本地弹窗
-   * - target=auto: 优先发平台，失败再本地弹窗
    * - target=local: 仅本地弹窗
    * - 指定 platform 时，只在该平台内尝试；strict=true 时失败不回退本地
    */
-  async notify({ title, body, target = "auto", platform = null, strict = false, agentId = null, source = "notify_tool", ...meta } = {}) {
-    const normalized = (() => {
-      const v = String(target || "auto").toLowerCase();
-      return (v === "local" || v === "platform" || v === "auto") ? v : "auto";
-    })();
+  async notify({ title, body, target = "local", platform = null, strict = false, agentId = null, source = "notify_tool", ...meta } = {}) {
     const normalizedPlatform = (() => {
       const v = String(platform || "").trim().toLowerCase();
       return (v === "wechat" || v === "telegram" || v === "feishu" || v === "qq") ? v : null;
+    })();
+    const defaultTarget = normalizedPlatform ? "platform" : "local";
+    const normalized = (() => {
+      const v = String(target || defaultTarget).toLowerCase();
+      if (v === "local" || v === "platform") return v;
+      // Backward compatibility for legacy calls.
+      if (v === "auto") return defaultTarget;
+      return defaultTarget;
     })();
     const strictMode = strict === true;
 
@@ -270,7 +273,7 @@ export class Hub {
         this.notify({
           title,
           body,
-          target: opts?.target || "auto",
+          target: opts?.target || (opts?.platform ? "platform" : "local"),
           platform: opts?.platform || null,
           strict: opts?.strict === true,
           agentId: path.basename(agent?.agentDir || "") || null,

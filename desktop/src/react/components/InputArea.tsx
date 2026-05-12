@@ -125,6 +125,62 @@ type QueuedChatTask = {
   createdAt: number;
 };
 
+const SUPPORTED_CHAT_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const CHAT_IMAGE_MIME_ALIASES: Record<string, string> = {
+  'image/jpg': 'image/jpeg',
+  'image/pjpeg': 'image/jpeg',
+  'image/x-jpeg': 'image/jpeg',
+  'image/x-png': 'image/png',
+  'image/x-ms-bmp': 'image/bmp',
+  'image/ms-bmp': 'image/bmp',
+};
+const CHAT_IMAGE_EXT_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+};
+
+function normalizeChatImageMime(mimeType: string): string {
+  const normalized = String(mimeType || '').trim().toLowerCase();
+  if (!normalized) return '';
+  return CHAT_IMAGE_MIME_ALIASES[normalized] || normalized;
+}
+
+function chatImageExtFromMime(mimeType: string): string {
+  const normalized = normalizeChatImageMime(mimeType);
+  return CHAT_IMAGE_EXT_BY_MIME[normalized] || 'png';
+}
+
+async function transcodeImageDataUrlToPngBase64(dataUrl: string): Promise<string | null> {
+  return await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const width = Math.max(1, img.naturalWidth || img.width || 1);
+        const height = Math.max(1, img.naturalHeight || img.height || 1);
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        const pngDataUrl = canvas.toDataURL('image/png');
+        const match = pngDataUrl.match(/^data:image\/png;base64,([\s\S]+)$/i);
+        resolve(match ? String(match[1] || '').replace(/\s+/g, '') : null);
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 // ── 主组件 ──
 
 export function InputArea() {
@@ -669,18 +725,33 @@ function InputAreaInner() {
     const items = e.clipboardData?.items;
     if (!items) return;
     for (const item of items) {
-      if (!item.type.startsWith('image/')) continue;
-      e.preventDefault();
+      const itemMime = normalizeChatImageMime(item.type);
       const file = item.getAsFile();
-      if (!file) continue;
+      const fileMime = normalizeChatImageMime(file?.type || '');
+      const looksLikeImage = itemMime.startsWith('image/') || fileMime.startsWith('image/');
+      if (!looksLikeImage || !file) continue;
+      e.preventDefault();
       const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        // "data:image/png;base64,xxxxx" → 拆出 mimeType 和 base64
-        const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+      reader.onload = async () => {
+        const dataUrl = String(reader.result || '');
+        const match = dataUrl.match(/^data:([^;]+);base64,([\s\S]+)$/i);
         if (!match) return;
-        const [, mimeType, base64Data] = match;
-        const ext = mimeType.split('/')[1] || 'png';
+
+        let mimeType = normalizeChatImageMime(match[1] || fileMime || itemMime || 'image/png');
+        let base64Data = String(match[2] || '').replace(/\s+/g, '');
+
+        if (!mimeType.startsWith('image/')) mimeType = fileMime || itemMime || 'image/png';
+        if (!SUPPORTED_CHAT_IMAGE_MIME.has(mimeType)) {
+          const converted = await transcodeImageDataUrlToPngBase64(dataUrl);
+          if (!converted) {
+            showToast(t('error.unsupportedImageFormat', { mime: mimeType || 'unknown' }), 'error', 2500);
+            return;
+          }
+          mimeType = 'image/png';
+          base64Data = converted;
+        }
+
+        const ext = chatImageExtFromMime(mimeType);
         addAttachedFile({
           path: `clipboard-${Date.now()}.${ext}`,
           name: `${t('input.pastedImage')}.${ext}`,
@@ -719,7 +790,7 @@ function InputAreaInner() {
       const cursor = start + normalized.length;
       el.setSelectionRange(cursor, cursor);
     });
-  }, [addAttachedFile]);
+  }, [addAttachedFile, t]);
 
   // ── Send message ──
   const handleSend = useCallback(async () => {
