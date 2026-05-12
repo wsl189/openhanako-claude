@@ -23,6 +23,8 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar }: Pr
   const userName = useStore(s => s.userName) || t('common.me');
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ src: string; name: string } | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(0.9);
 
   const getMessageText = useCallback(() => {
     if (message.text) return String(message.text);
@@ -57,6 +59,31 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar }: Pr
     window.dispatchEvent(new CustomEvent(CHAT_RESEND_MESSAGE_EVENT, { detail: { text } }));
   }, [getMessageText]);
 
+  useEffect(() => {
+    if (!previewImage) return undefined;
+    setPreviewZoom(0.9);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPreviewImage(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [previewImage]);
+
+  const clampZoom = useCallback((value: number) => {
+    return Math.max(0.45, Math.min(2.4, value));
+  }, []);
+
+  const handlePreviewWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const zoomFactor = Math.exp(-e.deltaY * 0.0018);
+    setPreviewZoom((prev) => clampZoom(prev * zoomFactor));
+  }, [clampZoom]);
+
   return (
     <div className="message-group user">
       {showAvatar && (
@@ -81,7 +108,11 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar }: Pr
         </div>
       )}
       {message.attachments && message.attachments.length > 0 && (
-        <UserAttachmentsView attachments={message.attachments} deskContext={message.deskContext} />
+        <UserAttachmentsView
+          attachments={message.attachments}
+          deskContext={message.deskContext}
+          onPreviewImage={(src, name) => setPreviewImage({ src, name })}
+        />
       )}
       <div className="message user">
         {message.textHtml && <MarkdownContent html={message.textHtml} className="md-content user-msg-text" />}
@@ -134,6 +165,29 @@ export const UserMessage = memo(function UserMessage({ message, showAvatar }: Pr
           </div>
         )}
       </div>
+      {previewImage && (
+        <div
+          className="attach-image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={previewImage.name}
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="attach-image-lightbox-frame"
+            onClick={(e) => e.stopPropagation()}
+            onWheel={handlePreviewWheel}
+            style={{ transform: `scale(${previewZoom})` }}
+          >
+            <img
+              className="attach-image-lightbox-img"
+              src={previewImage.src}
+              alt={previewImage.name}
+              draggable={false}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 });
@@ -179,7 +233,13 @@ const AttachmentFileCard = memo(function AttachmentFileCard({ att }: { att: User
   );
 });
 
-const AttachmentImage = memo(function AttachmentImage({ att }: { att: UserAttachment }) {
+const AttachmentImage = memo(function AttachmentImage({
+  att,
+  onPreviewImage,
+}: {
+  att: UserAttachment;
+  onPreviewImage: (src: string, name: string) => void;
+}) {
   const [src, setSrc] = useState<string | null>(() => {
     if (!att.base64Data) return null;
     return `data:${attachmentMime(att)};base64,${att.base64Data}`;
@@ -216,21 +276,32 @@ const AttachmentImage = memo(function AttachmentImage({ att }: { att: UserAttach
 
   if (src && !errored) {
     return (
-      <img
-        className="attach-image"
-        src={src}
-        alt={att.name}
-        loading="lazy"
-        onError={() => setErrored(true)}
-      />
+      <button
+        type="button"
+        className="attach-image attach-image-btn"
+        onClick={() => onPreviewImage(src, att.name)}
+        title={att.name}
+      >
+        <img
+          src={src}
+          alt={att.name}
+          loading="lazy"
+          onError={() => setErrored(true)}
+        />
+      </button>
     );
   }
   return <AttachmentFileCard att={att} />;
 });
 
-const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, deskContext }: {
+const UserAttachmentsView = memo(function UserAttachmentsView({
+  attachments,
+  deskContext,
+  onPreviewImage,
+}: {
   attachments: UserAttachment[];
   deskContext?: DeskContext | null;
+  onPreviewImage: (src: string, name: string) => void;
 }) {
   const isImage = useCallback((att: UserAttachment) => {
     return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(att.name);
@@ -240,7 +311,7 @@ const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, des
     <div className="user-attachments">
       {attachments.map((att, i) => {
         if (isImage(att)) {
-          return <AttachmentImage key={i} att={att} />;
+          return <AttachmentImage key={i} att={att} onPreviewImage={onPreviewImage} />;
         }
         return <AttachmentFileCard key={i} att={att} />;
       })}

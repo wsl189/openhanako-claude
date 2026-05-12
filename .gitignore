@@ -24,6 +24,7 @@ inbox/
 # ═══════════════════════════════════════════
 node_modules/
 .pi/
+.hanako/
 
 # IDE / 工具
 .claude/
