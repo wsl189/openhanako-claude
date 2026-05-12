@@ -6,6 +6,8 @@ import { memo, useCallback, useEffect, useState } from 'react';
 import { MarkdownContent } from './MarkdownContent';
 import type { ChatMessage, UserAttachment, DeskContext } from '../../stores/chat-types';
 import { useStore } from '../../stores';
+import { openFilePreviewWithOptions } from '../../utils/file-preview';
+import { isHttpUrlPath } from '../../utils/format';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -211,10 +213,21 @@ function attachmentMime(att: UserAttachment): string {
   return MIME_BY_EXT[ext] || 'image/png';
 }
 
-const AttachmentFileCard = memo(function AttachmentFileCard({ att }: { att: UserAttachment }) {
+const AttachmentFileCard = memo(function AttachmentFileCard({
+  att,
+  onOpenFile,
+}: {
+  att: UserAttachment;
+  onOpenFile?: (att: UserAttachment) => void;
+}) {
   const ext = att.name.split('.').pop() || '';
-  return (
-    <div className="attach-file">
+  const handleClick = () => {
+    if (!onOpenFile || att.isDir || !att.path || isHttpUrlPath(att.path)) return;
+    onOpenFile(att);
+  };
+
+  const card = (
+    <>
       <span className="attach-file-icon">
         {att.isDir ? (
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -229,6 +242,20 @@ const AttachmentFileCard = memo(function AttachmentFileCard({ att }: { att: User
       </span>
       <span className="attach-file-name">{att.name}</span>
       {ext && <span className="attach-file-ext">{ext}</span>}
+    </>
+  );
+
+  if (!att.isDir && onOpenFile && att.path && !isHttpUrlPath(att.path)) {
+    return (
+      <button type="button" className="attach-file attach-file-btn" onClick={handleClick} title={att.path}>
+        {card}
+      </button>
+    );
+  }
+
+  return (
+    <div className="attach-file">
+      {card}
     </div>
   );
 });
@@ -236,9 +263,11 @@ const AttachmentFileCard = memo(function AttachmentFileCard({ att }: { att: User
 const AttachmentImage = memo(function AttachmentImage({
   att,
   onPreviewImage,
+  onOpenFile,
 }: {
   att: UserAttachment;
   onPreviewImage: (src: string, name: string) => void;
+  onOpenFile: (att: UserAttachment) => void;
 }) {
   const [src, setSrc] = useState<string | null>(() => {
     if (!att.base64Data) return null;
@@ -291,7 +320,7 @@ const AttachmentImage = memo(function AttachmentImage({
       </button>
     );
   }
-  return <AttachmentFileCard att={att} />;
+  return <AttachmentFileCard att={att} onOpenFile={onOpenFile} />;
 });
 
 const UserAttachmentsView = memo(function UserAttachmentsView({
@@ -303,6 +332,12 @@ const UserAttachmentsView = memo(function UserAttachmentsView({
   deskContext?: DeskContext | null;
   onPreviewImage: (src: string, name: string) => void;
 }) {
+  const openAttachmentFile = useCallback((att: UserAttachment) => {
+    if (!att.path || att.isDir || isHttpUrlPath(att.path)) return;
+    const ext = (att.name.split('.').pop() || '').toLowerCase();
+    void openFilePreviewWithOptions(att.path, att.name, ext, { replaceRightSidebar: true });
+  }, []);
+
   const isImage = useCallback((att: UserAttachment) => {
     return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(att.name);
   }, []);
@@ -311,9 +346,9 @@ const UserAttachmentsView = memo(function UserAttachmentsView({
     <div className="user-attachments">
       {attachments.map((att, i) => {
         if (isImage(att)) {
-          return <AttachmentImage key={i} att={att} onPreviewImage={onPreviewImage} />;
+          return <AttachmentImage key={i} att={att} onPreviewImage={onPreviewImage} onOpenFile={openAttachmentFile} />;
         }
-        return <AttachmentFileCard key={i} att={att} />;
+        return <AttachmentFileCard key={i} att={att} onOpenFile={openAttachmentFile} />;
       })}
       {deskContext && (
         <div className="attach-file attach-desk">

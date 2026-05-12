@@ -13,6 +13,7 @@ import { usePushToTalk } from '../hooks/use-push-to-talk';
 import { renderMarkdown } from '../utils/markdown';
 import { isHttpUrlPath } from '../utils/format';
 import { parseUserAttachments } from '../utils/message-parser';
+import { openFilePreviewWithOptions } from '../utils/file-preview';
 import { toggleSidebar } from './SidebarLayout';
 import { toggleJianSidebar } from '../stores/desk-actions';
 import { ContextMenu } from './ContextMenu';
@@ -140,10 +141,17 @@ function channelAttachmentMime(att: ChannelAttachmentItem): string {
   return CHANNEL_MIME_BY_EXT[ext] || 'image/png';
 }
 
-const ChannelAttachmentFileCard = ({ att }: { att: ChannelAttachmentItem }) => {
+const ChannelAttachmentFileCard = ({
+  att,
+  onOpenFile,
+}: {
+  att: ChannelAttachmentItem;
+  onOpenFile?: (att: ChannelAttachmentItem) => void;
+}) => {
   const ext = att.name.split('.').pop() || '';
-  return (
-    <div className="attach-file">
+  const canOpen = !!onOpenFile && !att.isDirectory && !!att.path && !isHttpUrlPath(att.path);
+  const card = (
+    <>
       <span className="attach-file-icon">
         {att.isDirectory ? (
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -158,6 +166,20 @@ const ChannelAttachmentFileCard = ({ att }: { att: ChannelAttachmentItem }) => {
       </span>
       <span className="attach-file-name">{att.name}</span>
       {ext && <span className="attach-file-ext">{ext}</span>}
+    </>
+  );
+
+  if (canOpen) {
+    return (
+      <button type="button" className="attach-file attach-file-btn" onClick={() => onOpenFile(att)} title={att.path}>
+        {card}
+      </button>
+    );
+  }
+
+  return (
+    <div className="attach-file">
+      {card}
     </div>
   );
 };
@@ -165,9 +187,11 @@ const ChannelAttachmentFileCard = ({ att }: { att: ChannelAttachmentItem }) => {
 const ChannelAttachmentImage = ({
   att,
   onPreviewImage,
+  onOpenFile,
 }: {
   att: ChannelAttachmentItem;
   onPreviewImage: (src: string, name: string) => void;
+  onOpenFile: (att: ChannelAttachmentItem) => void;
 }) => {
   const [src, setSrc] = useState<string | null>(null);
   const [errored, setErrored] = useState(false);
@@ -216,7 +240,7 @@ const ChannelAttachmentImage = ({
       </button>
     );
   }
-  return <ChannelAttachmentFileCard att={att} />;
+  return <ChannelAttachmentFileCard att={att} onOpenFile={onOpenFile} />;
 };
 
 const ChannelAttachmentsView = ({
@@ -229,15 +253,20 @@ const ChannelAttachmentsView = ({
   const isImage = useCallback((att: ChannelAttachmentItem) => {
     return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(att.name);
   }, []);
+  const openAttachmentFile = useCallback((att: ChannelAttachmentItem) => {
+    if (!att.path || att.isDirectory || isHttpUrlPath(att.path)) return;
+    const ext = (att.name.split('.').pop() || '').toLowerCase();
+    void openFilePreviewWithOptions(att.path, att.name, ext, { replaceRightSidebar: true });
+  }, []);
 
   if (!attachments.length) return null;
   return (
     <div className="user-attachments channel-msg-attachments">
       {attachments.map((att, i) => {
         if (isImage(att) && !att.isDirectory) {
-          return <ChannelAttachmentImage key={`${att.path}-${i}`} att={att} onPreviewImage={onPreviewImage} />;
+          return <ChannelAttachmentImage key={`${att.path}-${i}`} att={att} onPreviewImage={onPreviewImage} onOpenFile={openAttachmentFile} />;
         }
-        return <ChannelAttachmentFileCard key={`${att.path}-${i}`} att={att} />;
+        return <ChannelAttachmentFileCard key={`${att.path}-${i}`} att={att} onOpenFile={openAttachmentFile} />;
       })}
     </div>
   );

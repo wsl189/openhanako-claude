@@ -2287,6 +2287,16 @@ html[data-platform="linux"] .tb-toggle-right {
     border: none;
 }
 
+.attach-file-btn {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+.attach-file-btn:hover {
+    filter: brightness(0.96);
+}
+
 .attach-file-icon {
     flex-shrink: 0;
     width: 22px;

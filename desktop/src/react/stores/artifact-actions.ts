@@ -11,7 +11,8 @@ import type { Artifact } from '../types';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 let _artifactCounter = 0;
-let _restoreJianAfterClose = false;
+let _replaceRightSidebarActive = false;
+let _jianSnapshotBeforeReplace: { open: boolean; autoCollapsed: boolean } | null = null;
 
 function ensurePreviewWidth(preferredWidth?: number): void {
   if (!preferredWidth || typeof document === "undefined") return;
@@ -47,11 +48,17 @@ export function openPreview(
   s.setArtifacts(arts);
   s.setCurrentArtifactId(artifact.id);
   if (replaceRightSidebar) {
-    _restoreJianAfterClose = s.jianOpen;
+    // Only capture once per replace session so repeated openPreview calls
+    // while preview is open won't overwrite the original sidebar state.
+    if (!_replaceRightSidebarActive) {
+      _jianSnapshotBeforeReplace = {
+        open: s.jianOpen,
+        autoCollapsed: s.jianAutoCollapsed,
+      };
+      _replaceRightSidebarActive = true;
+    }
     s.setJianOpen(false);
     s.setJianAutoCollapsed(false);
-  } else {
-    _restoreJianAfterClose = false;
   }
   s.setPreviewOpen(true);
   ensurePreviewWidth(opts?.preferredWidth);
@@ -60,17 +67,24 @@ export function openPreview(
 
 export function closePreview(): void {
   const s = useStore.getState();
-  const shouldRestoreJian = _restoreJianAfterClose;
-  _restoreJianAfterClose = false;
+  const snapshot = _replaceRightSidebarActive ? _jianSnapshotBeforeReplace : null;
+  _replaceRightSidebarActive = false;
+  _jianSnapshotBeforeReplace = null;
   s.setPreviewOpen(false);
   s.setCurrentArtifactId(null);
-  if (shouldRestoreJian) {
-    s.setJianOpen(true);
-    s.setJianAutoCollapsed(false);
+  if (snapshot) {
+    s.setJianOpen(snapshot.open);
+    s.setJianAutoCollapsed(snapshot.autoCollapsed);
   }
   updateLayout();
-  if (shouldRestoreJian && !useStore.getState().jianOpen) {
-    useStore.setState({ jianOpen: true, jianAutoCollapsed: false });
+  if (snapshot) {
+    const next = useStore.getState();
+    if (next.jianOpen !== snapshot.open || next.jianAutoCollapsed !== snapshot.autoCollapsed) {
+      useStore.setState({
+        jianOpen: snapshot.open,
+        jianAutoCollapsed: snapshot.autoCollapsed,
+      });
+    }
   }
 }
 
