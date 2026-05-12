@@ -153,6 +153,14 @@ function chatImageExtFromMime(mimeType: string): string {
   return CHAT_IMAGE_EXT_BY_MIME[normalized] || 'png';
 }
 
+function resolveClipboardImageName(file: File | null, ext: string, tFn: (key: string) => string): string {
+  const rawName = String(file?.name || '').trim();
+  if (!rawName) return `${tFn('input.pastedImage')}.${ext}`;
+  const baseName = rawName.split(/[\\/]/).pop() || '';
+  if (!baseName) return `${tFn('input.pastedImage')}.${ext}`;
+  return baseName;
+}
+
 async function transcodeImageDataUrlToPngBase64(dataUrl: string): Promise<string | null> {
   return await new Promise((resolve) => {
     const img = new Image();
@@ -752,9 +760,10 @@ function InputAreaInner() {
         }
 
         const ext = chatImageExtFromMime(mimeType);
+        const displayName = resolveClipboardImageName(file, ext, t);
         addAttachedFile({
           path: `clipboard-${Date.now()}.${ext}`,
-          name: `${t('input.pastedImage')}.${ext}`,
+          name: displayName,
           base64Data,
           mimeType,
         });
