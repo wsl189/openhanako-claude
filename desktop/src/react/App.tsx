@@ -313,7 +313,9 @@ async function handleDrop(e: React.DragEvent): Promise<void> {
     }
   }
 
-  if (store.attachedFiles.length >= 9) return;
+  const isChannelTab = store.currentTab === 'channels';
+  const currentAttached = isChannelTab ? store.channelAttachedFiles : store.attachedFiles;
+  if (currentAttached.length >= 9) return;
 
   // 统一保留原始路径（不走 /api/upload，不复制到 .hanako-uploads）
   const s = useStore.getState();
@@ -321,12 +323,19 @@ async function handleDrop(e: React.DragEvent): Promise<void> {
   const prefix = deskBase ? (deskBase + '/') : '';
   const deskFileMap = new Map(s.deskFiles.map((f: any) => [f.name, f]));
   for (const p of srcPaths) {
-    if (useStore.getState().attachedFiles.length >= 9) break;
+    const liveStore = useStore.getState();
+    const liveAttached = liveStore.currentTab === 'channels'
+      ? liveStore.channelAttachedFiles
+      : liveStore.attachedFiles;
+    if (liveAttached.length >= 9) break;
     const name = baseName(p);
     const isDeskPath = prefix ? toSlash(p).startsWith(prefix) : false;
     const knownFile = isDeskPath ? deskFileMap.get(name) : null;
     const meta = fileMetaMap.get(p);
-    useStore.getState().addAttachedFile({
+    const addFile = liveStore.currentTab === 'channels'
+      ? liveStore.addChannelAttachedFile
+      : liveStore.addAttachedFile;
+    addFile({
       path: p,
       name: meta?.name || name || p.split('/').pop() || p,
       isDirectory: knownFile?.isDir ?? meta?.isDirectoryGuess ?? false,

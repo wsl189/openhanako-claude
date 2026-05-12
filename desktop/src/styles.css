@@ -14400,6 +14400,10 @@ a.about-link:hover {
     vertical-align: top;
 }
 
+.channel-msg-attachments {
+    margin-bottom: 0.2rem;
+}
+
 .channel-msg-text p {
     margin: 0 0 0.3em;
 }
@@ -14475,8 +14479,9 @@ a.about-link:hover {
 .channel-msg-self .channel-msg-self-actions {
     position: absolute;
     left: -88px;
-    top: 50%;
-    transform: translateY(-50%);
+    top: auto;
+    bottom: 8px;
+    transform: none;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -14525,24 +14530,12 @@ a.about-link:hover {
     display: none;
 }
 
-.channel-input-wrapper {
-    display: flex;
-    align-items: flex-end;
-    gap: var(--space-sm);
-    width: 100%;
-    margin-left: 0;
+.channel-composer {
     position: relative;
 }
 
-/* 频道附件条：固定在输入框右上方（发送按钮左侧） */
 .channel-attached-files {
-    position: absolute;
-    right: 48px;
-    bottom: calc(100% + 6px);
-    width: calc(100% - 60px);
-    justify-content: flex-end;
-    padding: 0;
-    z-index: 45;
+    margin-bottom: 8px;
 }
 
 /* @ 联想下拉框 */
@@ -14550,7 +14543,7 @@ a.about-link:hover {
     position: absolute;
     bottom: 100%;
     left: 0;
-    right: 60px;
+    right: 0;
     margin-bottom: 4px;
     background: var(--bg-card, var(--bg));
     border: 1px solid var(--overlay-medium);
@@ -14583,7 +14576,7 @@ a.about-link:hover {
 
 .channel-command-dropdown.slash-menu {
     right: auto;
-    width: min(360px, calc(100% - 60px));
+    width: min(360px, 100%);
     padding: 4px;
     margin-bottom: 6px;
     background: var(--bg-card);
@@ -14622,60 +14615,6 @@ a.about-link:hover {
     width: 100%;
     height: 100%;
     object-fit: cover;
-}
-
-.channel-input-box {
-    flex: 1;
-    resize: none;
-    border: 1px solid var(--overlay-medium);
-    border-radius: var(--radius-md);
-    padding: 8px 12px;
-    font-family: var(--font-serif);
-    font-size: 0.88rem;
-    background: var(--bg-card);
-    color: var(--text);
-    outline: none;
-    line-height: 1.5;
-    transition: border-color 0.15s;
-    overflow-y: hidden;
-}
-
-.channel-input-box:focus {
-    border-color: var(--accent);
-}
-
-.channel-send-btn {
-    width: 36px;
-    height: 36px;
-    align-self: flex-end;
-    box-sizing: border-box;
-    border-radius: var(--radius-md);
-    border: none;
-    background: var(--accent);
-    color: white;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: opacity 0.15s;
-}
-
-.channel-send-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-}
-
-.channel-send-btn.is-stopping {
-    opacity: 1;
-    background: transparent;
-    color: var(--coral);
-    border: 1px solid var(--coral);
-}
-
-.channel-send-btn.is-stopping:hover:not(:disabled) {
-    background: var(--coral);
-    color: white;
 }
 
 /* ── 只读 DM 提示 ── */

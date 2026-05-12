@@ -200,6 +200,7 @@ function InputAreaInner() {
 
   // Zustand state
   const isStreaming = useStore(s => s.isStreaming);
+  const currentTab = useStore(s => s.currentTab);
   const streamingSessions = useStore(s => s.streamingSessions);
   const connected = useStore(s => s.connected);
   const pendingNewSession = useStore(s => s.pendingNewSession);
@@ -344,7 +345,7 @@ function InputAreaInner() {
     volumeLevel: voiceVolumeLevel,
     clearError: clearVoiceError,
   } = usePushToTalk({
-    enabled: true,
+    enabled: currentTab === 'chat',
     language: voiceLanguage,
     onActivate: prepareVoiceAnchor,
     onInterimTranscript: applyVoiceInterimTranscript,

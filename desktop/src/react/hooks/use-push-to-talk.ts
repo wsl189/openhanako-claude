@@ -53,7 +53,7 @@ function isSpaceEvent(key: string, code?: string): boolean {
 function isEditableElement(target: EventTarget | null | undefined): boolean {
   const node = target as HTMLElement | null;
   if (!node || typeof (node as any).tagName !== 'string') return false;
-  if (node.id === 'inputBox') return false;
+  if (node.id === 'inputBox' || node.id === 'channelInputBox') return false;
   const tag = node.tagName.toUpperCase();
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
   if ((node as any).isContentEditable) return true;

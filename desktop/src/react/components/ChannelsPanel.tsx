@@ -9,8 +9,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
+import { usePushToTalk } from '../hooks/use-push-to-talk';
 import { renderMarkdown } from '../utils/markdown';
 import { isHttpUrlPath } from '../utils/format';
+import { parseUserAttachments } from '../utils/message-parser';
 import { toggleSidebar } from './SidebarLayout';
 import { toggleJianSidebar } from '../stores/desk-actions';
 import { ContextMenu } from './ContextMenu';
@@ -119,6 +121,127 @@ function formatChannelTime(timestamp: string): string {
   }
   return `${mo}/${d}`;
 }
+
+const CHANNEL_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+};
+
+type ChannelAttachmentItem = { path: string; name: string; isDirectory: boolean };
+
+function channelAttachmentMime(att: ChannelAttachmentItem): string {
+  const ext = (att.name.split('.').pop() || '').toLowerCase();
+  return CHANNEL_MIME_BY_EXT[ext] || 'image/png';
+}
+
+const ChannelAttachmentFileCard = ({ att }: { att: ChannelAttachmentItem }) => {
+  const ext = att.name.split('.').pop() || '';
+  return (
+    <div className="attach-file">
+      <span className="attach-file-icon">
+        {att.isDirectory ? (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+        ) : (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+        )}
+      </span>
+      <span className="attach-file-name">{att.name}</span>
+      {ext && <span className="attach-file-ext">{ext}</span>}
+    </div>
+  );
+};
+
+const ChannelAttachmentImage = ({
+  att,
+  onPreviewImage,
+}: {
+  att: ChannelAttachmentItem;
+  onPreviewImage: (src: string, name: string) => void;
+}) => {
+  const [src, setSrc] = useState<string | null>(null);
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    setErrored(false);
+    if (!att.path || isHttpUrlPath(att.path)) {
+      setSrc(null);
+      return;
+    }
+    const platform = (window as any).platform;
+    if (!platform?.readFileBase64) {
+      setSrc(null);
+      return;
+    }
+    let cancelled = false;
+    platform.readFileBase64(att.path)
+      .then((base64: string | null) => {
+        if (cancelled) return;
+        if (!base64) {
+          setSrc(null);
+          return;
+        }
+        setSrc(`data:${channelAttachmentMime(att)};base64,${base64}`);
+      })
+      .catch(() => {
+        if (!cancelled) setSrc(null);
+      });
+    return () => { cancelled = true; };
+  }, [att.path, att.name]);
+
+  if (src && !errored) {
+    return (
+      <button
+        type="button"
+        className="attach-image attach-image-btn"
+        onClick={() => onPreviewImage(src, att.name)}
+        title={att.name}
+      >
+        <img
+          src={src}
+          alt={att.name}
+          loading="lazy"
+          onError={() => setErrored(true)}
+        />
+      </button>
+    );
+  }
+  return <ChannelAttachmentFileCard att={att} />;
+};
+
+const ChannelAttachmentsView = ({
+  attachments,
+  onPreviewImage,
+}: {
+  attachments: ChannelAttachmentItem[];
+  onPreviewImage: (src: string, name: string) => void;
+}) => {
+  const isImage = useCallback((att: ChannelAttachmentItem) => {
+    return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(att.name);
+  }, []);
+
+  if (!attachments.length) return null;
+  return (
+    <div className="user-attachments channel-msg-attachments">
+      {attachments.map((att, i) => {
+        if (isImage(att) && !att.isDirectory) {
+          return <ChannelAttachmentImage key={`${att.path}-${i}`} att={att} onPreviewImage={onPreviewImage} />;
+        }
+        return <ChannelAttachmentFileCard key={`${att.path}-${i}`} att={att} />;
+      })}
+    </div>
+  );
+};
 
 // ══════════════════════════════════════════════════════
 // MemberAvatar — 复用头像渲染
@@ -996,6 +1119,8 @@ export function ChannelMessages() {
   const channelSwitchPendingRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedMsgKey, setCopiedMsgKey] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ src: string; name: string } | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(0.9);
   const ch = channels.find((c) => c.id === currentChannel);
   const isDM = ch?.isDM ?? false;
   const channelMemberKeys = useMemo(
@@ -1009,6 +1134,21 @@ export function ChannelMessages() {
       copyTimerRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (!previewImage) return undefined;
+    setPreviewZoom(0.9);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPreviewImage(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [previewImage]);
 
   const copyMessage = useCallback((msgKey: string, text: string) => {
     const payload = String(text || '').trim();
@@ -1033,6 +1173,16 @@ export function ChannelMessages() {
     if (!payload) return;
     void sendChannelMessage(payload);
   }, [sendChannelMessage]);
+
+  const clampZoom = useCallback((value: number) => {
+    return Math.max(0.45, Math.min(2.4, value));
+  }, []);
+
+  const handlePreviewWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const zoomFactor = Math.exp(-e.deltaY * 0.0018);
+    setPreviewZoom((prev) => clampZoom(prev * zoomFactor));
+  }, [clampZoom]);
 
   const getMessageKey = useCallback((msg: (typeof messages)[number], idx: number) => `${msg.timestamp}-${idx}`, []);
 
@@ -1199,6 +1349,9 @@ export function ChannelMessages() {
           || senderNorm === '用户'
           || (!!userNameNorm && senderNorm === userNameNorm);
         const isSelf = senderInfo.isUser || isUserSenderAlias || isGroupUserFallback || (isDM && msg.sender === (currentAgentId || ''));
+        const parsed = parseUserAttachments(msg.body || '');
+        const messageText = parsed.text;
+        const attachments = parsed.files;
         const canCopy = senderNorm !== 'system' && String(msg.body || '').trim().length > 0;
         const canOperateSelfMessage = isSelf && !isDM && canCopy;
         const copied = copiedMsgKey === msgKey;
@@ -1223,10 +1376,16 @@ export function ChannelMessages() {
                 </div>
               )}
               <div className="channel-msg-text-wrap">
-                <div
-                  className="channel-msg-text md-content"
-                  dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.body || '') }}
+                <ChannelAttachmentsView
+                  attachments={attachments}
+                  onPreviewImage={(src, name) => setPreviewImage({ src, name })}
                 />
+                {messageText && (
+                  <div
+                    className="channel-msg-text md-content"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(messageText) }}
+                  />
+                )}
                 {canCopy && !canOperateSelfMessage && (
                   <button
                     className={`channel-msg-action-btn channel-msg-copy-btn${copied ? ' copied' : ''}`}
@@ -1319,6 +1478,29 @@ export function ChannelMessages() {
         return el;
       })}
       <div className="channel-context-tail-spacer" />
+      {previewImage && (
+        <div
+          className="attach-image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={previewImage.name}
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="attach-image-lightbox-frame"
+            onClick={(e) => e.stopPropagation()}
+            onWheel={handlePreviewWheel}
+            style={{ transform: `scale(${previewZoom})` }}
+          >
+            <img
+              className="attach-image-lightbox-img"
+              src={previewImage.src}
+              alt={previewImage.name}
+              draggable={false}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1401,7 +1583,8 @@ export function ChannelMembers() {
 // ══════════════════════════════════════════════════════
 
 export function ChannelInput() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const currentTab = useStore((s) => s.currentTab);
   const currentChannel = useStore((s) => s.currentChannel);
   const isDM = useStore((s) => s.channelIsDM);
   const channelMembers = useStore((s) => s.channelMembers);
@@ -1414,9 +1597,10 @@ export function ChannelInput() {
   const resetChannelContext = useStore((s) => s.resetChannelContext);
   const clearChannelMessages = useStore((s) => s.clearChannelMessages);
   const stopChannelReplies = useStore((s) => s.stopChannelReplies);
-  const attachedFiles = useStore((s) => s.attachedFiles);
-  const removeAttachedFile = useStore((s) => s.removeAttachedFile);
-  const clearAttachedFiles = useStore((s) => s.clearAttachedFiles);
+  const attachedFiles = useStore((s) => s.channelAttachedFiles);
+  const addAttachedFile = useStore((s) => s.addChannelAttachedFile);
+  const removeAttachedFile = useStore((s) => s.removeChannelAttachedFile);
+  const clearAttachedFiles = useStore((s) => s.clearChannelAttachedFiles);
   const addToast = useStore((s) => s.addToast);
 
   const [inputValue, setInputValue] = useState('');
@@ -1430,6 +1614,8 @@ export function ChannelInput() {
   const [commandSelectedIdx, setCommandSelectedIdx] = useState(0);
   const [commandStartPos, setCommandStartPos] = useState(-1);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const attachFileInputRef = useRef<HTMLInputElement>(null);
+  const voiceAnchorRef = useRef<{ prefix: string; suffix: string; interim: string } | null>(null);
   const resizeTextarea = useCallback(() => {
     const el = inputRef.current;
     if (!el) return;
@@ -1502,6 +1688,125 @@ export function ChannelInput() {
   useEffect(() => {
     resizeTextarea();
   }, [inputValue, currentChannel, resizeTextarea]);
+
+  const buildVoiceAnchoredText = useCallback((anchor: { prefix: string; suffix: string }, rawText: string) => {
+    const text = String(rawText || '').trim();
+    const needsLeadingSpace = !!text && anchor.prefix.length > 0 && !/\s$/.test(anchor.prefix);
+    const needsTrailingSpace = !!text && anchor.suffix.length > 0 && !/^\s/.test(anchor.suffix);
+    const leading = needsLeadingSpace ? ' ' : '';
+    const trailing = needsTrailingSpace ? ' ' : '';
+    const nextValue = `${anchor.prefix}${leading}${text}${trailing}${anchor.suffix}`;
+    const cursor = `${anchor.prefix}${leading}${text}`.length;
+    return { text, leading, nextValue, cursor };
+  }, []);
+
+  const prepareVoiceAnchor = useCallback(() => {
+    const node = inputRef.current;
+    const value = node?.value ?? inputValue;
+    const start = node?.selectionStart ?? value.length;
+    const end = node?.selectionEnd ?? start;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const strippedBefore = before.replace(/[ \u3000]$/, '');
+    const nextValue = strippedBefore + after;
+    const cursor = strippedBefore.length;
+
+    voiceAnchorRef.current = { prefix: strippedBefore, suffix: after, interim: '' };
+    setInputValue(nextValue);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(cursor, cursor);
+    });
+  }, [inputValue]);
+
+  const applyVoiceInterimTranscript = useCallback((rawText: string) => {
+    const anchor = voiceAnchorRef.current;
+    if (!anchor) return;
+    const next = buildVoiceAnchoredText(anchor, rawText);
+    setInputValue(next.nextValue);
+    voiceAnchorRef.current = { ...anchor, interim: next.text };
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.cursor, next.cursor);
+    });
+  }, [buildVoiceAnchoredText]);
+
+  const applyVoiceTranscript = useCallback((rawText: string) => {
+    const text = String(rawText || '').trim();
+    if (!text) return;
+    const anchor = voiceAnchorRef.current;
+    if (!anchor) {
+      setInputValue((prev) => {
+        const prefix = prev && !/\s$/.test(prev) ? `${prev} ` : prev;
+        return `${prefix}${text}`;
+      });
+      return;
+    }
+    const next = buildVoiceAnchoredText(anchor, text);
+    setInputValue(next.nextValue);
+    voiceAnchorRef.current = {
+      prefix: `${anchor.prefix}${next.leading}${next.text}`,
+      suffix: anchor.suffix,
+      interim: '',
+    };
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.cursor, next.cursor);
+    });
+  }, [buildVoiceAnchoredText]);
+
+  const voiceLanguage = useMemo(
+    () => String(locale || (window as any).i18n?.locale || navigator.language || ''),
+    [locale],
+  );
+  const {
+    supported: voiceSupported,
+    state: voiceState,
+    error: voiceErrorRaw,
+    volumeLevel: voiceVolumeLevel,
+    clearError: clearVoiceError,
+  } = usePushToTalk({
+    enabled: currentTab === 'channels' && !isDM && !!currentChannel,
+    language: voiceLanguage,
+    onActivate: prepareVoiceAnchor,
+    onInterimTranscript: applyVoiceInterimTranscript,
+    onTranscript: applyVoiceTranscript,
+  });
+
+  const voiceError = useMemo(() => {
+    if (!voiceErrorRaw) return '';
+    if (voiceErrorRaw === 'NO_SPEECH') return t('input.voiceNoSpeech');
+    if (voiceErrorRaw === 'MIC_PERMISSION_DENIED') return t('input.voiceMicDenied');
+    if (voiceErrorRaw === 'VOICE_RECORDER_ERROR') return t('input.voiceRecorderError');
+    const message = String(voiceErrorRaw || '').trim();
+    if (!message) return '';
+    const detail = message.split(' - ').pop()?.trim();
+    return detail || message;
+  }, [voiceErrorRaw, t]);
+
+  useEffect(() => {
+    if (!voiceErrorRaw) return;
+    const timer = setTimeout(() => clearVoiceError(), 4000);
+    return () => clearTimeout(timer);
+  }, [voiceErrorRaw, clearVoiceError]);
+
+  useEffect(() => {
+    if (voiceState === 'idle') voiceAnchorRef.current = null;
+  }, [voiceState]);
+
+  const voiceStatusText = useMemo(() => {
+    if (!voiceSupported) return '';
+    if (voiceState === 'warming') return t('input.voiceWarming');
+    if (voiceState === 'recording') return t('input.voiceRecording');
+    if (voiceState === 'processing') return t('input.voiceProcessing');
+    return t('input.voiceHoldHint');
+  }, [voiceSupported, voiceState, t]);
 
   const hasContent = inputValue.trim().length > 0 || attachedFiles.length > 0;
   const isChannelResponding = !!(
@@ -1834,47 +2139,44 @@ export function ChannelInput() {
     });
   }, [inputValue, checkMention, checkCommand]);
 
+  const appendPickedFiles = useCallback((files: FileList | null) => {
+    if (!files || files.length === 0) return;
+
+    const maxAttachments = 9;
+    let count = attachedFiles.length;
+    const seenPathSet = new Set(attachedFiles.map((file) => file.path));
+
+    for (const file of Array.from(files)) {
+      if (count >= maxAttachments) break;
+      const absolutePath = window.platform?.getFilePath?.(file);
+      if (!absolutePath || isHttpUrlPath(absolutePath) || seenPathSet.has(absolutePath)) continue;
+
+      addAttachedFile({
+        path: absolutePath,
+        name: file.name || absolutePath.split('/').pop() || absolutePath,
+        isDirectory: false,
+      });
+      seenPathSet.add(absolutePath);
+      count += 1;
+    }
+  }, [addAttachedFile, attachedFiles]);
+
+  const handleAttachPickerChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    appendPickedFiles(e.target.files);
+    e.currentTarget.value = '';
+  }, [appendPickedFiles]);
+
+  const handlePickAttachments = useCallback(() => {
+    attachFileInputRef.current?.click();
+  }, []);
+
   if (isDM || !currentChannel) return null;
 
   return (
-    <div className="channel-input-wrapper">
-      {mentionActive && mentionItems.length > 0 && (
-        <div className="channel-mention-dropdown">
-          {mentionItems.map((m, idx) => (
-            <div
-              key={m.id}
-              className={`channel-mention-item${idx === mentionSelectedIdx ? ' active' : ''}`}
-              data-name={m.displayName}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                insertMention(m.mentionText);
-              }}
-            >
-              <div className="channel-mention-avatar">
-                {m.avatar ? <MemberAvatar info={m.avatar} /> : <span>@</span>}
-              </div>
-              <span>{m.displayName}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {commandActive && commandItems.length > 0 && (
-        <div className="channel-mention-dropdown channel-command-dropdown slash-menu">
-          {commandItems.map((cmd, idx) => (
-            <button
-              key={cmd.id}
-              type="button"
-              className={`slash-menu-item${idx === commandSelectedIdx ? ' selected' : ''}`}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                insertCommand(cmd.label);
-              }}
-            >
-              <span className="slash-menu-icon" dangerouslySetInnerHTML={{ __html: cmd.icon }} />
-              <span className="slash-menu-label">{cmd.label}</span>
-              <span className="slash-menu-desc">{cmd.desc}</span>
-            </button>
-          ))}
+    <>
+      {voiceError && (
+        <div className="slash-busy-bar slash-result-error">
+          <span>{voiceError}</span>
         </div>
       )}
       {attachedFiles.length > 0 && (
@@ -1884,35 +2186,125 @@ export function ChannelInput() {
           className="channel-attached-files"
         />
       )}
-      <textarea
-        ref={inputRef}
-        className="channel-input-box"
-        placeholder={(window as any).t?.('channel.inputPlaceholder') || 'Send a message...'}
-        rows={1}
-        spellCheck={false}
-        value={inputValue}
-        onChange={handleInput}
-        onKeyDown={handleKeyDown}
-        onPaste={handlePaste}
-      />
-      <button
-        className={`channel-send-btn${isStopMode ? ' is-stopping' : ''}`}
-        disabled={sending || (!isStopMode && !hasContent)}
-        onClick={handlePrimaryAction}
-        title={isStopMode ? t('chat.stop') : t('chat.send')}
-      >
-        {isStopMode ? (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <rect x="6" y="6" width="12" height="12" rx="2" />
-          </svg>
-        ) : (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
+      <div className="input-wrapper channel-composer">
+        {mentionActive && mentionItems.length > 0 && (
+          <div className="channel-mention-dropdown">
+            {mentionItems.map((m, idx) => (
+              <div
+                key={m.id}
+                className={`channel-mention-item${idx === mentionSelectedIdx ? ' active' : ''}`}
+                data-name={m.displayName}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  insertMention(m.mentionText);
+                }}
+              >
+                <div className="channel-mention-avatar">
+                  {m.avatar ? <MemberAvatar info={m.avatar} /> : <span>@</span>}
+                </div>
+                <span>{m.displayName}</span>
+              </div>
+            ))}
+          </div>
         )}
-      </button>
-    </div>
+        {commandActive && commandItems.length > 0 && (
+          <div className="channel-mention-dropdown channel-command-dropdown slash-menu">
+            {commandItems.map((cmd, idx) => (
+              <button
+                key={cmd.id}
+                type="button"
+                className={`slash-menu-item${idx === commandSelectedIdx ? ' selected' : ''}`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  insertCommand(cmd.label);
+                }}
+              >
+                <span className="slash-menu-icon" dangerouslySetInnerHTML={{ __html: cmd.icon }} />
+                <span className="slash-menu-label">{cmd.label}</span>
+                <span className="slash-menu-desc">{cmd.desc}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <textarea
+          ref={inputRef}
+          id="channelInputBox"
+          className="input-box"
+          placeholder={(window as any).t?.('channel.inputPlaceholder') || 'Send a message...'}
+          rows={1}
+          spellCheck={false}
+          value={inputValue}
+          onChange={handleInput}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+        />
+        <div className="input-bottom-bar">
+          <div className="input-actions">
+            <div className="attach-menu-wrap">
+              <button
+                type="button"
+                className="attach-menu-trigger"
+                title={t('input.addAttachment')}
+                aria-label={t('input.addAttachment')}
+                onClick={handlePickAttachments}
+              >
+                <span className="attach-menu-plus">+</span>
+              </button>
+              <input
+                ref={attachFileInputRef}
+                className="attach-menu-file-input"
+                type="file"
+                multiple
+                onChange={handleAttachPickerChange}
+              />
+            </div>
+          </div>
+          <div className="input-controls">
+            {voiceSupported && (
+              <span
+                className={`voice-mic-indicator state-${voiceState}${voiceState !== 'idle' ? ' active' : ''}`}
+                title={voiceStatusText}
+                aria-label={voiceStatusText}
+                style={{ '--voice-level': voiceVolumeLevel.toFixed(3) } as any}
+              >
+                <span className="voice-mic-glyph" aria-hidden="true">
+                  <span
+                    className="voice-mic-outline"
+                    dangerouslySetInnerHTML={{ __html: SVG_ICONS.mic }}
+                  />
+                  <span
+                    className="voice-mic-fill"
+                    dangerouslySetInnerHTML={{ __html: SVG_ICONS.micFill }}
+                  />
+                </span>
+              </span>
+            )}
+            <button
+              type="button"
+              className={`send-btn${isStopMode ? ' is-streaming' : ''}`}
+              disabled={sending || (!isStopMode && !hasContent)}
+              onMouseDown={(e) => { e.preventDefault(); }}
+              onClick={handlePrimaryAction}
+              title={isStopMode ? t('chat.stop') : t('chat.send')}
+            >
+              <span className="send-label">
+                {isStopMode ? (
+                  <svg className="stop-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                ) : (
+                  <svg className="send-enter-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 10 4 15 9 20" />
+                    <path d="M20 4v7a4 4 0 01-4 4H4" />
+                  </svg>
+                )}
+                <span className="send-label-text">{isStopMode ? t('chat.stop') : t('chat.send')}</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
