@@ -1747,6 +1747,7 @@
       "notPdf": "文件不是 PDF：{path}",
       "serviceError": "PDF2MD 服务返回错误 {status}: {detail}",
       "emptyMarkdown": "PDF2MD 服务没有返回 Markdown 内容。",
+      "cacheHit": "命中本地缓存，已从 .hanako/pdf2md 读取 Markdown（未重新转换）。\n缓存文件：{cachePath}\n输出文件：{outputPath}",
       "success": "PDF 已转换为 Markdown。\n本地 Markdown：{outputPath}\n远程 Markdown：{remotePath}",
       "previewTruncated": "\n\n（预览已截断；完整内容已保存到 {outputPath}）",
       "callFailed": "调用 PDF2MD 服务失败：{msg}"

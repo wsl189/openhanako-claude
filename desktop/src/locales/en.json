@@ -1747,6 +1747,7 @@
       "notPdf": "File is not a PDF: {path}",
       "serviceError": "PDF2MD service returned error {status}: {detail}",
       "emptyMarkdown": "PDF2MD service returned no Markdown content.",
+      "cacheHit": "Local cache hit; Markdown loaded from .hanako/pdf2md (no reconversion).\nCache file: {cachePath}\nOutput file: {outputPath}",
       "success": "PDF converted to Markdown.\nLocal Markdown: {outputPath}\nRemote Markdown: {remotePath}",
       "previewTruncated": "\n\n(Preview truncated; full content saved to {outputPath})",
       "callFailed": "Failed to call PDF2MD service: {msg}"
