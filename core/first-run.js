@@ -8,6 +8,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import YAML from "js-yaml";
 
 const REMOVED_BUILTIN_SKILLS = ["canvas-design"];
 
@@ -68,7 +69,16 @@ function seedDefaultAgent(agentsDir, productDir) {
   // config.yaml（保持模板默认值：name=Hanako, yuan=hanako）
   const configSrc = path.join(productDir, "config.example.yaml");
   if (fs.existsSync(configSrc)) {
-    fs.copyFileSync(configSrc, path.join(agentDir, "config.yaml"));
+    let configText = fs.readFileSync(configSrc, "utf-8");
+    // 新安装默认 agent 应与 createAgent 行为一致：不写 custom_enabled 即“放开全部 custom tools”。
+    try {
+      const parsed = YAML.load(configText) || {};
+      if (parsed.tools && typeof parsed.tools === "object" && !Array.isArray(parsed.tools)) {
+        delete parsed.tools.custom_enabled;
+      }
+      configText = YAML.dump(parsed, { lineWidth: -1, noRefs: true });
+    } catch {}
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), configText, "utf-8");
   }
 
   // identity.md（填入默认名字）

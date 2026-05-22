@@ -2,7 +2,9 @@ import fs from "fs";
 import path from "path";
 
 const DEFAULT_TEMP_DIR_MIN_AGE_MS = 60 * 60 * 1000;
+const DEFAULT_SCRIPT_TEMP_FILE_MIN_AGE_MS = 10 * 60 * 1000;
 const SKILL_TEMP_DIR_RE = /^\.tmp-(?:install|clawhub-install)-/;
+const SANDBOX_TEMP_FILE_RE = /^\.hana-sandbox-[A-Za-z0-9-]+\.(?:sh|sb)$/;
 
 function safeReadDir(dir, stats) {
   try {
@@ -179,6 +181,24 @@ function cleanupEmptyShellSnapshots(agentsDir, stats) {
   }
 }
 
+function cleanupSandboxTempScripts(hanakoHome, stats, opts) {
+  if (!hanakoHome) return;
+  const scriptsDir = path.join(hanakoHome, "tmp", "scripts");
+  if (!fs.existsSync(scriptsDir)) return;
+
+  const now = opts.now ?? Date.now();
+  const minAgeMs = opts.scriptTempFileMinAgeMs ?? DEFAULT_SCRIPT_TEMP_FILE_MIN_AGE_MS;
+  for (const entry of safeReadDir(scriptsDir, stats)) {
+    if (!entry.isFile() || !SANDBOX_TEMP_FILE_RE.test(entry.name)) continue;
+    const fullPath = path.join(scriptsDir, entry.name);
+    if (!isOlderThan(fullPath, now, minAgeMs, stats)) {
+      stats.scriptTempFilesKept++;
+      continue;
+    }
+    removeFile(fullPath, stats, "scriptTempFilesRemoved");
+  }
+}
+
 /**
  * Clean low-risk startup artifacts under Hanako's data directory.
  *
@@ -192,6 +212,8 @@ export function cleanupStartupArtifacts({ hanakoHome, agentsDir, skillsDir } = {
     finderFilesRemoved: 0,
     tempDirsRemoved: 0,
     tempDirsKept: 0,
+    scriptTempFilesRemoved: 0,
+    scriptTempFilesKept: 0,
     emptyShellSnapshotDirsRemoved: 0,
     emptyShellSnapshotDirsKept: 0,
   };
@@ -221,6 +243,7 @@ export function cleanupStartupArtifacts({ hanakoHome, agentsDir, skillsDir } = {
 
   cleanupSkillTempDirs(skillsDir, stats, opts);
   cleanupAgentSkillTempDirs(agentsDir, stats, opts);
+  cleanupSandboxTempScripts(hanakoHome, stats, opts);
   cleanupEmptyShellSnapshots(agentsDir, stats);
 
   return stats;

@@ -963,6 +963,24 @@ export class Agent {
           (defaultWorkspace ? `\nDefault workspace: ${defaultWorkspace}` : "") +
           (cwdPath ? `\nCurrent execution directory (cwd): ${cwdPath}` : "")
       );
+      parts.push(isZh
+        ? [
+            "",
+            "## 临时脚本约束",
+            "",
+            "- 当你为一次性任务临时创建脚本（例如 .py/.sh/.js）时，必须只写到 `~/.hanako/tmp/scripts`。",
+            "- Windows 上等价目录是 `C:\\Users\\<用户名>\\.hanako\\tmp\\scripts`。",
+            "- 临时脚本执行完成后必须立即删除；不要把这类临时脚本留在工作区。",
+          ].join("\n")
+        : [
+            "",
+            "## Temporary Script Constraint",
+            "",
+            "- When you create one-off scripts for execution (for example .py/.sh/.js), write them only under `~/.hanako/tmp/scripts`.",
+            "- On Windows, the equivalent directory is `C:\\Users\\<username>\\.hanako\\tmp\\scripts`.",
+            "- Remove temporary scripts immediately after execution; do not leave them in the workspace.",
+          ].join("\n")
+      );
     }
 
     // 日期时间

@@ -512,6 +512,7 @@ export class HanaEngine {
       || startupCleanup.filesRemoved > 0
       || startupCleanup.finderFilesRemoved > 0
       || startupCleanup.tempDirsRemoved > 0
+      || startupCleanup.scriptTempFilesRemoved > 0
       || startupCleanup.emptyShellSnapshotDirsRemoved > 0
       || startupCleanup.errors > 0
     ) {
@@ -522,8 +523,9 @@ export class HanaEngine {
         + `sessionEnvFiles=${startupCleanup.filesRemoved}, `
         + `finderFiles=${startupCleanup.finderFilesRemoved}, `
         + `skillTempDirs=${startupCleanup.tempDirsRemoved}, `
+        + `sandboxTempScripts=${startupCleanup.scriptTempFilesRemoved}, `
         + `emptyShellSnapshots=${startupCleanup.emptyShellSnapshotDirsRemoved}, `
-        + `kept=${startupCleanup.dirsKept + startupCleanup.tempDirsKept + startupCleanup.emptyShellSnapshotDirsKept}, `
+        + `kept=${startupCleanup.dirsKept + startupCleanup.tempDirsKept + startupCleanup.scriptTempFilesKept + startupCleanup.emptyShellSnapshotDirsKept}, `
         + `errors=${startupCleanup.errors}`
       );
     }

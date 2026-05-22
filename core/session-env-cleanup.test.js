@@ -97,4 +97,44 @@ describe("cleanupEmptySessionEnvDirs", () => {
     expect(stats.emptyShellSnapshotDirsKept).toBe(1);
     expect(stats.errors).toBe(0);
   });
+
+  it("cleans stale sandbox temp scripts under hanakoHome/tmp/scripts", () => {
+    const agentsDir = path.join(tmpDir, "agents");
+    const skillsDir = path.join(tmpDir, "skills");
+    const scriptsDir = path.join(tmpDir, "tmp", "scripts");
+    mkdirp(agentsDir);
+    mkdirp(skillsDir);
+    mkdirp(scriptsDir);
+
+    const oldScript = path.join(scriptsDir, ".hana-sandbox-old1234.sh");
+    const oldProfile = path.join(scriptsDir, ".hana-sandbox-old1234.sb");
+    const freshScript = path.join(scriptsDir, ".hana-sandbox-fresh5678.sh");
+    const keepFile = path.join(scriptsDir, "note.txt");
+    fs.writeFileSync(oldScript, "echo old");
+    fs.writeFileSync(oldProfile, "(version 1)");
+    fs.writeFileSync(freshScript, "echo fresh");
+    fs.writeFileSync(keepFile, "keep");
+
+    const now = Date.now();
+    fs.utimesSync(oldScript, new Date(now - 3600_000), new Date(now - 3600_000));
+    fs.utimesSync(oldProfile, new Date(now - 3600_000), new Date(now - 3600_000));
+    fs.utimesSync(freshScript, new Date(now), new Date(now));
+
+    const stats = cleanupStartupArtifacts({
+      hanakoHome: tmpDir,
+      agentsDir,
+      skillsDir,
+    }, {
+      now,
+      scriptTempFileMinAgeMs: 60_000,
+    });
+
+    expect(fs.existsSync(oldScript)).toBe(false);
+    expect(fs.existsSync(oldProfile)).toBe(false);
+    expect(fs.existsSync(freshScript)).toBe(true);
+    expect(fs.existsSync(keepFile)).toBe(true);
+    expect(stats.scriptTempFilesRemoved).toBe(2);
+    expect(stats.scriptTempFilesKept).toBe(1);
+    expect(stats.errors).toBe(0);
+  });
 });
