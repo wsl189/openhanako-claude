@@ -799,7 +799,9 @@ export class Agent {
             "- 如果需要安装新依赖，也必须安装到上述共享环境路径下，不要写入其他临时环境目录。",
             "- Python 与 Node 依赖默认复用同一套已安装环境，先检查是否已满足再安装，避免重复安装。",
             "- 如果出现版本冲突或无法安全复用，先明确报告冲突，不要擅自强行覆盖现有共享依赖。",
+            "- 配置脚本运行环境或安装依赖时，优先使用国内镜像源；若镜像不可用再回退官方源。",
             "- 该规则同样适用于临时执行脚本：你为一次性任务创建并执行的 .py/.js/.sh 脚本，也必须在同一个共享环境里运行，禁止为单次脚本临时创建独立 venv 或独立 node_modules。",
+            "- 安装或更新 skill/MCP 后，必须执行一次最小可用性测试；若测试失败且原因为依赖或运行环境缺失，先将缺失依赖安装到共享环境，再重新测试，直到通过或给出明确失败原因。",
             "- 例外：如果用户明确要求“在某个指定目录新建环境”，按用户指定目录执行，不要强制改回共享环境。",
           ].join("\n")
         : [
@@ -811,7 +813,9 @@ export class Agent {
             "- If new dependencies are required, install them into that shared path as well, not into other temporary environments.",
             "- Reuse the same installed Python and Node dependency sets by default; check existing packages first and only install missing ones.",
             "- If version conflicts or unsafe reuse appears, report the conflict first and do not force-overwrite existing shared dependencies.",
+            "- When configuring script runtime environments or installing dependencies, prefer mainland-China mirrors first; fall back to official upstream sources only if mirrors are unavailable.",
             "- This rule also applies to temporary execution scripts: one-off .py/.js/.sh scripts must run in the same shared environment, and you must not create per-script venvs or per-script node_modules.",
+            "- After installing or updating any skill/MCP, run one smoke test. If it fails due to missing dependencies or runtime environment, install the missing dependencies into the shared environment first, then re-test until it passes or you can report a concrete failure reason.",
             "- Exception: if the user explicitly asks to create a new environment in a specific directory, follow the user-specified path instead of forcing the shared path.",
           ].join("\n")
       );

@@ -58,8 +58,11 @@ describe("Agent shared dependency prompt", () => {
     expect(prompt).toContain("禁止按 skill 单独创建 Python venv 或单独 node_modules");
     expect(prompt).toContain("如果需要安装新依赖，也必须安装到上述共享环境路径下");
     expect(prompt).toContain("先明确报告冲突，不要擅自强行覆盖现有共享依赖");
+    expect(prompt).toContain("配置脚本运行环境或安装依赖时，优先使用国内镜像源");
     expect(prompt).toContain("临时执行脚本");
     expect(prompt).toContain("禁止为单次脚本临时创建独立 venv 或独立 node_modules");
+    expect(prompt).toContain("安装或更新 skill/MCP 后，必须执行一次最小可用性测试");
+    expect(prompt).toContain("先将缺失依赖安装到共享环境，再重新测试");
     expect(prompt).toContain("如果用户明确要求“在某个指定目录新建环境”，按用户指定目录执行");
   });
 });
