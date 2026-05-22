@@ -743,21 +743,34 @@ export class Agent {
         "- For questions about whether something is true now, if the only support is an old `(stateful)` or `(ephemeral)` memory, answer conservatively: treat it as the last-known state or ask/search/confirm before making a present-tense claim.",
       ].join("\n");
 
-      if (pinnedMd.trim()) {
+      const hasPinnedMemory = pinnedMd.trim().length > 0;
+      const trimmedMemory = memory.trim();
+      const hasConversationMemory = !!(
+        trimmedMemory
+        && trimmedMemory !== "（暂无记忆）"
+        && trimmedMemory !== "(No memory yet)"
+      );
+
+      // 注入一次记忆规则，避免在 pinned + memory 两个区块重复灌入相同规则文本。
+      if (hasPinnedMemory || hasConversationMemory) {
+        parts.push(memoryRule.trimStart());
+        parts.push(memoryTimelinessLegend);
+      }
+
+      if (hasPinnedMemory) {
         parts.push(...section(
           isZh ? "# 置顶记忆" : "# Pinned Memories",
           isZh
-            ? "用户主动要求你记住的内容，始终保留。你可以读写这些记忆。注意：始终保留不等于始终按当前事实采信；带时效的置顶内容仍要按记录时间判断有效性。\n" + memoryRule + "\n" + memoryTimelinessLegend + "\n\n" + referenceData("置顶记忆", pinnedMd)
-            : "Content the user explicitly asked you to remember. Always retained. You can read and write these memories. Note: always retained does not mean always currently true; time-sensitive pinned content still has to be judged by its recorded time.\n" + memoryRule + "\n" + memoryTimelinessLegend + "\n\n" + referenceData("Pinned Memories", pinnedMd)
+            ? "用户主动要求你记住的内容，始终保留。你可以读写这些记忆。注意：始终保留不等于始终按当前事实采信；带时效的置顶内容仍要按记录时间判断有效性。\n\n" + referenceData("置顶记忆", pinnedMd)
+            : "Content the user explicitly asked you to remember. Always retained. You can read and write these memories. Note: always retained does not mean always currently true; time-sensitive pinned content still has to be judged by its recorded time.\n\n" + referenceData("Pinned Memories", pinnedMd)
         ));
       }
-      const trimmedMemory = memory.trim();
-      if (trimmedMemory && trimmedMemory !== "（暂无记忆）" && trimmedMemory !== "(No memory yet)") {
+      if (hasConversationMemory) {
         parts.push(...section(
           isZh ? "# 记忆" : "# Memory",
           isZh
-            ? memoryRule.trimStart() + "\n" + memoryTimelinessLegend + "\n\n" + referenceData("过往对话记忆", memory)
-            : memoryRule.trimStart() + "\n" + memoryTimelinessLegend + "\n\n" + referenceData("Conversation Memory", memory)
+            ? referenceData("过往对话记忆", memory)
+            : referenceData("Conversation Memory", memory)
         ));
       }
     }
