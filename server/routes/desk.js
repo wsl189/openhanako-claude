@@ -9,6 +9,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import chokidar from "chokidar";
 import { t } from "../i18n.js";
 import { normalizeEverySchedule } from "../../lib/desk/cron-schedule.js";
 import { readSessionMetadata } from "../../core/claude-session-store.js";
@@ -238,6 +239,55 @@ function resolveSessionDeskDir(sessionPath, engine) {
 
 export default async function deskRoute(app, { engine, hub }) {
   const ACTIVITY_LIST_LIMIT = 50;
+  let activeDeskWatchDir = "";
+  let activeDeskWatcher = null;
+  let deskChangedTimer = null;
+
+  function closeDeskWatcher() {
+    if (activeDeskWatcher) {
+      activeDeskWatcher.close().catch(() => {});
+      activeDeskWatcher = null;
+    }
+    activeDeskWatchDir = "";
+  }
+
+  function scheduleDeskChangedBroadcast() {
+    if (!hub?.eventBus?.emit) return;
+    if (deskChangedTimer) clearTimeout(deskChangedTimer);
+    deskChangedTimer = setTimeout(() => {
+      deskChangedTimer = null;
+      hub.eventBus.emit({ type: "desk_changed" }, null);
+    }, 120);
+  }
+
+  function ensureDeskWatcher(dir) {
+    const nextDir = String(dir || "").trim();
+    if (!nextDir) return;
+    if (nextDir === activeDeskWatchDir && activeDeskWatcher) return;
+    closeDeskWatcher();
+    try {
+      activeDeskWatcher = chokidar.watch(nextDir, {
+        ignoreInitial: true,
+        depth: 0,
+        awaitWriteFinish: {
+          stabilityThreshold: 120,
+          pollInterval: 50,
+        },
+      });
+      activeDeskWatchDir = nextDir;
+      activeDeskWatcher.on("all", (_event, changedPath) => {
+        const baseName = path.basename(String(changedPath || ""));
+        if (!baseName || baseName.startsWith(".")) return;
+        scheduleDeskChangedBroadcast();
+      });
+      activeDeskWatcher.on("error", (err) => {
+        console.warn("[desk] watcher error:", err?.message || err);
+      });
+    } catch (err) {
+      console.warn("[desk] failed to create watcher:", err?.message || err);
+      closeDeskWatcher();
+    }
+  }
 
   function normalizeNotifyTarget(value, fallback = "local") {
     const v = String(value ?? fallback).toLowerCase();
@@ -571,6 +621,7 @@ export default async function deskRoute(app, { engine, hub }) {
     }
     const target = subdir ? path.join(dir, subdir) : dir;
     if (!isInsidePath(target, dir)) return { error: "invalid path" };
+    ensureDeskWatcher(target);
     return { files: listWorkspaceFiles(target), subdir: subdir || "", basePath: dir };
   });
 
@@ -754,5 +805,13 @@ export default async function deskRoute(app, { engine, hub }) {
       default:
         return { error: `unknown action: ${action}` };
     }
+  });
+
+  app.addHook("onClose", async () => {
+    if (deskChangedTimer) {
+      clearTimeout(deskChangedTimer);
+      deskChangedTimer = null;
+    }
+    closeDeskWatcher();
   });
 }
