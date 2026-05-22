@@ -235,9 +235,133 @@ function extractGenericDetail(args: Record<string, unknown>): string {
   return '';
 }
 
+function guessZhLocale(): boolean {
+  const windowLocale = typeof window !== 'undefined'
+    ? String((window as any)?.i18n?.locale || '')
+    : '';
+  const navLocale = typeof navigator !== 'undefined'
+    ? String(navigator.language || '')
+    : '';
+  const locale = (windowLocale || navLocale || 'zh-CN').toLowerCase();
+  return locale.startsWith('zh');
+}
+
+function basenameLike(input: string): string {
+  const normalized = String(input || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!normalized) return '';
+  const parts = normalized.split('/').filter(Boolean);
+  return parts[parts.length - 1] || normalized;
+}
+
+function mergeSetupSettingsSpec(args: Record<string, unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  const tutorial = asText(args.tutorial);
+  if (tutorial) {
+    try {
+      const parsed = JSON.parse(tutorial);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        Object.assign(merged, parsed as Record<string, unknown>);
+      }
+    } catch {}
+  }
+  for (const key of ['agent', 'skill', 'mcp', 'memory']) {
+    const value = args[key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const current = merged[key];
+    merged[key] = current && typeof current === 'object' && !Array.isArray(current)
+      ? { ...(current as Record<string, unknown>), ...(value as Record<string, unknown>) }
+      : (value as Record<string, unknown>);
+  }
+  return merged;
+}
+
+function summarizeSetupSettingsDetail(args: Record<string, unknown>): string {
+  const isZh = guessZhLocale();
+  const spec = mergeSetupSettingsSpec(args);
+  const sections: string[] = [];
+
+  const agent = (spec.agent && typeof spec.agent === 'object' && !Array.isArray(spec.agent))
+    ? spec.agent as Record<string, unknown>
+    : null;
+  if (agent) {
+    const action = asText(agent.action).toLowerCase();
+    const targetId = asText(agent.agent_id) || asText(agent.id);
+    const name = asText(agent.name);
+    if (action === 'create') {
+      sections.push(isZh ? `创建助手 ${name || targetId || '新助手'}` : `create agent ${name || targetId || 'new-agent'}`);
+    } else if (action === 'delete') {
+      sections.push(isZh ? `删除助手 ${targetId || name || ''}`.trim() : `delete agent ${targetId || name || ''}`.trim());
+    } else {
+      const fields: string[] = [];
+      if (name) fields.push(isZh ? '名称' : 'name');
+      if (asText(agent.yuan)) fields.push('yuan');
+      if (asText(agent.default_model)) fields.push(isZh ? '默认模型' : 'default model');
+      if (asText(agent.default_workspace)) fields.push(isZh ? '工作区' : 'workspace');
+      if (typeof agent.identity_markdown === 'string') fields.push('identity');
+      if (typeof agent.ishiki_markdown === 'string') fields.push('ishiki');
+      const tools = (agent.tools && typeof agent.tools === 'object' && !Array.isArray(agent.tools))
+        ? agent.tools as Record<string, unknown>
+        : null;
+      if (tools) {
+        if (tools.enable_all === true) {
+          fields.push(isZh ? '工具全开' : 'all tools');
+        } else if (tools.builtin_enabled !== undefined || tools.custom_enabled !== undefined) {
+          fields.push(isZh ? '工具开关' : 'tool toggles');
+        }
+      }
+      if (fields.length > 0) {
+        const tail = fields.length > 3
+          ? `${fields.slice(0, 3).join(isZh ? '、' : ', ')}${isZh ? '等' : ', ...'}`
+          : fields.join(isZh ? '、' : ', ');
+        const target = targetId ? (isZh ? `（${targetId}）` : ` (${targetId})`) : '';
+        sections.push(isZh ? `更新助手${target}: ${tail}` : `update agent${target}: ${tail}`);
+      }
+    }
+  }
+
+  const skill = (spec.skill && typeof spec.skill === 'object' && !Array.isArray(spec.skill))
+    ? spec.skill as Record<string, unknown>
+    : null;
+  if (skill) {
+    const skillName = asText(skill.name) || basenameLike(asText(skill.source_path));
+    if (skillName) sections.push(isZh ? `安装技能 ${skillName}` : `install skill ${skillName}`);
+  }
+
+  const mcp = (spec.mcp && typeof spec.mcp === 'object' && !Array.isArray(spec.mcp))
+    ? spec.mcp as Record<string, unknown>
+    : null;
+  if (mcp) {
+    const mcpName = asText(mcp.name);
+    if (mcpName) sections.push(isZh ? `配置 MCP ${mcpName}` : `configure MCP ${mcpName}`);
+  }
+
+  const memory = (spec.memory && typeof spec.memory === 'object' && !Array.isArray(spec.memory))
+    ? spec.memory as Record<string, unknown>
+    : null;
+  if (memory) {
+    const action = asText(memory.action).toLowerCase();
+    if (!action || action === 'clear') {
+      const target = asText(memory.agent_id);
+      sections.push(isZh
+        ? `清空记忆${target ? `（${target}）` : ''}`
+        : `clear memory${target ? ` (${target})` : ''}`);
+    }
+  }
+
+  if (sections.length === 0) return '';
+  return truncateHead(sections.join(isZh ? '；' : '; '), 160);
+}
+
 export function extractToolDetail(name: string, args: Record<string, unknown> | undefined): string {
   if (!args) return '';
-  const tool = String(name || '').toLowerCase();
+  const tool = String(name || '')
+    .toLowerCase()
+    .replace(/^functions\./, '')
+    .replace(/^multi_tool_use\./, '');
+  if (tool === 'setup_settings' || tool === 'setup-settings' || tool === 'updatesettings') {
+    const setupSummary = summarizeSetupSettingsDetail(args);
+    if (setupSummary) return setupSummary;
+  }
   switch (tool) {
     case 'read':
     case 'write':

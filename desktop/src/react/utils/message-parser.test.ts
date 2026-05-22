@@ -49,4 +49,36 @@ describe('extractToolDetail', () => {
     expect(detail).toContain('+2');
     expect(detail).toContain('-1');
   });
+
+  it('summarizes setup_settings changes for direct payload', () => {
+    const detail = extractToolDetail('setup_settings', {
+      agent: {
+        action: 'create',
+        name: 'kimi',
+        default_model: 'openai/gpt-5',
+      },
+      mcp: { name: 'playwright' },
+    });
+    expect(detail).toContain('kimi');
+    expect(detail).toContain('playwright');
+  });
+
+  it('summarizes setup_settings changes from tutorial json', () => {
+    const detail = extractToolDetail('functions.setup_settings', {
+      tutorial: JSON.stringify({
+        agent: {
+          action: 'update',
+          agent_id: 'hanako',
+          default_workspace: '/Users/tc/Desktop',
+          tools: { enable_all: true },
+        },
+        memory: {
+          action: 'clear',
+          agent_id: 'hanako',
+        },
+      }),
+    });
+    expect(detail).toContain('hanako');
+    expect(detail.toLowerCase()).toContain('memory');
+  });
 });
