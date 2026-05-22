@@ -796,3 +796,29 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
     expect(translated).toEqual([{ type: "turn_end" }]);
   });
 });
+
+describe("SessionCoordinator._buildSessionEnv", () => {
+  it("does not inherit host CLAUDE_CONFIG_DIR into runtime env", () => {
+    const coordinator = new SessionCoordinator({});
+    const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    try {
+      process.env.CLAUDE_CONFIG_DIR = "/tmp/host-claude-config";
+      const models = {
+        resolveModelWithCredentials: () => ({
+          model: "claude-sonnet-4-5",
+          base_url: "https://api.anthropic.com",
+          api_key: "sk-test",
+          auth_token: "",
+        }),
+      };
+
+      const built = coordinator._buildSessionEnv(models, {}, "claude-sonnet-4-5");
+      expect(built.env.CLAUDE_CONFIG_DIR).toBeUndefined();
+      expect(built.env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
+      expect(built.env.ANTHROPIC_API_KEY).toBe("sk-test");
+    } finally {
+      if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+    }
+  });
+});

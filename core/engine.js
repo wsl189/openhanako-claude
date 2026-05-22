@@ -540,7 +540,7 @@ export class HanaEngine {
     });
     await this._resourceLoader.reload();
 
-    const HIDDEN_SKILLS = new Set(["canvas-design", "skill-creator", "skills-translate-temp"]);
+    const HIDDEN_SKILLS = new Set(["skill-creator", "skills-translate-temp"]);
     this._skills.init(this._resourceLoader, this._agentMgr.agents, HIDDEN_SKILLS);
     log(`[init] 3/5 ResourceLoader 完成 (${Date.now() - t_rl}ms, ${this._skills.allSkills.length} skills)`);
 

@@ -579,7 +579,11 @@ export class SessionCoordinator {
     const resolved = models.resolveModelWithCredentials(modelRef, agentConfig);
     const cleanEnv = {};
     for (const [key, value] of Object.entries(process.env)) {
-      if (!key.startsWith("ANTHROPIC_")) cleanEnv[key] = value;
+      if (key.startsWith("ANTHROPIC_")) continue;
+      // Prevent host-level Claude config leakage (for example ~/.claude)
+      // into Hanako runtime sessions.
+      if (key === "CLAUDE_CONFIG_DIR") continue;
+      cleanEnv[key] = value;
     }
     const normalizedBaseUrl = normalizeAnthropicBaseUrlForSdk(resolved.base_url);
     return {

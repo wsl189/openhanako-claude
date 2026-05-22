@@ -9,6 +9,8 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
+const REMOVED_BUILTIN_SKILLS = ["canvas-design"];
+
 /**
  * 确保 ~/.hanako/ 数据目录就绪
  * @param {string} hanakoHome - ~/.hanako 绝对路径
@@ -38,6 +40,7 @@ export function ensureFirstRun(hanakoHome, productDir) {
   if (fs.existsSync(skillsSrc)) {
     syncSkills(skillsSrc, skillsDst);
   }
+  cleanupRemovedBuiltinSkills({ agentsDir, skillsDst });
 
   // 4. 确保 user/preferences.json 存在
   const prefsPath = path.join(hanakoHome, "user", "preferences.json");
@@ -107,6 +110,31 @@ function syncSkills(srcDir, dstDir) {
     if (!fs.existsSync(path.join(skillSrc, "SKILL.md"))) continue;
 
     copyDirSync(skillSrc, skillDst);
+  }
+}
+
+function cleanupRemovedBuiltinSkills({ agentsDir, skillsDst }) {
+  for (const skillName of REMOVED_BUILTIN_SKILLS) {
+    try {
+      fs.rmSync(path.join(skillsDst, skillName), { recursive: true, force: true });
+    } catch {}
+  }
+
+  let agentEntries = [];
+  try {
+    agentEntries = fs.readdirSync(agentsDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of agentEntries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const agentSkillsDir = path.join(agentsDir, entry.name, "skills");
+    for (const skillName of REMOVED_BUILTIN_SKILLS) {
+      try {
+        fs.rmSync(path.join(agentSkillsDir, skillName), { recursive: true, force: true });
+      } catch {}
+    }
   }
 }
 

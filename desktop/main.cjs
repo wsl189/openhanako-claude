@@ -1006,18 +1006,28 @@ function createMainWindow() {
   mainWindow.on("maximize", () => mainWindow.webContents.send("window-maximized"));
   mainWindow.on("unmaximize", () => mainWindow.webContents.send("window-unmaximized"));
 
-  // macOS 风格：点关闭按钮只是隐藏窗口，Dock 保留黑点
+  // macOS 风格：点关闭按钮只是隐藏窗口，Dock 保留黑点。
+  // Windows/Linux：点右上角关闭即完整退出，避免托盘常驻造成“关不掉”的感知。
   mainWindow.on("close", (e) => {
-    if (!isQuitting) {
+    if (isQuitting) return;
+
+    if (process.platform !== "darwin") {
       e.preventDefault();
-      mainWindow.hide();
-      // 不调 app.dock.hide()，Dock 上保留图标和黑点
-      // 同时隐藏子窗口
-      if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide();
-      if (skillViewerWindow && !skillViewerWindow.isDestroyed()) skillViewerWindow.hide();
-      if (browserViewerWindow && !browserViewerWindow.isDestroyed()) browserViewerWindow.hide();
-      if (editorWindow && !editorWindow.isDestroyed()) editorWindow.hide();
+      isQuitting = true;
+      isExitingServer = true;
+      forceQuitApp = true;
+      app.quit();
+      return;
     }
+
+    e.preventDefault();
+    mainWindow.hide();
+    // 不调 app.dock.hide()，Dock 上保留图标和黑点
+    // 同时隐藏子窗口
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide();
+    if (skillViewerWindow && !skillViewerWindow.isDestroyed()) skillViewerWindow.hide();
+    if (browserViewerWindow && !browserViewerWindow.isDestroyed()) browserViewerWindow.hide();
+    if (editorWindow && !editorWindow.isDestroyed()) editorWindow.hide();
   });
 
   mainWindow.on("closed", () => {
