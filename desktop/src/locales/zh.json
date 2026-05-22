@@ -1589,6 +1589,10 @@
     "dialog": {
       "selectFolder": "选择工作文件夹",
       "selectSkill": "选择技能",
+      "libreOfficeRequiredTitle": "需要安装 LibreOffice",
+      "libreOfficeRequiredMessage": "预览PPT需要安装libreoffice",
+      "libreOfficeRequiredDetail": "当前系统未检测到 LibreOffice。点击“安装 LibreOffice”将跳转到官方下载页面。",
+      "installLibreOfficeNow": "安装 LibreOffice",
       "launchFailedTitle": "Hanako 启动失败",
       "launchFailedBody": "{detail}\n\n详细日志已保存到：\n{logPath}\n\n请将此截图或日志文件发送给开发者。",
       "serverRestartFailed": "Server 崩溃后重启失败。\n{error}\n\n请重新启动应用。",

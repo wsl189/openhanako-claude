@@ -1589,6 +1589,10 @@
     "dialog": {
       "selectFolder": "Select Working Folder",
       "selectSkill": "Select Skill",
+      "libreOfficeRequiredTitle": "LibreOffice Required",
+      "libreOfficeRequiredMessage": "Previewing PPT requires LibreOffice.",
+      "libreOfficeRequiredDetail": "LibreOffice was not detected on this system. Click \"Install LibreOffice\" to open the official download page.",
+      "installLibreOfficeNow": "Install LibreOffice",
       "launchFailedTitle": "Hanako Launch Failed",
       "launchFailedBody": "{detail}\n\nDetailed log saved to:\n{logPath}\n\nPlease send this screenshot or log file to the developer.",
       "serverRestartFailed": "Server crashed and failed to restart.\n{error}\n\nPlease restart the application.",

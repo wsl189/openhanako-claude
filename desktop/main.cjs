@@ -75,6 +75,7 @@ const EXTERNAL_CHROME_HOST = process.env.HANA_BROWSER_EXTERNAL_CHROME_HOST || "1
 const EXTERNAL_CHROME_PORT = Number(process.env.HANA_BROWSER_EXTERNAL_CHROME_PORT || 9222);
 const UPDATE_RELEASES_URL = process.env.HANA_UPDATE_RELEASES_URL || "https://github.com/wsl189/openhanako-claude/releases/latest";
 const UPDATE_CACHE_DIR_NAME = "hanako-updater";
+const LIBREOFFICE_DOWNLOAD_URL = process.env.HANA_LIBREOFFICE_DOWNLOAD_URL || "https://www.libreoffice.org/download/download-libreoffice/";
 
 const _externalChrome = {
   active: false,
@@ -161,6 +162,7 @@ let tray = null;
 let reusedServerPid = null; // 复用已有 server 时记录其 PID，退出时发 SIGTERM
 let isExitingServer = false; // 只有托盘"退出"时才 kill server，其余路径仅关前端
 let forceQuitApp = false;   // 启动失败等场景需要真正退出，绕过"隐藏保持运行"拦截
+let _libreOfficePromptInFlight = false;
 
 // ── 主进程 i18n ──
 // 从 agent config.yaml 读取 locale，加载对应语言包的 "main" 部分
@@ -315,6 +317,77 @@ function getSofficeCandidates() {
     ];
   }
   return ["/usr/bin/soffice", "/usr/local/bin/soffice", "soffice"];
+}
+
+function hasAvailableSoffice() {
+  const seen = new Set();
+  for (const candidate of getSofficeCandidates()) {
+    const bin = String(candidate || "").trim();
+    if (!bin || seen.has(bin)) continue;
+    seen.add(bin);
+    if (path.isAbsolute(bin) && !fs.existsSync(bin)) continue;
+    if (hasCommand(bin, ["--version"])) return true;
+  }
+  return false;
+}
+
+function getLibreOfficeNoticePath() {
+  return path.join(hanakoHome, "user", "libreoffice-notice.json");
+}
+
+function readLibreOfficeNoticeState() {
+  try {
+    return JSON.parse(fs.readFileSync(getLibreOfficeNoticePath(), "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeLibreOfficeNoticeState(state) {
+  try {
+    const file = getLibreOfficeNoticePath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(state || {}, null, 2) + "\n", "utf-8");
+  } catch {}
+}
+
+async function maybePromptLibreOfficeInstall(win) {
+  if (_libreOfficePromptInFlight) return;
+  if (!win || win.isDestroyed()) return;
+  if (hasAvailableSoffice()) return;
+
+  const state = readLibreOfficeNoticeState();
+  const snoozeUntil = Number(state?.snoozeUntil || 0);
+  if (Number.isFinite(snoozeUntil) && snoozeUntil > Date.now()) return;
+
+  _libreOfficePromptInFlight = true;
+  try {
+    const { response } = await dialog.showMessageBox(win, {
+      type: "info",
+      buttons: [
+        mt("dialog.installLibreOfficeNow", null, "Install LibreOffice"),
+        mt("update.later", null, "Later"),
+      ],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      title: mt("dialog.libreOfficeRequiredTitle", null, "LibreOffice Required"),
+      message: mt("dialog.libreOfficeRequiredMessage", null, "Previewing PPT requires LibreOffice."),
+      detail: mt("dialog.libreOfficeRequiredDetail", null, "LibreOffice is not installed on this system. Click Install LibreOffice to open the official download page."),
+    });
+
+    if (response === 0) {
+      writeLibreOfficeNoticeState({ snoozeUntil: Date.now() + 24 * 60 * 60 * 1000 });
+      shell.openExternal(LIBREOFFICE_DOWNLOAD_URL).catch(() => {});
+      return;
+    }
+
+    writeLibreOfficeNoticeState({ snoozeUntil: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+  } catch {
+    // 用户关闭弹窗或系统对话框失败时静默忽略
+  } finally {
+    _libreOfficePromptInFlight = false;
+  }
 }
 
 function toFileUri(filePath) {
@@ -3173,6 +3246,11 @@ ipcMain.handle("window-is-maximized", (event) => {
 ipcMain.handle("app-ready", () => {
   if (mainWindow) {
     mainWindow.show();
+    // 启动完成后检测 LibreOffice，缺失时引导安装（PPT 预览依赖）。
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      maybePromptLibreOfficeInstall(mainWindow).catch(() => {});
+    }, 600).unref?.();
   }
 
   // 首次启动时请求通知权限（macOS）
