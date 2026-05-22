@@ -451,6 +451,7 @@ export class ConfigCoordinator {
     const shouldRefreshSessionTools =
       partial.sandbox !== undefined
       || partial.tools !== undefined
+      || partial.mcp !== undefined
       || deskHomeFolderChanged
       || chatModelChanged;
 

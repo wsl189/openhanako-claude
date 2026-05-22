@@ -150,3 +150,43 @@ describe("ConfigCoordinator model overrides", () => {
     expect(models.defaultModel.maxTokens).toBe(32768);
   });
 });
+
+describe("ConfigCoordinator hot reload", () => {
+  it("refreshes current session tools when MCP config changes", async () => {
+    const refreshSpy = vi.fn(async () => ({ reloaded: true, sessionPath: "/tmp/session.json" }));
+    const agent = {
+      config: {},
+      updateConfig: vi.fn((partial) => {
+        agent.config = {
+          ...agent.config,
+          ...partial,
+          mcp: {
+            ...(agent.config.mcp || {}),
+            ...(partial.mcp || {}),
+          },
+        };
+      }),
+    };
+    const coord = new ConfigCoordinator({
+      getPrefs: () => ({ getPreferences: () => ({}), savePreferences: vi.fn(), setThinkingLevel: vi.fn() }),
+      getAgent: () => agent,
+      getAgents: () => new Map(),
+      getModels: () => ({
+        availableModels: [],
+      }),
+      getSkills: () => ({}),
+      getSession: () => null,
+      getHub: () => null,
+      emitEvent: () => {},
+      emitDevLog: () => {},
+      getCurrentModel: () => null,
+      refreshCurrentSessionTools: refreshSpy,
+    });
+
+    await coord.updateConfig({
+      mcp: { disabled_servers: ["context7"] },
+    });
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+  });
+});

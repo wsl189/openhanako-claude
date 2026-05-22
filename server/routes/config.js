@@ -608,12 +608,18 @@ export default async function configRoute(app, { engine }) {
       // providers 变更后确保运行时刷新
       // 当同一请求同时提交 models 时，先应用完整 partial，避免先刷新再被模型配置覆盖。
       const needsModelSync = providersChanged && !partial.models;
+      const needsRuntimeRefresh = providersChanged;
       if (providersChanged && Object.keys(partial).length === 0) {
         clearConfigCache();
         await engine.updateConfig({});
         if (needsModelSync) {
           try { await engine.syncModelsAndRefresh(); } catch (e) {
             debugLog()?.warn("api", `syncModelsAndRefresh after provider change: ${e.message}`);
+          }
+        }
+        if (needsRuntimeRefresh) {
+          try { await engine.refreshCurrentSessionTools?.(); } catch (e) {
+            debugLog()?.warn("api", `refresh current session tools after provider change: ${e.message}`);
           }
         }
         return { ok: true };
@@ -633,6 +639,11 @@ export default async function configRoute(app, { engine }) {
       if (needsModelSync) {
         try { await engine.syncModelsAndRefresh(); } catch (e) {
           debugLog()?.warn("api", `syncModelsAndRefresh after config update: ${e.message}`);
+        }
+      }
+      if (needsRuntimeRefresh) {
+        try { await engine.refreshCurrentSessionTools?.(); } catch (e) {
+          debugLog()?.warn("api", `refresh current session tools after provider update: ${e.message}`);
         }
       }
       if (externalMcpChanged) {

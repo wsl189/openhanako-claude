@@ -629,6 +629,11 @@ export default async function agentsRoute(app, { engine }) {
         } catch (err) {
           console.error("[agents] syncModelsAndRefresh after provider change failed:", err.message);
         }
+        try {
+          await engine.refreshCurrentSessionTools?.();
+        } catch (err) {
+          console.error("[agents] refreshCurrentSessionTools after provider change failed:", err.message);
+        }
       }
 
       if (Object.keys(partial).length === 0) {
