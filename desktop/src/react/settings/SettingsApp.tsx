@@ -58,6 +58,10 @@ export function SettingsApp() {
     platform.onSettingsChanged((type: string, data: any) => {
       if (type === 'sessions-changed') {
         window.dispatchEvent(new CustomEvent('hana-sessions-changed', { detail: data || {} }));
+        return;
+      }
+      if (type === 'mcp-changed') {
+        void loadSettingsConfig();
       }
     });
   }, []);

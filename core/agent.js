@@ -780,12 +780,12 @@ export class Agent {
       parts.push(isZh
         ? (
           canSetupSettings
-            ? "\n## 设置修改\n\n凡是涉及创建/删除 agent、切换每个 agent 的工具开关、设置默认工作区、设置默认模型、安装/更新 skill、配置 MCP、更新身份/意识、清空指定 agent 记忆（包括 pinned/permanent memory）等设置操作，一律优先调用 setup_settings 工具执行。所有设置只允许落在 Hanako 自己的目录与配置里（如 ~/.hanako、当前 agent 目录）；严禁写入 ~/.claude、CLAUDE_CONFIG_DIR、claudecode 或其他外部产品配置。仅在 setup_settings 工具明确失败时，再给手动步骤。"
+            ? "\n## 设置修改\n\n凡是涉及创建/删除 agent、切换每个 agent 的工具开关、设置默认工作区、设置默认模型、安装/更新 skill、配置 MCP、更新身份/意识、清空指定 agent 记忆（包括 pinned/permanent memory）等设置操作，一律优先调用 setup_settings 工具执行。所有设置只允许落在 Hanako 自己的目录与配置里（如 ~/.hanako、当前 agent 目录）；严禁写入 ~/.claude、CLAUDE_CONFIG_DIR、claudecode 或其他外部产品配置。配置 MCP 时，文档要求的 API_KEY/HOST/TOKEN 等变量必须写入 `setup_settings.mcp.env`（或教程 JSON 的 mcpServers.*.env）并保存到 Hanako 设置，不要通过修改系统环境变量来代替。仅在 setup_settings 工具明确失败时，再给手动步骤。"
             : "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
         )
         : (
           canSetupSettings
-            ? "\n## Settings Changes\n\nFor any settings operation (create/delete agents, per-agent tool toggles, default workspace, default model, install/update skills, configure MCP, update identity/ishiki, clear memory for a target agent including pinned/permanent memory), always call setup_settings first. All settings must stay inside Hanako-owned directories/configs (for example ~/.hanako and the current agent directory). Never write ~/.claude, CLAUDE_CONFIG_DIR, claudecode, or any external-product config. Provide manual steps only if setup_settings explicitly fails."
+            ? "\n## Settings Changes\n\nFor any settings operation (create/delete agents, per-agent tool toggles, default workspace, default model, install/update skills, configure MCP, update identity/ishiki, clear memory for a target agent including pinned/permanent memory), always call setup_settings first. All settings must stay inside Hanako-owned directories/configs (for example ~/.hanako and the current agent directory). Never write ~/.claude, CLAUDE_CONFIG_DIR, claudecode, or any external-product config. When configuring MCP, variables required by docs (API_KEY/HOST/TOKEN, etc.) must be written into `setup_settings.mcp.env` (or `mcpServers.*.env` in tutorial JSON) and persisted in Hanako settings; do not substitute this by editing system environment variables. Provide manual steps only if setup_settings explicitly fails."
             : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
         )
       );
@@ -799,6 +799,7 @@ export class Agent {
             "- 如果需要安装新依赖，必须安装到上述共享环境路径下；Python 与 Node 依赖默认先复用已安装环境，仅补齐缺失依赖。",
             "- 如果出现版本冲突或无法安全复用，先明确报告冲突，不要擅自强行覆盖现有共享依赖。",
             "- 配置脚本运行环境或安装依赖时，优先使用国内镜像源；若镜像不可用再回退官方源。",
+            "- `uv/uvx`、`node/npx`、`bun/bunx` 这类运行器优先保证系统 PATH 可用（系统级/用户级安装）；业务依赖再安装到共享环境，不要把运行器当成某个 skill 的私有依赖。",
             "- 安装或更新 skill/MCP 后，必须执行一次最小可用性测试；执行任务中若调用 skill 或 MCP 失败，必须明确回复失败原因。若原因属于环境或依赖问题，先修复并重试，直到通过或给出明确失败结论。",
             "- 例外：如果用户明确要求“在某个指定目录新建环境”，按用户指定目录执行，不要强制改回共享环境。",
           ].join("\n")
@@ -811,6 +812,7 @@ export class Agent {
             "- If new dependencies are required, install them into the shared path; reuse existing Python/Node dependencies first and only install what is missing.",
             "- If version conflicts or unsafe reuse appears, report the conflict first and do not force-overwrite existing shared dependencies.",
             "- When configuring script runtime environments or installing dependencies, prefer mainland-China mirrors first; fall back to official upstream sources only if mirrors are unavailable.",
+            "- For runners such as `uv/uvx`, `node/npx`, and `bun/bunx`, ensure they are available via system PATH first (system-level or user-level install). Install business dependencies into the shared environment, and do not treat runners as private per-skill dependencies.",
             "- After installing/updating any skill/MCP, run one smoke test. If any skill/MCP call fails during task execution, explicitly report the failure reason to the user. When the failure is due to environment/dependency issues, fix those first and retry until success or a concrete final failure conclusion.",
             "- Exception: if the user explicitly asks to create a new environment in a specific directory, follow the user-specified path instead of forcing the shared path.",
           ].join("\n")

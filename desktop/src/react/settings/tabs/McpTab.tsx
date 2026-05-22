@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
+import { loadSettingsConfig } from '../actions';
 
 const platform = (window as any).platform;
 
@@ -165,6 +166,24 @@ export function McpTab() {
   useEffect(() => {
     void refreshConnectivity();
   }, [refreshConnectivity]);
+
+  useEffect(() => {
+    const refreshConfig = () => {
+      void loadSettingsConfig();
+    };
+    const onFocus = () => refreshConfig();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshConfig();
+    };
+
+    refreshConfig();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   async function patchMcp(externalServersPatch: Record<string, ExternalMcpServer | null>) {
     const agentId = store.getSettingsAgentId();

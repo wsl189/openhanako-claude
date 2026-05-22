@@ -341,6 +341,10 @@ export function handleServerMessage(msg: any): void {
       (window as any).__loadDeskSkills?.();
       break;
 
+    case 'mcp_changed':
+      (window as any).platform?.settingsChanged?.('mcp-changed', {});
+      break;
+
     case 'cron_changed':
       (async () => {
         try {

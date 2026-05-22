@@ -60,6 +60,10 @@ describe("Agent shared dependency prompt", () => {
     expect(prompt).toContain("仅补齐缺失依赖");
     expect(prompt).toContain("先明确报告冲突，不要擅自强行覆盖现有共享依赖");
     expect(prompt).toContain("配置脚本运行环境或安装依赖时，优先使用国内镜像源");
+    expect(prompt).toContain("uv/uvx");
+    expect(prompt).toContain("优先保证系统 PATH 可用");
+    expect(prompt).toContain("必须写入 `setup_settings.mcp.env`");
+    expect(prompt).toContain("不要通过修改系统环境变量来代替");
     expect(prompt).toContain("临时执行脚本");
     expect(prompt).toContain("禁止为单次脚本临时创建独立 venv 或独立 node_modules");
     expect(prompt).toContain("安装或更新 skill/MCP 后，必须执行一次最小可用性测试");

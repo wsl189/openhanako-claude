@@ -246,6 +246,16 @@ function resolveToolEndSuccess(event) {
   return !(typeof error === "string" && error.trim().length > 0);
 }
 
+function shouldBroadcastMcpChanged(event) {
+  const toolName = String(event?.name || "").trim().toLowerCase();
+  if (toolName !== "setup_settings") return false;
+  const details = event?.details;
+  if (!details || typeof details !== "object") return false;
+  const isDryRun = details.dryRun === true || details.dry_run === true;
+  if (isDryRun) return false;
+  return !!details?.applied?.mcp;
+}
+
 function extractTitleSourceText(content) {
   return extractText(content)
     .replace(/\r/g, "")
@@ -911,6 +921,9 @@ export default async function chatRoute(app, { engine, hub }) {
       );
       if (shouldRefreshDesk) {
         broadcast({ type: "desk_changed" });
+      }
+      if (shouldBroadcastMcpChanged(event)) {
+        broadcast({ type: "mcp_changed" });
       }
     } else if (event.type === "error") {
       if (ss) ss.hadError = true;
