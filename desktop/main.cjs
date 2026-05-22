@@ -75,7 +75,7 @@ const EXTERNAL_CHROME_HOST = process.env.HANA_BROWSER_EXTERNAL_CHROME_HOST || "1
 const EXTERNAL_CHROME_PORT = Number(process.env.HANA_BROWSER_EXTERNAL_CHROME_PORT || 9222);
 const UPDATE_RELEASES_URL = process.env.HANA_UPDATE_RELEASES_URL || "https://github.com/wsl189/openhanako-claude/releases/latest";
 const UPDATE_CACHE_DIR_NAME = "hanako-updater";
-const LIBREOFFICE_DOWNLOAD_URL = process.env.HANA_LIBREOFFICE_DOWNLOAD_URL || "https://www.libreoffice.org/download/download-libreoffice/";
+const LIBREOFFICE_DOWNLOAD_URL = process.env.HANA_LIBREOFFICE_DOWNLOAD_URL || "https://zh-cn.libreoffice.org/download/libreoffice/";
 
 const _externalChrome = {
   active: false,
