@@ -49,7 +49,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   { value: 'ollama',      label: 'Ollama (Local)',       labelZh: 'Ollama (本地)',       url: 'http://localhost:11434/v1', api: 'openai-completions', local: true },
   { value: 'dashscope',   label: 'DashScope (Qwen)',     url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', api: 'openai-completions' },
   { value: 'openai',      label: 'OpenAI',               url: 'https://api.openai.com/v1', api: 'openai-completions' },
-  { value: 'deepseek',    label: 'DeepSeek',             url: 'https://api.deepseek.com/v1', api: 'openai-completions' },
+  { value: 'deepseek',    label: 'DeepSeek',             url: 'https://api.deepseek.com/anthropic', api: 'anthropic-messages' },
   { value: 'volcengine',  label: 'Volcengine (Doubao)',   labelZh: 'Volcengine (豆包)',   url: 'https://ark.cn-beijing.volces.com/api/v3', api: 'openai-completions' },
   { value: 'moonshot',    label: 'Moonshot (Kimi)',      url: 'https://api.moonshot.cn/anthropic', api: 'anthropic-messages' },
   { value: 'zhipu',       label: 'Zhipu (GLM)',          url: 'https://open.bigmodel.cn/api/anthropic', api: 'anthropic-messages' },

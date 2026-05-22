@@ -42,9 +42,11 @@ export async function loadModels(sessionPath?: string | null): Promise<void> {
       const localCurrentExists = !!localCurrent && models.some((m: any) => m.id === localCurrent);
       const fallbackCurrent = (isDraftSession && pendingModelId && models.some((m: any) => m.id === pendingModelId))
         ? pendingModelId
-        : (localCurrentExists ? localCurrent : (models[0]?.id || null));
-      current = fallbackCurrent;
-      models = models.map((m: any) => ({ ...m, isCurrent: m.id === fallbackCurrent }));
+        : (localCurrentExists ? localCurrent : null);
+      if (fallbackCurrent) {
+        current = fallbackCurrent;
+        models = models.map((m: any) => ({ ...m, isCurrent: m.id === fallbackCurrent }));
+      }
     }
 
     if (isDraftSession && pendingModelId) {

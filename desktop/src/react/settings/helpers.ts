@@ -245,7 +245,7 @@ export const PROVIDER_PRESETS = [
   { value: 'dashscope', label: 'DashScope (Qwen)', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', api: 'openai-completions' },
   { value: 'modelscope', label: 'ModelScope', url: 'https://api-inference.modelscope.cn/v1', api: 'openai-completions' },
   { value: 'openai', label: 'OpenAI', url: 'https://api.openai.com/v1', api: 'openai-completions' },
-  { value: 'deepseek', label: 'DeepSeek', url: 'https://api.deepseek.com/v1', api: 'openai-completions' },
+  { value: 'deepseek', label: 'DeepSeek', url: 'https://api.deepseek.com/anthropic', api: 'anthropic-messages' },
   { value: 'volcengine', label: ((window as any).i18n?.locale?.startsWith?.('zh') ? 'Volcengine (豆包)' : 'Volcengine (Doubao)'), url: 'https://ark.cn-beijing.volces.com/api/v3', api: 'openai-completions' },
   { value: 'moonshot', label: 'Moonshot (Kimi)', url: 'https://api.moonshot.cn/anthropic', api: 'anthropic-messages' },
   { value: 'zhipu', label: 'Zhipu (GLM)', url: 'https://open.bigmodel.cn/api/anthropic', api: 'anthropic-messages' },

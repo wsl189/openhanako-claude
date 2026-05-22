@@ -350,6 +350,7 @@ function ProviderDetail({ providerId, summary, providerConfig, isPresetSetup, pr
         <OAuthCredentials providerId={providerId} summary={summary} onRefresh={onRefresh} />
       ) : (
         <ApiKeyCredentials
+          key={providerId}
           providerId={providerId}
           summary={summary}
           providerConfig={providerConfig}
@@ -378,7 +379,10 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
 }) {
   const { showToast } = useSettingsStore();
   const [keyVal, setKeyVal] = useState('');
-  const baseUrl = summary.base_url || providerConfig?.base_url || presetInfo?.url || '';
+  useEffect(() => {
+    setKeyVal('');
+  }, [providerId]);
+  const baseUrl = providerConfig?.base_url || summary.base_url || presetInfo?.url || '';
   const [baseUrlVal, setBaseUrlVal] = useState(baseUrl);
   useEffect(() => {
     setBaseUrlVal(baseUrl);
@@ -386,7 +390,38 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
   const effectiveBaseUrl = baseUrlVal.trim();
   const hasSavedCredentials = summary.has_credentials || !!summary.api_key_masked;
   const baseUrlChanged = effectiveBaseUrl !== String(baseUrl || '').trim();
-  const api = summary.api || presetInfo?.api || '';
+  const api = providerConfig?.api || summary.api || presetInfo?.api || '';
+
+  // Base URL / API 格式修改后自动落盘，避免切换供应商时未点击验证导致回滚
+  const persistProviderEndpoint = async ({ silent = true }: { silent?: boolean } = {}) => {
+    const nextBaseUrl = baseUrlVal.trim();
+    const currentBaseUrl = String(baseUrl || '').trim();
+    const nextApi = String(api || '').trim();
+    const currentApi = String(providerConfig?.api || summary.api || presetInfo?.api || '').trim();
+    const changed = nextBaseUrl !== currentBaseUrl || nextApi !== currentApi;
+    if (!changed) return true;
+    if (!nextBaseUrl) {
+      showToast(t('settings.providers.urlRequired'), 'error');
+      return false;
+    }
+    try {
+      const payload: Record<string, any> = { base_url: nextBaseUrl };
+      if (nextApi) payload.api = nextApi;
+      if (isPresetSetup) payload.models = [];
+      await hanaFetch('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providers: { [providerId]: payload } }),
+      });
+      if (!silent) showToast(t('settings.autoSaved'), 'success');
+      await onRefresh();
+      platform?.settingsChanged?.('models-changed');
+      return true;
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+      return false;
+    }
+  };
 
   // 验证 + 保存 API Key
   const verifyAndSave = async (btn: HTMLButtonElement) => {
@@ -500,6 +535,14 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
             setBaseUrlVal(e.target.value);
             setConnStatus('idle');
           }}
+          onBlur={() => {
+            void persistProviderEndpoint();
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            void persistProviderEndpoint({ silent: false });
+          }}
           placeholder={presetInfo?.url || 'https://api.example.com/v1'}
         />
       </div>
@@ -510,15 +553,18 @@ function ApiKeyCredentials({ providerId, summary, providerConfig, isPresetSetup,
             options={API_FORMAT_OPTIONS}
             value={api || ''}
             onChange={async (val) => {
-              if (isPresetSetup) return;
               try {
+                const payload: Record<string, any> = { api: val };
+                if (effectiveBaseUrl) payload.base_url = effectiveBaseUrl;
+                if (isPresetSetup) payload.models = [];
                 await hanaFetch('/api/config', {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ providers: { [providerId]: { api: val } } }),
+                  body: JSON.stringify({ providers: { [providerId]: payload } }),
                 });
                 showToast(t('settings.saved'), 'success');
                 await onRefresh();
+                platform?.settingsChanged?.('models-changed');
               } catch {}
             }}
             placeholder="API Format"
@@ -934,8 +980,8 @@ function ProviderModelList({ providerId, summary, providerConfig, onRefresh }: {
     if (btn) btn.classList.add('spinning');
     try {
       const preset = PROVIDER_PRESETS.find((p) => p.value === providerId);
-      const effectiveBaseUrl = summary.base_url || preset?.url || '';
-      const effectiveApi = summary.api || preset?.api || '';
+      const effectiveBaseUrl = providerConfig?.base_url || summary.base_url || preset?.url || '';
+      const effectiveApi = providerConfig?.api || summary.api || preset?.api || '';
       const res = await hanaFetch('/api/providers/fetch-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

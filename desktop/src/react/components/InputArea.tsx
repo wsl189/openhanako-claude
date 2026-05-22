@@ -1851,7 +1851,6 @@ function ModelSelector({
         ? (pendingSessionModel || currentModel)
         : currentModel)
       || models.find((m) => m.isCurrent)?.id
-      || models[0]?.id
       || '',
     ).trim(),
     [isDraftSession, pendingSessionModel, currentModel, models],

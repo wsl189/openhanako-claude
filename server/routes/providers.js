@@ -16,6 +16,13 @@ function isModelscopeTarget(name, baseUrl) {
   return lowerBase.includes("api-inference.modelscope.cn");
 }
 
+function isOllamaTarget(name, baseUrl) {
+  const lowerName = String(name || "").trim().toLowerCase();
+  if (lowerName === "ollama") return true;
+  const lowerBase = String(baseUrl || "").trim().toLowerCase();
+  return lowerBase.includes("localhost:11434") || lowerBase.includes("127.0.0.1:11434");
+}
+
 function normalizeApiKey(value) {
   return String(value || "").replace(/[^\x20-\x7E]/g, "").trim();
 }
@@ -53,6 +60,13 @@ export function buildAnthropicMessagesEndpoint(baseUrl) {
     : `${normalized}/v1/messages`;
 }
 
+export function buildOllamaTagsEndpoint(baseUrl) {
+  const normalized = String(baseUrl || "").replace(/\/+$/, "");
+  if (!normalized) return "";
+  const withoutV1 = normalized.replace(/\/v1$/i, "");
+  return `${withoutV1}/api/tags`;
+}
+
 export function isAnthropicProbeAuthenticated(status, bodyText = "") {
   if (status >= 200 && status < 300) return true;
   if (status === 401 || status === 403) return false;
@@ -88,6 +102,21 @@ function normalizeRemoteModels(data) {
       context: m?.context_length || m?.context_window || m?.max_context_length || null,
       maxOutput: m?.max_output_tokens || m?.max_completion_tokens || null,
     }))
+    .filter((m) => m.id);
+}
+
+function normalizeOllamaModels(data) {
+  const list = Array.isArray(data?.models) ? data.models : [];
+  return list
+    .map((m) => {
+      const id = String(m?.model || m?.name || "").trim();
+      return {
+        id,
+        name: id,
+        context: null,
+        maxOutput: null,
+      };
+    })
     .filter((m) => m.id);
 }
 
@@ -155,6 +184,9 @@ export default async function providersRoute(app, { engine }) {
 
     // ProviderRegistry 作为 OAuth 判断的权威来源
     const provRegistry = engine.providerRegistry;
+    // providers.yaml 可能在本次进程中已被更新（新增/删除自定义 provider），
+    // summary 每次都强制 reload，避免列表残留已删除条目。
+    try { provRegistry?.reload?.(); } catch {}
 
     // OAuth 白名单：authJsonKey 集合（auth.json 中的 key，如 minimax / openai-codex）
     const ALLOWED_OAUTH = provRegistry
@@ -236,6 +268,8 @@ export default async function providersRoute(app, { engine }) {
         ? [...new Set([...(oauthCustom[name] || []), ...configuredCustomModels])]
         : configuredCustomModels;
 
+      const isBuiltinProvider = !!registryEntry?.isBuiltin;
+
       result[name] = {
         type: isOAuth ? "oauth" : "api-key",
         display_name: oauthInfo?.name || name,
@@ -249,7 +283,9 @@ export default async function providersRoute(app, { engine }) {
         logged_in: isOAuth ? !!oauthInfo?.loggedIn : undefined,
         supports_oauth: isOAuth && ALLOWED_OAUTH.has(name),
         is_coding_plan: isCodingPlan(name),
-        can_delete: !isOAuth || Object.prototype.hasOwnProperty.call(providers, name),
+        // “删除供应商”仅对自定义 provider 生效。
+        // 内置 provider 来自 ProviderRegistry，会始终在可选列表出现，删除其配置不等于移除条目。
+        can_delete: !isOAuth && !isBuiltinProvider,
       };
     }
 
@@ -358,6 +394,28 @@ export default async function providersRoute(app, { engine }) {
       return { error: "base_url is required for remote model fetch" };
     }
 
+    if (isOllamaTarget(name, effectiveBaseUrl)) {
+      try {
+        const tagsUrl = buildOllamaTagsEndpoint(effectiveBaseUrl);
+        const res = await fetch(tagsUrl, {
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(10000),
+        });
+        const raw = await res.text();
+        if (res.ok) {
+          const data = raw ? JSON.parse(raw) : {};
+          const models = normalizeOllamaModels(data);
+          if (models.length > 0) {
+            return { source: "ollama-tags", models };
+          }
+          return {
+            error: "No local Ollama models found. Run `ollama pull <model>` or `ollama run <model>` first.",
+            models: [],
+          };
+        }
+      } catch {}
+    }
+
     // 解析 api_key：显式传入 > providers 块 > auth.json OAuth token
     let key = normalizeApiKey(api_key || "");
     let api = explicitApi || "";
@@ -456,6 +514,17 @@ export default async function providersRoute(app, { engine }) {
 
     try {
       const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, "");
+
+      if (isOllamaTarget(name, normalizedBaseUrl)) {
+        const tagsUrl = buildOllamaTagsEndpoint(normalizedBaseUrl);
+        const tagsRes = await fetch(tagsUrl, {
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (tagsRes.ok) {
+          return { ok: true, status: tagsRes.status };
+        }
+      }
 
       // ModelScope 的 /models 对鉴权不敏感（无 key 也可能 200），
       // 这里改为真实鉴权探针：调用生图接口（异步模式，仅拿 task_id，不轮询下载）。

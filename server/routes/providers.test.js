@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAnthropicMessagesEndpoint,
+  buildOllamaTagsEndpoint,
   isAnthropicProbeAuthenticated,
 } from "./providers.js";
 
@@ -28,5 +29,14 @@ describe("provider test helpers", () => {
     expect(isAnthropicProbeAuthenticated(400, "model: test does not exist")).toBe(true);
     expect(isAnthropicProbeAuthenticated(422, "max_tokens is required")).toBe(true);
     expect(isAnthropicProbeAuthenticated(404, "model test not found")).toBe(true);
+  });
+
+  it("builds Ollama tags endpoints from both root and /v1 base URLs", () => {
+    expect(buildOllamaTagsEndpoint("http://localhost:11434"))
+      .toBe("http://localhost:11434/api/tags");
+    expect(buildOllamaTagsEndpoint("http://localhost:11434/v1"))
+      .toBe("http://localhost:11434/api/tags");
+    expect(buildOllamaTagsEndpoint("http://127.0.0.1:11434/v1/"))
+      .toBe("http://127.0.0.1:11434/api/tags");
   });
 });

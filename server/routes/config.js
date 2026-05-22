@@ -600,6 +600,11 @@ export default async function configRoute(app, { engine }) {
         }
       }
 
+      if (providersChanged) {
+        try { engine.providerRegistry?.reload?.(); } catch {}
+        try { engine._models?.authStore?.load?.(); } catch {}
+      }
+
       // providers 变更后确保运行时刷新
       // 当同一请求同时提交 models 时，先应用完整 partial，避免先刷新再被模型配置覆盖。
       const needsModelSync = providersChanged && !partial.models;

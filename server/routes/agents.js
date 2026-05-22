@@ -613,6 +613,11 @@ export default async function agentsRoute(app, { engine }) {
         }
       }
 
+      if (providersChanged) {
+        try { engine.providerRegistry?.reload?.(); } catch {}
+        try { engine._models?.authStore?.load?.(); } catch {}
+      }
+
       // providers 变更后确保运行时刷新
       if (providersChanged) clearConfigCache();
 
