@@ -195,9 +195,18 @@ async function renderPptPreview(container: HTMLDivElement, artifact: Artifact): 
     container.innerHTML = '<div class="preview-docx-loading">Unable to render this presentation.</div>';
     return;
   }
+  let blobUrl = '';
+  try {
+    const bytes = Uint8Array.from(atob(pdfBase64), (ch) => ch.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    blobUrl = URL.createObjectURL(blob);
+  } catch {
+    container.innerHTML = '<div class="preview-docx-loading">Unable to render this presentation.</div>';
+    return;
+  }
   const iframe = document.createElement('iframe');
   iframe.className = 'preview-pdf';
-  iframe.src = `data:application/pdf;base64,${pdfBase64}`;
+  iframe.src = blobUrl;
   container.innerHTML = '';
   container.appendChild(iframe);
 }
@@ -242,6 +251,9 @@ export function PreviewPanel() {
     // 清理命令式插入的节点（保留 React 管理的 .artifact-editor）
     Array.from(body.children).forEach(child => {
       if (!child.classList.contains('artifact-editor')) {
+        if (child instanceof HTMLIFrameElement && child.src.startsWith('blob:')) {
+          try { URL.revokeObjectURL(child.src); } catch {}
+        }
         child.remove();
       }
     });

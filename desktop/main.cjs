@@ -295,10 +295,15 @@ function getSofficeCandidates() {
     const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
     const localAppData = process.env.LOCALAPPDATA || "";
     return [
+      path.join(programFiles, "LibreOffice", "program", "soffice.com"),
+      path.join(programFilesX86, "LibreOffice", "program", "soffice.com"),
+      path.join(localAppData, "Programs", "LibreOffice", "program", "soffice.com"),
       path.join(programFiles, "LibreOffice", "program", "soffice.exe"),
       path.join(programFilesX86, "LibreOffice", "program", "soffice.exe"),
       path.join(localAppData, "Programs", "LibreOffice", "program", "soffice.exe"),
+      "soffice.com",
       "soffice.exe",
+      "soffice",
     ];
   }
   if (process.platform === "darwin") {
@@ -310,6 +315,67 @@ function getSofficeCandidates() {
     ];
   }
   return ["/usr/bin/soffice", "/usr/local/bin/soffice", "soffice"];
+}
+
+function toFileUri(filePath) {
+  const abs = path.resolve(String(filePath || ""));
+  const normalized = abs.replace(/\\/g, "/");
+  const withLeading = normalized.startsWith("/") ? normalized : `/${normalized}`;
+  return `file://${encodeURI(withLeading)}`;
+}
+
+function pickLatestPdfFile(outDir) {
+  const candidates = fs.readdirSync(outDir)
+    .filter((n) => n.toLowerCase().endsWith(".pdf"))
+    .map((name) => {
+      const fullPath = path.join(outDir, name);
+      let stat = null;
+      try { stat = fs.statSync(fullPath); } catch {}
+      return { name, fullPath, stat };
+    })
+    .filter((item) => item.stat?.isFile())
+    .sort((a, b) => (b.stat?.mtimeMs || 0) - (a.stat?.mtimeMs || 0));
+  return candidates[0]?.fullPath || "";
+}
+
+async function runSofficePdfConvert(filePath, outDir, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? Number(options.timeoutMs) : 120_000;
+  const convertTargets = Array.isArray(options.convertTargets) && options.convertTargets.length > 0
+    ? options.convertTargets
+    : ["pdf"];
+  const profileRoot = path.join(os.tmpdir(), "hanako-soffice-profile");
+  const profileDir = path.join(profileRoot, String(process.pid));
+  try { fs.mkdirSync(profileDir, { recursive: true }); } catch {}
+  const profileArg = `-env:UserInstallation=${toFileUri(profileDir)}`;
+  const baseArgs = [
+    "--headless",
+    "--nologo",
+    "--nodefault",
+    "--nolockcheck",
+    "--norestore",
+    profileArg,
+    "--outdir",
+    outDir,
+    filePath,
+  ];
+
+  const candidates = getSofficeCandidates();
+  for (const cmd of candidates) {
+    const bin = String(cmd || "").trim();
+    if (!bin) continue;
+    if (path.isAbsolute(bin) && !fs.existsSync(bin)) continue;
+    for (const convertTo of convertTargets) {
+      const args = [...baseArgs];
+      args.splice(5, 0, "--convert-to", convertTo);
+      const ok = await new Promise((resolve) => {
+        execFile(bin, args, { windowsHide: true, timeout: timeoutMs }, (err) => resolve(!err));
+      });
+      if (!ok) continue;
+      const pdfPath = pickLatestPdfFile(outDir);
+      if (pdfPath) return pdfPath;
+    }
+  }
+  return "";
 }
 
 function getPptPreviewSidecarPath(filePath) {
@@ -335,9 +401,13 @@ function readPptPreviewSidecarBase64(filePath, pptStat) {
     if (!fs.existsSync(sidecarPath)) return null;
     const sidecarStat = fs.statSync(sidecarPath);
     if (!sidecarStat.isFile() || sidecarStat.size <= 0) return null;
+    // 过滤历史异常缓存：空白/损坏 sidecar 会导致一直命中旧结果。
+    if (sidecarStat.size < 4 * 1024) return null;
     // sidecar 时间不早于 ppt，视为可用
     if (pptStat && sidecarStat.mtimeMs < pptStat.mtimeMs) return null;
-    return fs.readFileSync(sidecarPath).toString("base64");
+    const sidecarBuffer = fs.readFileSync(sidecarPath);
+    if (!sidecarBuffer.slice(0, 8).toString("utf8").startsWith("%PDF-")) return null;
+    return sidecarBuffer.toString("base64");
   } catch {
     return null;
   }
@@ -375,37 +445,13 @@ async function buildPptPreviewPdfBase64(filePath) {
       return fs.readFileSync(pdfPath).toString("base64");
     }
 
-    const args = [
-      "--headless",
-      "--nologo",
-      "--nodefault",
-      "--nolockcheck",
-      "--norestore",
-      "--convert-to",
-      "pdf",
-      "--outdir",
-      outDir,
-      filePath,
-    ];
-    const candidates = getSofficeCandidates();
-
-    let converted = false;
-    for (const cmd of candidates) {
-      if (cmd.includes("/") && !fs.existsSync(cmd)) continue;
-      const ok = await new Promise((resolve) => {
-        execFile(cmd, args, { windowsHide: true, timeout: 120_000 }, (err) => resolve(!err));
-      });
-      if (ok) {
-        converted = true;
-        break;
-      }
-    }
-    if (!converted) return null;
-
-    const pdfs = fs.readdirSync(outDir).filter((n) => n.toLowerCase().endsWith(".pdf"));
-    if (pdfs.length === 0) return null;
-
-    const pdfPath = path.join(outDir, pdfs[0]);
+    const pdfPath = await runSofficePdfConvert(filePath, outDir, {
+      timeoutMs: 120_000,
+      // Windows 上部分版本/主题组合使用默认 pdf 过滤器可能导出空白，
+      // 优先强制 Impress 导出，再回退通用 pdf。
+      convertTargets: ["pdf:impress_pdf_Export", "pdf"],
+    });
+    if (!pdfPath) return null;
     const pdfStat = fs.statSync(pdfPath);
     if (!pdfStat.isFile() || pdfStat.size <= 0 || pdfStat.size > 150 * 1024 * 1024) return null;
     ensurePptPreviewSidecarFromPdf(pdfPath, filePath);
@@ -2996,37 +3042,11 @@ ipcMain.handle("read-docx-pdf-base64", async (_event, filePath) => {
       return fs.readFileSync(pdfPath).toString("base64");
     }
 
-    const args = [
-      "--headless",
-      "--nologo",
-      "--nodefault",
-      "--nolockcheck",
-      "--norestore",
-      "--convert-to",
-      "pdf",
-      "--outdir",
-      outDir,
-      filePath,
-    ];
-    const candidates = getSofficeCandidates();
-
-    let converted = false;
-    for (const cmd of candidates) {
-      if (cmd.includes("/") && !fs.existsSync(cmd)) continue;
-      const ok = await new Promise((resolve) => {
-        execFile(cmd, args, { windowsHide: true, timeout: 90_000 }, (err) => resolve(!err));
-      });
-      if (ok) {
-        converted = true;
-        break;
-      }
-    }
-    if (!converted) return null;
-
-    const pdfs = fs.readdirSync(outDir).filter((n) => n.toLowerCase().endsWith(".pdf"));
-    if (pdfs.length === 0) return null;
-
-    const pdfPath = path.join(outDir, pdfs[0]);
+    const pdfPath = await runSofficePdfConvert(filePath, outDir, {
+      timeoutMs: 90_000,
+      convertTargets: ["pdf:writer_pdf_Export", "pdf"],
+    });
+    if (!pdfPath) return null;
     const pdfStat = fs.statSync(pdfPath);
     if (!pdfStat.isFile() || pdfStat.size <= 0 || pdfStat.size > 100 * 1024 * 1024) return null;
     return fs.readFileSync(pdfPath).toString("base64");
