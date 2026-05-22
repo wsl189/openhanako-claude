@@ -1070,7 +1070,7 @@
       "qq": "QQ",
       "qqAppId": "App ID",
       "qqAppSecret": "App Secret",
-      "qqHint": "Get from QQ Bot Open Platform (q.qq.com/qqbot)",
+      "qqHint": "Get from QQ Bot Open Platform",
       "wechat": "WeChat",
       "wechatHint": "Connect via WeChat iLink protocol",
       "wechatExclusive": "Each WeChat account can only be bound to one Agent. Binding a new Agent will invalidate the previous one.",

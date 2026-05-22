@@ -795,13 +795,11 @@ export class Agent {
             "## Skill 依赖共享环境约束",
             "",
             "- 共享环境固定路径：`~/.hanako/runtime/shared`；Windows 上等价路径：`C:\\Users\\<用户名>\\.hanako\\runtime\\shared`。",
-            "- 安装或补齐 skill 依赖时，统一使用共享依赖环境（shared environment），禁止按 skill 单独创建 Python venv 或单独 node_modules。",
-            "- 如果需要安装新依赖，也必须安装到上述共享环境路径下，不要写入其他临时环境目录。",
-            "- Python 与 Node 依赖默认复用同一套已安装环境，先检查是否已满足再安装，避免重复安装。",
+            "- 安装或补齐 skill 依赖，以及临时执行脚本时，统一使用共享依赖环境（shared environment），禁止按 skill 单独创建 Python venv 或单独 node_modules，也禁止为单次脚本临时创建独立 venv 或独立 node_modules。",
+            "- 如果需要安装新依赖，必须安装到上述共享环境路径下；Python 与 Node 依赖默认先复用已安装环境，仅补齐缺失依赖。",
             "- 如果出现版本冲突或无法安全复用，先明确报告冲突，不要擅自强行覆盖现有共享依赖。",
             "- 配置脚本运行环境或安装依赖时，优先使用国内镜像源；若镜像不可用再回退官方源。",
-            "- 该规则同样适用于临时执行脚本：你为一次性任务创建并执行的 .py/.js/.sh 脚本，也必须在同一个共享环境里运行，禁止为单次脚本临时创建独立 venv 或独立 node_modules。",
-            "- 安装或更新 skill/MCP 后，必须执行一次最小可用性测试；若测试失败且原因为依赖或运行环境缺失，先将缺失依赖安装到共享环境，再重新测试，直到通过或给出明确失败原因。",
+            "- 安装或更新 skill/MCP 后，必须执行一次最小可用性测试；执行任务中若调用 skill 或 MCP 失败，必须明确回复失败原因。若原因属于环境或依赖问题，先修复并重试，直到通过或给出明确失败结论。",
             "- 例外：如果用户明确要求“在某个指定目录新建环境”，按用户指定目录执行，不要强制改回共享环境。",
           ].join("\n")
         : [
@@ -809,13 +807,11 @@ export class Agent {
             "## Shared Environment Rule for Skill Dependencies",
             "",
             "- Fixed shared environment path: `~/.hanako/runtime/shared`; on Windows: `C:\\Users\\<username>\\.hanako\\runtime\\shared`.",
-            "- When installing or completing skill dependencies, always use a shared dependency environment; do not create per-skill Python venvs or per-skill node_modules.",
-            "- If new dependencies are required, install them into that shared path as well, not into other temporary environments.",
-            "- Reuse the same installed Python and Node dependency sets by default; check existing packages first and only install missing ones.",
+            "- When installing/completing skill dependencies and running one-off scripts, always use the shared dependency environment; do not create per-skill Python venvs or per-skill node_modules, and do not create per-script isolated venvs/node_modules.",
+            "- If new dependencies are required, install them into the shared path; reuse existing Python/Node dependencies first and only install what is missing.",
             "- If version conflicts or unsafe reuse appears, report the conflict first and do not force-overwrite existing shared dependencies.",
             "- When configuring script runtime environments or installing dependencies, prefer mainland-China mirrors first; fall back to official upstream sources only if mirrors are unavailable.",
-            "- This rule also applies to temporary execution scripts: one-off .py/.js/.sh scripts must run in the same shared environment, and you must not create per-script venvs or per-script node_modules.",
-            "- After installing or updating any skill/MCP, run one smoke test. If it fails due to missing dependencies or runtime environment, install the missing dependencies into the shared environment first, then re-test until it passes or you can report a concrete failure reason.",
+            "- After installing/updating any skill/MCP, run one smoke test. If any skill/MCP call fails during task execution, explicitly report the failure reason to the user. When the failure is due to environment/dependency issues, fix those first and retry until success or a concrete final failure conclusion.",
             "- Exception: if the user explicitly asks to create a new environment in a specific directory, follow the user-specified path instead of forcing the shared path.",
           ].join("\n")
       );
