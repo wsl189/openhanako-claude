@@ -27,6 +27,8 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "task", "model", "max_turns", "permission_mode", "thinking", "timeout_sec", "continue", "dangerously_skip_permissions",
   "search_query", "weather", "finance", "sports", "open", "click", "find", "image_query",
   "tool_uses",
+  // setup_settings 核心结构（保留完整嵌套对象供前端生成具体变更摘要）
+  "tutorial", "agent", "mcp", "memory", "dry_run",
   // skill 工具关键字段
   "skill", "skill_name", "skillName", "skill_path", "skillPath", "github_url", "githubUrl",
   // 编辑/写入工具关键信息：让前端展开时能展示“实际写入/替换内容”

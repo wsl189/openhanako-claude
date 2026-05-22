@@ -29,4 +29,36 @@ describe("chat stream compaction", () => {
     });
     expect(compacted.content[0].text.length).toBeGreaterThan(12_000);
   });
+
+  it("keeps setup_settings nested args for live tool detail rendering", () => {
+    const compacted = compactAssistantSnapshotContent([
+      {
+        type: "tool_use",
+        id: "call_setup_1",
+        name: "mcp__hanako__setup_settings",
+        input: {
+          tutorial: "{\"agent\":{\"action\":\"create\",\"name\":\"kimi\"}}",
+          agent: { action: "create", name: "kimi", id: "kimi" },
+          mcp: { name: "playwright", type: "stdio", command: "npx" },
+          memory: { action: "clear", agent_id: "hanako" },
+          dry_run: false,
+        },
+      },
+    ]);
+
+    expect(compacted).toEqual([
+      {
+        type: "tool_use",
+        id: "call_setup_1",
+        name: "mcp__hanako__setup_settings",
+        input: {
+          tutorial: "{\"agent\":{\"action\":\"create\",\"name\":\"kimi\"}}",
+          agent: { action: "create", name: "kimi", id: "kimi" },
+          mcp: { name: "playwright", type: "stdio", command: "npx" },
+          memory: { action: "clear", agent_id: "hanako" },
+          dry_run: false,
+        },
+      },
+    ]);
+  });
 });

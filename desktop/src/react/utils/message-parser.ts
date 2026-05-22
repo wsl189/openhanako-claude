@@ -358,11 +358,13 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
     .toLowerCase()
     .replace(/^functions\./, '')
     .replace(/^multi_tool_use\./, '');
-  if (tool === 'setup_settings' || tool === 'setup-settings' || tool === 'updatesettings') {
+  const mcpMatch = tool.match(/^mcp__[a-z0-9_-]+__(.+)$/);
+  const toolLeaf = (mcpMatch?.[1] || tool).toLowerCase();
+  if (toolLeaf === 'setup_settings' || toolLeaf === 'setup-settings' || toolLeaf === 'updatesettings') {
     const setupSummary = summarizeSetupSettingsDetail(args);
     if (setupSummary) return setupSummary;
   }
-  switch (tool) {
+  switch (toolLeaf) {
     case 'read':
     case 'write':
     case 'edit':

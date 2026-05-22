@@ -81,4 +81,15 @@ describe('extractToolDetail', () => {
     expect(detail).toContain('hanako');
     expect(detail.toLowerCase()).toContain('memory');
   });
+
+  it('summarizes setup_settings for MCP-prefixed tool name', () => {
+    const detail = extractToolDetail('mcp__hanako__setup_settings', {
+      agent: {
+        action: 'create',
+        name: 'wsl',
+      },
+    });
+    expect(detail.toLowerCase()).toContain('wsl');
+    expect(detail.toLowerCase()).toContain('create');
+  });
 });

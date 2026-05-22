@@ -776,6 +776,32 @@ export class Agent {
             : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
         )
       );
+      parts.push(isZh
+        ? [
+            "",
+            "## Skill 依赖共享环境约束",
+            "",
+            "- 共享环境固定路径：`~/.hanako/runtime/shared`；Windows 上等价路径：`C:\\Users\\<用户名>\\.hanako\\runtime\\shared`。",
+            "- 安装或补齐 skill 依赖时，统一使用共享依赖环境（shared environment），禁止按 skill 单独创建 Python venv 或单独 node_modules。",
+            "- 如果需要安装新依赖，也必须安装到上述共享环境路径下，不要写入其他临时环境目录。",
+            "- Python 与 Node 依赖默认复用同一套已安装环境，先检查是否已满足再安装，避免重复安装。",
+            "- 如果出现版本冲突或无法安全复用，先明确报告冲突，不要擅自强行覆盖现有共享依赖。",
+            "- 该规则同样适用于临时执行脚本：你为一次性任务创建并执行的 .py/.js/.sh 脚本，也必须在同一个共享环境里运行，禁止为单次脚本临时创建独立 venv 或独立 node_modules。",
+            "- 例外：如果用户明确要求“在某个指定目录新建环境”，按用户指定目录执行，不要强制改回共享环境。",
+          ].join("\n")
+        : [
+            "",
+            "## Shared Environment Rule for Skill Dependencies",
+            "",
+            "- Fixed shared environment path: `~/.hanako/runtime/shared`; on Windows: `C:\\Users\\<username>\\.hanako\\runtime\\shared`.",
+            "- When installing or completing skill dependencies, always use a shared dependency environment; do not create per-skill Python venvs or per-skill node_modules.",
+            "- If new dependencies are required, install them into that shared path as well, not into other temporary environments.",
+            "- Reuse the same installed Python and Node dependency sets by default; check existing packages first and only install missing ones.",
+            "- If version conflicts or unsafe reuse appears, report the conflict first and do not force-overwrite existing shared dependencies.",
+            "- This rule also applies to temporary execution scripts: one-off .py/.js/.sh scripts must run in the same shared environment, and you must not create per-script venvs or per-script node_modules.",
+            "- Exception: if the user explicitly asks to create a new environment in a specific directory, follow the user-specified path instead of forcing the shared path.",
+          ].join("\n")
+      );
     }
 
     const boundPlatforms = (() => {
@@ -970,6 +996,7 @@ export class Agent {
             "",
             "- 当你为一次性任务临时创建脚本（例如 .py/.sh/.js）时，必须只写到 `~/.hanako/tmp/scripts`。",
             "- Windows 上等价目录是 `C:\\Users\\<用户名>\\.hanako\\tmp\\scripts`。",
+            "- 这些临时脚本必须在共享依赖环境里执行，禁止为单次任务单独创建虚拟环境或私有依赖目录。",
             "- 临时脚本执行完成后必须立即删除；不要把这类临时脚本留在工作区。",
           ].join("\n")
         : [
@@ -978,6 +1005,7 @@ export class Agent {
             "",
             "- When you create one-off scripts for execution (for example .py/.sh/.js), write them only under `~/.hanako/tmp/scripts`.",
             "- On Windows, the equivalent directory is `C:\\Users\\<username>\\.hanako\\tmp\\scripts`.",
+            "- Execute these temporary scripts in the shared dependency environment; do not create one-off virtual environments or private dependency directories.",
             "- Remove temporary scripts immediately after execution; do not leave them in the workspace.",
           ].join("\n")
       );
