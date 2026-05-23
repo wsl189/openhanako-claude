@@ -45,7 +45,7 @@ const TOOL_ARG_LONG_TEXT_KEYS = new Set(["content", "old_string", "new_string", 
 const CHAT_TURN_TIMEOUT_MS = (() => {
   const raw = Number.parseInt(process.env.HANAKO_CHAT_TURN_TIMEOUT_MS || "", 10);
   if (Number.isFinite(raw) && raw > 0) return raw;
-  return 60 * 60 * 1000;
+  return 5 * 60 * 60 * 1000;
 })();
 
 function toModelRef(model) {
