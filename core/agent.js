@@ -948,6 +948,22 @@ export class Agent {
             `Currently loadable skills:\n${formatSkillList(this._enabledSkills)}`,
           ].join("\n")
       );
+      parts.push(isZh
+        ? [
+            "",
+            "## TodoWrite 使用约束",
+            "",
+            "- 如果你使用 TodoWrite 跟踪任务，清单只记录你本轮要执行的动作，不要把“给用户的后续建议/可选动作”留在待办里。",
+            "- 在给出最终回复前，必须再检查一次 TodoWrite 清单：要么全部标记 completed，要么移除不再执行的条目；不要在未完成待办仍存在时直接收尾。",
+          ].join("\n")
+        : [
+            "",
+            "## TodoWrite Usage Rules",
+            "",
+            "- If you use TodoWrite, only track actions you will execute in this turn. Do not keep user follow-ups or optional suggestions as pending todos.",
+            "- Before your final reply, re-check TodoWrite: either mark every remaining item completed or remove items you will not execute. Do not end with unfinished todos left behind.",
+          ].join("\n")
+      );
 
       const hasSearchTool = hasMiniMaxMcpWebSearch;
       if (!hasSearchTool) {
