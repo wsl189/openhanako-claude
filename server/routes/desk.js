@@ -173,12 +173,24 @@ function getPptPreviewSidecarPath(filePath) {
   return path.join(dir, `.${base}.preview.pdf`);
 }
 
+function getLegacyPptPreviewSidecarPath(filePath) {
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+  return path.join(dir, `${base}.preview.pdf`);
+}
+
 function removeLinkedPptPreviewSidecar(pptPath, dirRoot) {
   try {
     if (!isPptFileByPath(pptPath)) return;
-    const sidecar = getPptPreviewSidecarPath(pptPath);
-    if (!isInsidePath(sidecar, dirRoot)) return;
-    if (fs.existsSync(sidecar)) fs.rmSync(sidecar, { force: true });
+    const candidates = [
+      getPptPreviewSidecarPath(pptPath),
+      getLegacyPptPreviewSidecarPath(pptPath),
+    ];
+    for (const sidecar of candidates) {
+      if (!isInsidePath(sidecar, dirRoot)) continue;
+      if (fs.existsSync(sidecar)) fs.rmSync(sidecar, { force: true });
+    }
   } catch {
     // ignore cleanup failures
   }
@@ -187,12 +199,22 @@ function removeLinkedPptPreviewSidecar(pptPath, dirRoot) {
 function moveLinkedPptPreviewSidecar(oldPptPath, newPptPath, dirRoot) {
   try {
     if (!isPptFileByPath(oldPptPath) || !isPptFileByPath(newPptPath)) return;
-    const oldSidecar = getPptPreviewSidecarPath(oldPptPath);
-    const newSidecar = getPptPreviewSidecarPath(newPptPath);
-    if (!isInsidePath(oldSidecar, dirRoot) || !isInsidePath(newSidecar, dirRoot)) return;
-    if (!fs.existsSync(oldSidecar)) return;
-    if (fs.existsSync(newSidecar)) return;
-    fs.renameSync(oldSidecar, newSidecar);
+    const mappings = [
+      {
+        oldSidecar: getPptPreviewSidecarPath(oldPptPath),
+        newSidecar: getPptPreviewSidecarPath(newPptPath),
+      },
+      {
+        oldSidecar: getLegacyPptPreviewSidecarPath(oldPptPath),
+        newSidecar: getLegacyPptPreviewSidecarPath(newPptPath),
+      },
+    ];
+    for (const { oldSidecar, newSidecar } of mappings) {
+      if (!isInsidePath(oldSidecar, dirRoot) || !isInsidePath(newSidecar, dirRoot)) continue;
+      if (!fs.existsSync(oldSidecar)) continue;
+      if (fs.existsSync(newSidecar)) continue;
+      fs.renameSync(oldSidecar, newSidecar);
+    }
   } catch {
     // ignore cleanup failures
   }

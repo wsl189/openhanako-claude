@@ -458,11 +458,54 @@ function getPptPreviewSidecarPath(filePath) {
   return path.join(dir, `.${base}.preview.pdf`);
 }
 
+function getLegacyPptPreviewSidecarPath(filePath) {
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+  return path.join(dir, `${base}.preview.pdf`);
+}
+
+function markFileHiddenOnWindows(filePath) {
+  if (process.platform !== "win32") return;
+  try {
+    execFileSync("attrib", ["+H", filePath], {
+      windowsHide: true,
+      stdio: "ignore",
+      timeout: 3000,
+    });
+  } catch {
+    // 忽略隐藏属性写入失败，不影响预览主流程
+  }
+}
+
+function normalizePptPreviewSidecar(filePath) {
+  try {
+    const hiddenPath = getPptPreviewSidecarPath(filePath);
+    const legacyPath = getLegacyPptPreviewSidecarPath(filePath);
+    if (!fs.existsSync(hiddenPath) && fs.existsSync(legacyPath)) {
+      fs.renameSync(legacyPath, hiddenPath);
+    }
+    if (fs.existsSync(hiddenPath)) {
+      markFileHiddenOnWindows(hiddenPath);
+    }
+    if (legacyPath !== hiddenPath && fs.existsSync(legacyPath)) {
+      fs.rmSync(legacyPath, { force: true });
+    }
+  } catch {
+    // 忽略 sidecar 规范化失败，不影响预览主流程
+  }
+}
+
 function ensurePptPreviewSidecarFromPdf(pdfPath, pptPath) {
   try {
     if (!pdfPath || !pptPath) return;
     const sidecarPath = getPptPreviewSidecarPath(pptPath);
     fs.copyFileSync(pdfPath, sidecarPath);
+    markFileHiddenOnWindows(sidecarPath);
+    const legacyPath = getLegacyPptPreviewSidecarPath(pptPath);
+    if (legacyPath !== sidecarPath && fs.existsSync(legacyPath)) {
+      fs.rmSync(legacyPath, { force: true });
+    }
   } catch {
     // sidecar 写入失败不影响主流程（仍可用缓存 PDF 预览）
   }
@@ -470,16 +513,21 @@ function ensurePptPreviewSidecarFromPdf(pdfPath, pptPath) {
 
 function readPptPreviewSidecarBase64(filePath, pptStat) {
   try {
-    const sidecarPath = getPptPreviewSidecarPath(filePath);
-    if (!fs.existsSync(sidecarPath)) return null;
-    const sidecarStat = fs.statSync(sidecarPath);
+    const hiddenPath = getPptPreviewSidecarPath(filePath);
+    const legacyPath = getLegacyPptPreviewSidecarPath(filePath);
+    const candidatePath = fs.existsSync(hiddenPath)
+      ? hiddenPath
+      : (fs.existsSync(legacyPath) ? legacyPath : "");
+    if (!candidatePath) return null;
+    const sidecarStat = fs.statSync(candidatePath);
     if (!sidecarStat.isFile() || sidecarStat.size <= 0) return null;
     // 过滤历史异常缓存：空白/损坏 sidecar 会导致一直命中旧结果。
     if (sidecarStat.size < 4 * 1024) return null;
     // sidecar 时间不早于 ppt，视为可用
     if (pptStat && sidecarStat.mtimeMs < pptStat.mtimeMs) return null;
-    const sidecarBuffer = fs.readFileSync(sidecarPath);
+    const sidecarBuffer = fs.readFileSync(candidatePath);
     if (!sidecarBuffer.slice(0, 8).toString("utf8").startsWith("%PDF-")) return null;
+    normalizePptPreviewSidecar(filePath);
     return sidecarBuffer.toString("base64");
   } catch {
     return null;
