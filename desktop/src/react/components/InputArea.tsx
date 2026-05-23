@@ -1303,7 +1303,10 @@ function ChatEditSummaryBar({
           </button>
         </div>
       </div>
-      {expanded && (
+      <div
+        className={`chat-edit-summary-list-wrap${expanded ? ' expanded' : ' collapsed'}`}
+        aria-hidden={!expanded}
+      >
         <div className="chat-edit-summary-list">
           {summary.files.map((file) => (
             <button
@@ -1311,6 +1314,7 @@ function ChatEditSummaryBar({
               key={file.filePath}
               className={`chat-edit-summary-file${activeFilePath === file.filePath ? ' active' : ''}`}
               onClick={() => openFileDiffPreview(file)}
+              tabIndex={expanded ? 0 : -1}
             >
               <span className="chat-edit-summary-file-path">{file.filePath}</span>
               <span className="chat-edit-summary-plus">+{file.plus}</span>
@@ -1318,7 +1322,7 @@ function ChatEditSummaryBar({
             </button>
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -5282,7 +5282,7 @@ html[data-platform="darwin"] .sv-topbar-title {
 }
 
 .thinking-block-body.clamp {
-    max-height: 6.8em;
+    max-height: 1.7em;
     overflow: hidden;
     -webkit-mask-image: linear-gradient(to bottom, #000 68%, rgba(0, 0, 0, 0.86) 82%, transparent 100%);
     mask-image: linear-gradient(to bottom, #000 68%, rgba(0, 0, 0, 0.86) 82%, transparent 100%);
@@ -5365,12 +5365,12 @@ html[data-platform="darwin"] .sv-topbar-title {
 .chat-edit-summary {
     width: calc(100% - 4rem);
     max-width: 1420px;
-    margin: 0 auto -0.35rem;
+    margin: 0 auto -1px;
     position: relative;
     z-index: 2;
     border: 1px solid color-mix(in oklab, var(--line) 78%, transparent);
     border-bottom-color: color-mix(in oklab, var(--line) 56%, transparent);
-    border-radius: 12px 12px 0 0;
+    border-radius: 12px;
     background: color-mix(in oklab, var(--bg-card) 88%, var(--bg) 12%);
     box-shadow: 0 10px 26px -22px rgba(0, 0, 0, 0.55);
     overflow: hidden;
@@ -5468,6 +5468,25 @@ html[data-platform="darwin"] .sv-topbar-title {
 
 .chat-edit-summary-list {
     border-top: 1px solid color-mix(in oklab, var(--line) 54%, transparent);
+}
+
+.chat-edit-summary-list-wrap {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transform: translateY(-4px);
+    pointer-events: none;
+    transition:
+        max-height 420ms cubic-bezier(0.2, 0.7, 0.2, 1),
+        opacity 360ms ease,
+        transform 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.chat-edit-summary-list-wrap.expanded {
+    max-height: 300px;
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
 }
 
 .chat-edit-summary-file {
@@ -7585,7 +7604,8 @@ body.resizing .jian-sidebar-inner {
 }
 
 .chat-edit-summary + .input-wrapper {
-    border-top-left-radius: 10px;
+    border-top-left-radius: var(--radius-lg);
+    border-top-right-radius: var(--radius-lg);
 }
 
 .queued-chat-main {

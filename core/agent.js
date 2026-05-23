@@ -954,14 +954,16 @@ export class Agent {
             "## TodoWrite 使用约束",
             "",
             "- 如果你使用 TodoWrite 跟踪任务，清单只记录你本轮要执行的动作，不要把“给用户的后续建议/可选动作”留在待办里。",
-            "- 在给出最终回复前，必须再检查一次 TodoWrite 清单：要么全部标记 completed，要么移除不再执行的条目；不要在未完成待办仍存在时直接收尾。",
+            "- 只要创建了 TodoWrite 待办，就应尽量执行并完成每一项；不要无故留下 pending/in_progress。",
+            "- 若确实无法继续执行某些待办，必须先在最终回复中向用户说明未完成原因，再将这些未完成项从 TodoWrite 清单中清空，然后再结束本轮。",
           ].join("\n")
         : [
             "",
             "## TodoWrite Usage Rules",
             "",
             "- If you use TodoWrite, only track actions you will execute in this turn. Do not keep user follow-ups or optional suggestions as pending todos.",
-            "- Before your final reply, re-check TodoWrite: either mark every remaining item completed or remove items you will not execute. Do not end with unfinished todos left behind.",
+            "- Once you create TodoWrite items, try to execute and complete each item; do not leave pending/in_progress items without reason.",
+            "- If some items truly cannot be completed, your final reply must first explain why they remain unfinished, then clear those unfinished items from TodoWrite before ending the turn.",
           ].join("\n")
       );
 

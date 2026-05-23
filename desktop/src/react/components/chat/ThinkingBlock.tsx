@@ -12,7 +12,7 @@ interface Props {
   runningMs?: number;
 }
 
-const THINKING_COLLAPSE_LINE_THRESHOLD = 4;
+const THINKING_COLLAPSE_LINE_THRESHOLD = 1;
 
 export const ThinkingBlock = memo(function ThinkingBlock({
   content,

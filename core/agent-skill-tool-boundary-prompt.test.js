@@ -60,7 +60,8 @@ describe("Agent tool and skill boundary prompt", () => {
     expect(prompt).toContain("当前会话可用的标准 Claude 工具（仅以下）：Skill / Read");
     expect(prompt).toContain("Skill（大写）如果出现在标准 Claude 工具列表里，只表示");
     expect(prompt).toContain("不要把具体技能名称说成工具");
-    expect(prompt).toContain("在给出最终回复前，必须再检查一次 TodoWrite 清单");
+    expect(prompt).toContain("只要创建了 TodoWrite 待办，就应尽量执行并完成每一项");
+    expect(prompt).toContain("必须先在最终回复中向用户说明未完成原因");
     expect(prompt).toContain("当前可加载技能（skills）：");
     expect(prompt).toContain("pdf-review: Review PDF documents with a structured checklist.");
   });
