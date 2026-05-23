@@ -344,6 +344,17 @@ function isTodoWriteToolName(name = "") {
   return normalized === "todo" || normalized === "todowrite";
 }
 
+function normalizeTodoStatus(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isTodoCompleted(todo) {
+  if (!todo || typeof todo !== "object") return false;
+  if (todo.done === true) return true;
+  const status = normalizeTodoStatus(todo.status);
+  return status === "completed";
+}
+
 function normalizeTodoWriteItems(rawTodos) {
   if (!Array.isArray(rawTodos)) return null;
   return rawTodos
@@ -354,12 +365,28 @@ function normalizeTodoWriteItems(rawTodos) {
       return {
         ...todo,
         text: content,
-        done: todo.done === true || status === "completed",
+        done: isTodoCompleted(todo),
         ...(content ? { content } : {}),
         ...(status ? { status } : {}),
       };
     })
     .filter((todo) => todo.text);
+}
+
+function summarizeTodoCompletion(todos) {
+  if (!Array.isArray(todos) || todos.length === 0) {
+    return {
+      total: 0,
+      unfinishedCount: 0,
+      unfinishedItems: [],
+    };
+  }
+  const unfinishedItems = todos.filter((todo) => !isTodoCompleted(todo));
+  return {
+    total: todos.length,
+    unfinishedCount: unfinishedItems.length,
+    unfinishedItems,
+  };
 }
 
 function isWriteLikeToolName(name = "") {
@@ -613,6 +640,10 @@ export class SessionCoordinator {
         turnSawStructuredToolUse: false,
         turnSawTextToolMarkup: false,
         lastTurnProtocolMismatch: false,
+        turnSawTodoWrite: false,
+        turnTodoItems: null,
+        lastTurnSawTodoWrite: false,
+        lastTurnTodoItems: null,
         customToolNames: new Set(customToolNames),
         availableToolNames: new Set([...CLAUDE_BUILTIN_TOOL_NAMES, ...customToolNames]),
       });
@@ -838,6 +869,10 @@ export class SessionCoordinator {
           content: payload.content,
           details,
         });
+        if (isTodoWriteToolName(resolvedToolMeta.name || "")) {
+          state.turnSawTodoWrite = true;
+          state.turnTodoItems = Array.isArray(details?.todos) ? details.todos : null;
+        }
         if (matchedToolUseId) {
           state.toolCalls.delete(matchedToolUseId);
         } else {
@@ -894,6 +929,10 @@ export class SessionCoordinator {
         content: event.content || [],
         details: event.details,
       });
+      if (isTodoWriteToolName(event.name || toolMeta.name || "")) {
+        state.turnSawTodoWrite = true;
+        state.turnTodoItems = Array.isArray(event.details?.todos) ? event.details.todos : null;
+      }
       if (matchedToolUseId) state.toolCalls.delete(matchedToolUseId);
     } else if (event?.type === "plan_mode_confirmation") {
       translated.push({
@@ -930,6 +969,8 @@ export class SessionCoordinator {
           translated.push({ type: "error", message: errorMessage });
         }
       }
+      state.lastTurnSawTodoWrite = state.turnSawTodoWrite;
+      state.lastTurnTodoItems = state.turnTodoItems;
       translated.push({ type: "turn_end" });
       state.blockTypes.clear();
       state.blockToolUseByIndex.clear();
@@ -938,6 +979,8 @@ export class SessionCoordinator {
       state.toolCalls.clear();
       state.turnSawStructuredToolUse = false;
       state.turnSawTextToolMarkup = false;
+      state.turnSawTodoWrite = false;
+      state.turnTodoItems = null;
     } else if (event?.type === "runtime_error") {
       const errorMessage = pickUserFacingRuntimeErrorMessage(
         event.error?.message,
@@ -955,6 +998,10 @@ export class SessionCoordinator {
       state.turnSawStructuredToolUse = false;
       state.turnSawTextToolMarkup = false;
       state.lastTurnProtocolMismatch = false;
+      state.turnSawTodoWrite = false;
+      state.turnTodoItems = null;
+      state.lastTurnSawTodoWrite = false;
+      state.lastTurnTodoItems = null;
     }
 
     return translated;
@@ -1030,6 +1077,7 @@ export class SessionCoordinator {
       systemAppend,
       includePartialMessages,
       model: sdkModel,
+      runtimeModel,
       env: runtimeEnv,
       confirmStore: this._d.getConfirmStore?.() || null,
       sessionPath,
@@ -1328,6 +1376,25 @@ export class SessionCoordinator {
     this._refreshSessionPrompt(promptAgent);
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await this._session.prompt(text, promptOpts);
+    if (sp) {
+      const streamState = this._streamState.get(sp);
+      if (streamState?.lastTurnSawTodoWrite) {
+        const summary = summarizeTodoCompletion(streamState.lastTurnTodoItems);
+        if (summary.unfinishedCount > 0) {
+          const todoList = summary.unfinishedItems
+            .map((todo) => `- ${todo.text || todo.content || ""}`.trim())
+            .filter(Boolean)
+            .slice(0, 8)
+            .join("\n");
+          const base = `TodoWrite ended with ${summary.unfinishedCount}/${summary.total} unfinished item(s).`;
+          const detail = todoList ? `${base}\n${todoList}` : base;
+          this._emitRuntimeEvent({ type: "error", message: detail }, sp);
+          log.warn(`[todo-guard] session=${path.basename(sp)} ${base}`);
+        }
+        streamState.lastTurnSawTodoWrite = false;
+        streamState.lastTurnTodoItems = null;
+      }
+    }
     const streamState = sp ? this._streamState.get(sp) : null;
     if (streamState?.lastTurnProtocolMismatch) {
       streamState.lastTurnProtocolMismatch = false;
@@ -1368,6 +1435,25 @@ export class SessionCoordinator {
     this._refreshSessionPrompt(promptAgent);
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await entry.session.prompt(text, promptOpts);
+    {
+      const streamState = this._streamState.get(sessionPath);
+      if (streamState?.lastTurnSawTodoWrite) {
+        const summary = summarizeTodoCompletion(streamState.lastTurnTodoItems);
+        if (summary.unfinishedCount > 0) {
+          const todoList = summary.unfinishedItems
+            .map((todo) => `- ${todo.text || todo.content || ""}`.trim())
+            .filter(Boolean)
+            .slice(0, 8)
+            .join("\n");
+          const base = `TodoWrite ended with ${summary.unfinishedCount}/${summary.total} unfinished item(s).`;
+          const detail = todoList ? `${base}\n${todoList}` : base;
+          this._emitRuntimeEvent({ type: "error", message: detail }, sessionPath);
+          log.warn(`[todo-guard] session=${path.basename(sessionPath)} ${base}`);
+        }
+        streamState.lastTurnSawTodoWrite = false;
+        streamState.lastTurnTodoItems = null;
+      }
+    }
     const streamState = this._streamState.get(sessionPath);
     if (streamState?.lastTurnProtocolMismatch) {
       streamState.lastTurnProtocolMismatch = false;

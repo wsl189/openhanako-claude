@@ -822,3 +822,72 @@ describe("SessionCoordinator._buildSessionEnv", () => {
     }
   });
 });
+
+describe("SessionCoordinator TodoWrite guard", () => {
+  function createCoordinatorWithPromptHarness() {
+    const emitted = [];
+    const agent = {
+      _memoryTicker: { notifyTurn: () => {} },
+    };
+    const coordinator = new SessionCoordinator({
+      getAgent: () => agent,
+      getAgentById: () => null,
+      emitEvent: (event, sessionPath) => emitted.push({ event, sessionPath }),
+    });
+    const sessionPath = "/tmp/session-todo-guard";
+    const session = {
+      options: {},
+      sessionManager: { getSessionFile: () => sessionPath },
+      prompt: async () => {},
+    };
+    coordinator._session = session;
+    coordinator._sessions.set(sessionPath, {
+      session,
+      agentId: "agent-test",
+      memoryEnabled: true,
+      lastTouchedAt: Date.now(),
+    });
+    coordinator._streamState.set(sessionPath, {
+      lastTurnProtocolMismatch: false,
+      lastTurnSawTodoWrite: false,
+      lastTurnTodoItems: null,
+    });
+    return { coordinator, emitted, sessionPath };
+  }
+
+  it("emits an error when a TodoWrite turn ends with unfinished items", async () => {
+    const { coordinator, emitted, sessionPath } = createCoordinatorWithPromptHarness();
+    const state = coordinator._streamState.get(sessionPath);
+    state.lastTurnSawTodoWrite = true;
+    state.lastTurnTodoItems = [
+      { text: "do A", status: "completed", done: true },
+      { text: "do B", status: "in_progress", done: false },
+    ];
+
+    await coordinator.prompt("run task");
+
+    expect(emitted).toContainEqual(expect.objectContaining({
+      sessionPath,
+      event: expect.objectContaining({
+        type: "error",
+      }),
+    }));
+    const errorEvent = emitted.find((item) => item.event?.type === "error");
+    expect(errorEvent.event.message).toContain("TodoWrite ended with 1/2 unfinished item(s).");
+    expect(errorEvent.event.message).toContain("- do B");
+  });
+
+  it("does not emit TodoWrite guard error when all items are completed", async () => {
+    const { coordinator, emitted, sessionPath } = createCoordinatorWithPromptHarness();
+    const state = coordinator._streamState.get(sessionPath);
+    state.lastTurnSawTodoWrite = true;
+    state.lastTurnTodoItems = [
+      { text: "do A", status: "completed", done: true },
+      { text: "do B", status: "completed", done: true },
+    ];
+
+    await coordinator.prompt("run task");
+
+    expect(emitted.some((item) => item.event?.type === "error")).toBe(false);
+  });
+});
