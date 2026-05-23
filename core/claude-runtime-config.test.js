@@ -26,6 +26,17 @@ function createConfig(overrides = {}) {
   });
 }
 
+const EMPTY_PROXY_ENV = {
+  http_proxy: "",
+  https_proxy: "",
+  all_proxy: "",
+  HTTP_PROXY: "",
+  HTTPS_PROXY: "",
+  ALL_PROXY: "",
+  no_proxy: "",
+  NO_PROXY: "",
+};
+
 describe("buildClaudeRuntimeConfig env", () => {
   it("inherits process env by default", () => {
     const config = createConfig();
@@ -46,7 +57,7 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.env.HANAKO_TEST_ENV).toBe("ok");
   });
 
-  it("replaces Claude proxy env with the local system proxy", () => {
+  it("keeps explicit Claude proxy env by default", () => {
     const config = createConfig({
       env: {
         http_proxy: "http://localhost:64180",
@@ -57,6 +68,25 @@ describe("buildClaudeRuntimeConfig env", () => {
         HTTPS_PROXY: "http://localhost:64180",
         ALL_PROXY: "socks5://localhost:64181",
         NO_PROXY: "localhost,127.0.0.1",
+      },
+    });
+
+    expect(config.options.env.http_proxy).toBe("http://localhost:64180");
+    expect(config.options.env.https_proxy).toBe("http://localhost:64180");
+    expect(config.options.env.all_proxy).toBe("socks5://localhost:64181");
+    expect(config.options.env.HTTP_PROXY).toBe("http://localhost:64180");
+    expect(config.options.env.HTTPS_PROXY).toBe("http://localhost:64180");
+    expect(config.options.env.ALL_PROXY).toBe("socks5://localhost:64181");
+    expect(config.options.env.no_proxy).toBe("localhost,127.0.0.1");
+    expect(config.options.env.NO_PROXY).toBe("localhost,127.0.0.1");
+    expect(config.options.env.BASH_ENV).toBeUndefined();
+    expect(config.options.env.CURL_HOME).toBeUndefined();
+  });
+
+  it("forces localhost proxy only when HANAKO_FORCE_LOCAL_PROXY is enabled", () => {
+    const config = createConfig({
+      env: {
+        HANAKO_FORCE_LOCAL_PROXY: "1",
       },
     });
 
@@ -879,7 +909,9 @@ describe("buildClaudeRuntimeConfig env", () => {
   });
 
   it("denies Bash privilege escalation commands while allowing normal Bash commands", async () => {
-    const config = createConfig();
+    const config = createConfig({
+      env: EMPTY_PROXY_ENV,
+    });
     const denied = await config.options.canUseTool("Bash", {
       command: "sudo ls /",
     }, {
@@ -900,12 +932,14 @@ describe("buildClaudeRuntimeConfig env", () => {
       behavior: "allow",
     });
     expect(allowed.updatedInput.command).toContain("unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY");
-    expect(allowed.updatedInput.command).toContain('export http_proxy="http://127.0.0.1:7897"');
+    expect(allowed.updatedInput.command).not.toContain('export http_proxy="http://127.0.0.1:7897"');
     expect(allowed.updatedInput.command).toContain("npm test");
   });
 
   it("strips proxy variables from allowed Bash commands", async () => {
-    const config = createConfig();
+    const config = createConfig({
+      env: EMPTY_PROXY_ENV,
+    });
     const decision = await config.options.canUseTool("Bash", {
       command: "curl -v https://mkapi2.dfcfs.com/finskillshub/api/claw/query",
       description: "probe",
@@ -921,9 +955,51 @@ describe("buildClaudeRuntimeConfig env", () => {
       },
     });
     expect(decision.updatedInput.command).toBe([
-      'unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY; export http_proxy="http://127.0.0.1:7897" https_proxy="http://127.0.0.1:7897" HTTP_PROXY="http://127.0.0.1:7897" HTTPS_PROXY="http://127.0.0.1:7897";',
+      "unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY;",
       "curl -v https://mkapi2.dfcfs.com/finskillshub/api/claw/query",
     ].join("\n"));
+  });
+
+  it("keeps explicit proxy env for Bash commands so external proxy rules can apply", async () => {
+    const config = createConfig({
+      env: {
+        http_proxy: "http://127.0.0.1:7890",
+        https_proxy: "http://127.0.0.1:7890",
+      },
+    });
+    const decision = await config.options.canUseTool("Bash", {
+      command: "curl -I https://github.com",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-preserve-proxy",
+    });
+
+    expect(decision).toMatchObject({
+      behavior: "allow",
+    });
+    expect(decision.updatedInput.command).toBe("curl -I https://github.com");
+  });
+
+  it("injects localhost proxy for Bash commands only when HANAKO_FORCE_LOCAL_PROXY is enabled", async () => {
+    const config = createConfig({
+      env: {
+        HANAKO_FORCE_LOCAL_PROXY: "1",
+      },
+    });
+    const decision = await config.options.canUseTool("Bash", {
+      command: "npm test",
+    }, {
+      signal: new AbortController().signal,
+      toolUseID: "tool-bash-force-local-proxy",
+    });
+
+    expect(decision).toMatchObject({
+      behavior: "allow",
+    });
+    expect(decision.updatedInput.command).toContain(
+      'export http_proxy="http://127.0.0.1:7897"',
+    );
+    expect(decision.updatedInput.command).toContain("all_proxy=\"socks5h://127.0.0.1:7897\"");
   });
 
   it("allows Bash path access outside legacy workspace/path_rules when sandbox is disabled", async () => {

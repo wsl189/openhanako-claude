@@ -78,10 +78,9 @@ const CLAUDE_NO_PROXY_ENV_KEYS = [
   "NO_PROXY",
 ];
 const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:7897";
-const CLAUDE_PROXY_UNSET_COMMAND = [
-  `unset ${CLAUDE_PROXY_ENV_KEYS.join(" ")}`,
-  `export http_proxy="${DEFAULT_LOCAL_PROXY_URL}" https_proxy="${DEFAULT_LOCAL_PROXY_URL}" HTTP_PROXY="${DEFAULT_LOCAL_PROXY_URL}" HTTPS_PROXY="${DEFAULT_LOCAL_PROXY_URL}"`,
-].join("; ");
+const CLAUDE_PROXY_UNSET_COMMAND = `unset ${CLAUDE_PROXY_ENV_KEYS.join(" ")}`;
+const CLAUDE_PROXY_EXPORT_LOCAL_COMMAND =
+  `export http_proxy="${DEFAULT_LOCAL_PROXY_URL}" https_proxy="${DEFAULT_LOCAL_PROXY_URL}" HTTP_PROXY="${DEFAULT_LOCAL_PROXY_URL}" HTTPS_PROXY="${DEFAULT_LOCAL_PROXY_URL}" all_proxy="socks5h://127.0.0.1:7897" ALL_PROXY="socks5h://127.0.0.1:7897"`;
 const CLAUDE_NO_PROXY_BASH_ENV = [
   `unset ${CLAUDE_PROXY_ENV_KEYS.join(" ")}`,
   'export no_proxy="localhost,127.0.0.1,::1"',
@@ -144,11 +143,15 @@ function removeClaudeProxyEnv(env = {}) {
   return env;
 }
 
-function withClaudeProxyEnvUnset(command = "") {
+function withClaudeProxyEnvUnset(command = "", forceLocalProxy = false, preserveProxyEnv = false) {
   const raw = String(command || "");
   if (!raw.trim()) return raw;
-  if (raw.trimStart().startsWith(CLAUDE_PROXY_UNSET_COMMAND)) return raw;
-  return `${CLAUDE_PROXY_UNSET_COMMAND};\n${raw}`;
+  if (preserveProxyEnv && !forceLocalProxy) return raw;
+  const proxyPrefix = forceLocalProxy
+    ? `${CLAUDE_PROXY_UNSET_COMMAND}; ${CLAUDE_PROXY_EXPORT_LOCAL_COMMAND};`
+    : `${CLAUDE_PROXY_UNSET_COMMAND};`;
+  if (raw.trimStart().startsWith(proxyPrefix)) return raw;
+  return `${proxyPrefix}\n${raw}`;
 }
 
 function writeFileIfChanged(filePath, content) {
@@ -1423,6 +1426,8 @@ function buildToolUseDecisionEvaluator(permissionStrategy, opts = {}) {
   const sessionPath = opts.sessionPath || null;
   const executionMode = normalizeExecutionMode(opts.executionMode);
   const emitToolEvent = opts.emitToolEvent;
+  const forceLocalProxy = opts.forceLocalProxy === true;
+  const preserveProxyEnv = opts.preserveProxyEnv === true;
   let planModeEntered = false;
 
   return async (toolName, input = {}) => {
@@ -1619,7 +1624,7 @@ function buildToolUseDecisionEvaluator(permissionStrategy, opts = {}) {
         behavior: "allow",
         updatedInput: {
           ...payload,
-          command: withClaudeProxyEnvUnset(payload.command),
+          command: withClaudeProxyEnvUnset(payload.command, forceLocalProxy, preserveProxyEnv),
         },
       };
     }
@@ -1704,6 +1709,9 @@ export function buildClaudeRuntimeConfig({
   includePartialMessages = false,
 } = {}) {
   const explicitClaudeConfigDir = String(env?.CLAUDE_CONFIG_DIR || "").trim();
+  const forceLocalProxy = /^(1|true|yes|on)$/i.test(
+    String(env?.HANAKO_FORCE_LOCAL_PROXY || process.env.HANAKO_FORCE_LOCAL_PROXY || "").trim(),
+  );
   let runtimeEnv = {
     ...process.env,
     ...(env || {}),
@@ -1711,6 +1719,9 @@ export function buildClaudeRuntimeConfig({
   ensureWindowsGitBashEnv(runtimeEnv);
   const agentConfigDir = normalizeAbsolutePath(agent?.agentDir);
   applyClaudeNoProxyRuntimeEnv(runtimeEnv, agentConfigDir || cwd || workspace);
+  const preserveProxyEnv = !forceLocalProxy && CLAUDE_PROXY_ENV_KEYS.some(
+    (key) => String(runtimeEnv?.[key] || "").trim().length > 0,
+  );
   if (!explicitClaudeConfigDir && agentConfigDir) {
     // Route Claude's user-level customizations (including Skill tool discovery)
     // to the current agent directory, where Hanako stores per-agent skills.
@@ -1787,6 +1798,8 @@ export function buildClaudeRuntimeConfig({
     executionMode,
     emitToolEvent,
     allowedTools,
+    forceLocalProxy,
+    preserveProxyEnv,
   });
   const canUseTool = buildCanUseToolHandler(toolUseDecisionEvaluator);
   const hooks = buildPreToolUseHooks(toolUseDecisionEvaluator);
