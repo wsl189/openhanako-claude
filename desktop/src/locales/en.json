@@ -1252,6 +1252,7 @@
     "cwdSkillsDrop": "Drop folder or .zip to install into agent skill library",
     "deleteSkill": "Delete Skill",
     "openInFinder": "Open in Finder",
+    "openInExplorer": "Open in Explorer",
     "jianLabel": "Jian",
     "jianPlaceholder": "Write something to tell the assistant how to handle files in this folder...",
     "emptyTitle": "Desk is empty",
@@ -1263,6 +1264,7 @@
     "ctx": {
       "open": "Open",
       "openInFinder": "Open in Finder",
+      "openInExplorer": "Open in Explorer",
       "rename": "Rename",
       "copyPath": "Copy Path",
       "delete": "Delete",

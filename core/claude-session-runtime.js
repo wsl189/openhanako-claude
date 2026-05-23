@@ -749,18 +749,33 @@ export class ClaudeSessionRuntime {
       ? nextModelId
       : resolveClaudeSdkModelId(nextModelId, nextRuntimeModel);
     const nextEnv = applyClaudeMaxOutputTokensEnv(this.options?.env || {}, nextRuntimeModel);
+    const currentAutoCompactWindow = toPositiveInt(this.options?.settings?.autoCompactWindow);
+    const requestedAutoCompactWindow = toPositiveInt(
+      nextRuntimeModel?.contextWindow ?? nextRuntimeModel?.context,
+    );
+    const nextAutoCompactWindow = requestedAutoCompactWindow ?? currentAutoCompactWindow;
+    const nextSettings = {
+      ...(this.options?.settings || {}),
+      ...(nextAutoCompactWindow ? { autoCompactWindow: nextAutoCompactWindow } : {}),
+    };
+    if (!nextAutoCompactWindow) {
+      delete nextSettings.autoCompactWindow;
+    }
     const modelChanged = String(this.options?.model || "").trim() !== nextSdkModel;
     const maxOutputChanged = String(this.options?.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS || "")
       !== String(nextEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS || "");
+    const autoCompactChanged = String(currentAutoCompactWindow || "")
+      !== String(nextAutoCompactWindow || "");
 
     this.model = nextRuntimeModel;
-    if (!modelChanged && !maxOutputChanged) {
+    if (!modelChanged && !maxOutputChanged && !autoCompactChanged) {
       return;
     }
     this.options = {
       ...this.options,
       model: nextSdkModel,
       env: nextEnv,
+      settings: nextSettings,
     };
     // 切换模型时避免沿用旧会话 resume，兼容部分中转服务不支持跨模型恢复。
     await this._restartQuery({ resume: false });

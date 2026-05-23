@@ -26,6 +26,7 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "location", "ticker", "team", "opponent", "target", "ref_id", "id", "session_id",
   "task", "model", "max_turns", "permission_mode", "thinking", "timeout_sec", "continue", "dangerously_skip_permissions",
   "search_query", "weather", "finance", "sports", "open", "click", "find", "image_query",
+  "todos", "newTodos", "oldTodos",
   "tool_uses",
   // setup_settings 核心结构（保留完整嵌套对象供前端生成具体变更摘要）
   "tutorial", "agent", "mcp", "memory", "dry_run",

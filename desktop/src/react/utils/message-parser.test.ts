@@ -92,4 +92,35 @@ describe('extractToolDetail', () => {
     expect(detail.toLowerCase()).toContain('wsl');
     expect(detail.toLowerCase()).toContain('create');
   });
+
+  it('summarizes todowrite completion changes from details', () => {
+    const detail = extractToolDetail('TodoWrite', {
+      todos: [
+        { content: 'A', status: 'completed' },
+        { content: 'B', status: 'pending' },
+      ],
+    }, {
+      oldTodos: [
+        { content: 'A', status: 'in_progress' },
+        { content: 'B', status: 'pending' },
+      ],
+      newTodos: [
+        { content: 'A', status: 'completed' },
+        { content: 'B', status: 'pending' },
+      ],
+    });
+    expect(detail).toContain('A');
+    expect(detail.toLowerCase()).toContain('completed');
+  });
+
+  it('summarizes todowrite list from args when details are absent', () => {
+    const detail = extractToolDetail('todo', {
+      todos: [
+        { content: 'write tests', status: 'completed' },
+        { content: 'update docs', status: 'in_progress' },
+      ],
+    });
+    expect(detail).toContain('write tests');
+    expect(detail).toContain('update docs');
+  });
 });

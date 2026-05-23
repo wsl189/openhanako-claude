@@ -128,6 +128,65 @@ function summarizeStringArray(value: unknown): string {
   return `${items.join(', ')}${suffix}`;
 }
 
+interface TodoPreviewItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+function normalizeTodoPreviewItems(value: unknown): TodoPreviewItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as Record<string, unknown>;
+      const text = asText(row.content) || asText(row.text);
+      if (!text) return null;
+      const status = asText(row.status).toLowerCase();
+      const done = row.done === true || status === 'completed';
+      const id = asText(row.id) || text;
+      return { id, text, done };
+    })
+    .filter((item): item is TodoPreviewItem => !!item);
+}
+
+function formatTodoItemList(items: TodoPreviewItem[], isZh: boolean): string {
+  if (!items.length) return '';
+  const maxShown = 2;
+  const shown = items.slice(0, maxShown);
+  const mapped = shown.map((item) => `${item.done ? '✓' : '○'}${item.text}`);
+  const more = items.length - shown.length;
+  const suffix = more > 0 ? (isZh ? ` 等${more}项` : ` +${more}`) : '';
+  return `${mapped.join(isZh ? '、' : ', ')}${suffix}`;
+}
+
+function summarizeTodoDetail(args: Record<string, unknown>, details?: Record<string, unknown>): string {
+  const isZh = guessZhLocale();
+  const oldTodos = normalizeTodoPreviewItems(details?.oldTodos);
+  const newTodos = normalizeTodoPreviewItems(details?.newTodos || details?.todos || args.todos);
+  if (oldTodos.length && newTodos.length) {
+    const oldById = new Map(oldTodos.map((item) => [item.id, item]));
+    const newlyCompleted = newTodos.filter((item) => {
+      const prev = oldById.get(item.id);
+      return !!prev && !prev.done && item.done;
+    });
+    const added = newTodos.filter((item) => !oldById.has(item.id));
+    if (newlyCompleted.length > 0) {
+      const list = formatTodoItemList(newlyCompleted, isZh);
+      return isZh ? `完成：${list}` : `completed: ${list}`;
+    }
+    if (added.length > 0) {
+      const list = formatTodoItemList(added, isZh);
+      return isZh ? `新增：${list}` : `added: ${list}`;
+    }
+  }
+  if (newTodos.length > 0) {
+    const list = formatTodoItemList(newTodos, isZh);
+    return isZh ? `待办：${list}` : `todos: ${list}`;
+  }
+  return '';
+}
+
 function extractStructuredDetail(args: Record<string, unknown>): string {
   const searchQ = firstArrayField(args.search_query, 'q');
   if (searchQ) return truncateHead(searchQ, TOOL_DETAIL_TEXT_MAX);
@@ -352,8 +411,12 @@ function summarizeSetupSettingsDetail(args: Record<string, unknown>): string {
   return truncateHead(sections.join(isZh ? '；' : '; '), 160);
 }
 
-export function extractToolDetail(name: string, args: Record<string, unknown> | undefined): string {
-  if (!args) return '';
+export function extractToolDetail(
+  name: string,
+  args: Record<string, unknown> | undefined,
+  details?: Record<string, unknown>,
+): string {
+  const safeArgs = args && typeof args === 'object' ? args : {};
   const tool = String(name || '')
     .toLowerCase()
     .replace(/^functions\./, '')
@@ -361,25 +424,32 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
   const mcpMatch = tool.match(/^mcp__[a-z0-9_-]+__(.+)$/);
   const toolLeaf = (mcpMatch?.[1] || tool).toLowerCase();
   if (toolLeaf === 'setup_settings' || toolLeaf === 'setup-settings' || toolLeaf === 'updatesettings') {
-    const setupSummary = summarizeSetupSettingsDetail(args);
+    const setupSummary = summarizeSetupSettingsDetail(safeArgs);
     if (setupSummary) return setupSummary;
   }
   switch (toolLeaf) {
+    case 'todo':
+    case 'todowrite':
+    {
+      const todoSummary = summarizeTodoDetail(safeArgs, details);
+      if (todoSummary) return truncateHead(todoSummary, TOOL_DETAIL_TEXT_MAX);
+      return '';
+    }
     case 'read':
     case 'write':
     case 'edit':
     case 'edit-diff':
     {
-      const filePath = (args.file_path || args.path || args.filePath || '') as string;
+      const filePath = (safeArgs.file_path || safeArgs.path || safeArgs.filePath || '') as string;
       const pathText = truncatePath(filePath);
       if (tool === 'write') {
-        const content = typeof args.content === 'string' ? args.content : '';
+        const content = typeof safeArgs.content === 'string' ? safeArgs.content : '';
         const lineCount = content ? content.split('\n').length : 0;
         return lineCount > 0 ? `${pathText} +${lineCount}` : pathText;
       }
       if (tool === 'edit' || tool === 'edit-diff') {
-        const oldText = (args.old_string || args.old_text || '') as string;
-        const newText = (args.new_string || args.new_text || '') as string;
+        const oldText = (safeArgs.old_string || safeArgs.old_text || '') as string;
+        const newText = (safeArgs.new_string || safeArgs.new_text || '') as string;
         const oldLines = oldText ? oldText.split('\n').length : 0;
         const newLines = newText ? newText.split('\n').length : 0;
         if (newLines > 0 || oldLines > 0) {
@@ -393,22 +463,22 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
     }
     case 'bash':
     case 'exec_command':
-      return truncateHead(((args.command || args.cmd || '') as string), TOOL_DETAIL_COMMAND_MAX);
+      return truncateHead(((safeArgs.command || safeArgs.cmd || '') as string), TOOL_DETAIL_COMMAND_MAX);
     case 'glob':
     case 'find':
-      return (args.pattern || '') as string;
+      return (safeArgs.pattern || '') as string;
     case 'grep':
-      return truncateHead((args.pattern || '') as string, TOOL_DETAIL_TEXT_MAX) +
-        (args.path ? ` in ${truncatePath(args.path as string)}` : '');
+      return truncateHead((safeArgs.pattern || '') as string, TOOL_DETAIL_TEXT_MAX) +
+        (safeArgs.path ? ` in ${truncatePath(safeArgs.path as string)}` : '');
     case 'ls':
-      return truncatePath((args.path || '') as string);
+      return truncatePath((safeArgs.path || '') as string);
     case 'browser':
-      return extractHostname((args.url || '') as string) || truncateHead((args.action || '') as string, TOOL_DETAIL_TEXT_MAX);
+      return extractHostname((safeArgs.url || '') as string) || truncateHead((safeArgs.action || '') as string, TOOL_DETAIL_TEXT_MAX);
     case 'search_memory':
-      return truncateHead((args.query || '') as string, TOOL_DETAIL_TEXT_MAX);
+      return truncateHead((safeArgs.query || '') as string, TOOL_DETAIL_TEXT_MAX);
     case 'generate_images':
-      return truncateHead((args.prompt || '') as string, TOOL_DETAIL_TEXT_MAX);
+      return truncateHead((safeArgs.prompt || '') as string, TOOL_DETAIL_TEXT_MAX);
     default:
-      return extractGenericDetail(args);
+      return extractGenericDetail(safeArgs);
   }
 }

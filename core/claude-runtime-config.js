@@ -256,6 +256,12 @@ function normalizeAbsolutePath(rawPath) {
   return p;
 }
 
+function resolveAutoCompactWindow(runtimeModel = null) {
+  const value = Number(runtimeModel?.contextWindow ?? runtimeModel?.context);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.floor(value);
+}
+
 function resolveWindowsGitBashPath(runtimeEnv = {}) {
   if (process.platform !== "win32") return "";
   const explicit = String(runtimeEnv?.CLAUDE_CODE_GIT_BASH_PATH || "").trim();
@@ -1707,6 +1713,7 @@ export function buildClaudeRuntimeConfig({
   sessionPath = null,
   executionMode = "",
   includePartialMessages = false,
+  runtimeModel = null,
 } = {}) {
   const explicitClaudeConfigDir = String(env?.CLAUDE_CONFIG_DIR || "").trim();
   const forceLocalProxy = /^(1|true|yes|on)$/i.test(
@@ -1842,6 +1849,7 @@ export function buildClaudeRuntimeConfig({
   const strictSandbox = false;
   const additionalDirectories = buildAdditionalDirectories(cwd, workspace, pathRules);
   const shouldForceTools = shouldForceToolsOption();
+  const autoCompactWindow = resolveAutoCompactWindow(runtimeModel);
   const options = {
     cwd,
     model,
@@ -1857,6 +1865,7 @@ export function buildClaudeRuntimeConfig({
       // Default to skipping WebFetch preflight blocklist checks so
       // enterprise/restricted networks can still attempt runtime fetches.
       skipWebFetchPreflight: true,
+      ...(autoCompactWindow ? { autoCompactWindow } : {}),
     },
     mcpServers,
     additionalDirectories,

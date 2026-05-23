@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SessionCoordinator } from "./session-coordinator.js";
 
 describe("SessionCoordinator._translateClaudeEvent", () => {
@@ -258,7 +258,8 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
       type: "tool_end",
       name: "TodoWrite",
       toolCallId: "todo-1",
-      details: {
+      details: expect.objectContaining({
+        verificationNudgeNeeded: false,
         todos: [
           {
             content: "verify TodoWrite event",
@@ -275,8 +276,64 @@ describe("SessionCoordinator._translateClaudeEvent", () => {
             done: false,
           },
         ],
-      },
+      }),
     }));
+  });
+
+  it("auto-clears unfinished TodoWrite items before turn_end", () => {
+    const coordinator = new SessionCoordinator({});
+    const sessionPath = "/tmp/session-todowrite-autoclear";
+
+    coordinator._translateClaudeEvent({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "todo-ac-1",
+          name: "TodoWrite",
+          input: {
+            todos: [
+              { content: "a", status: "in_progress" },
+              { content: "b", status: "pending" },
+            ],
+          },
+        }],
+      },
+    }, sessionPath);
+
+    coordinator._translateClaudeEvent({
+      type: "user",
+      tool_use_result: {
+        oldTodos: [{ content: "a", status: "in_progress" }],
+        newTodos: [
+          { content: "a", status: "in_progress" },
+          { content: "b", status: "pending" },
+        ],
+      },
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "todo-ac-1",
+          content: "Todos have been modified successfully.",
+        }],
+      },
+    }, sessionPath);
+
+    const translated = coordinator._translateClaudeEvent({
+      type: "result",
+      is_error: false,
+      result: "done",
+    }, sessionPath);
+
+    expect(translated).toContainEqual(expect.objectContaining({
+      type: "tool_end",
+      name: "TodoWrite",
+      details: expect.objectContaining({
+        autoCleared: true,
+        todos: [],
+      }),
+    }));
+    expect(translated[translated.length - 1]).toEqual({ type: "turn_end" });
   });
 
   it("merges write-like tool_use_result details for diff preview data", () => {
@@ -823,71 +880,150 @@ describe("SessionCoordinator._buildSessionEnv", () => {
   });
 });
 
-describe("SessionCoordinator TodoWrite guard", () => {
-  function createCoordinatorWithPromptHarness() {
+describe("SessionCoordinator TodoWrite nudge hook", () => {
+  function createNudgeHarness() {
     const emitted = [];
-    const agent = {
-      _memoryTicker: { notifyTurn: () => {} },
-    };
-    const coordinator = new SessionCoordinator({
-      getAgent: () => agent,
-      getAgentById: () => null,
-      emitEvent: (event, sessionPath) => emitted.push({ event, sessionPath }),
-    });
-    const sessionPath = "/tmp/session-todo-guard";
+    let callback = null;
+    const sessionPath = "/tmp/session-todo-nudge";
     const session = {
       options: {},
-      sessionManager: { getSessionFile: () => sessionPath },
-      prompt: async () => {},
+      isStreaming: true,
+      steer: vi.fn(() => true),
+      subscribe: (cb) => {
+        callback = cb;
+        return () => {};
+      },
     };
-    coordinator._session = session;
-    coordinator._sessions.set(sessionPath, {
-      session,
-      agentId: "agent-test",
-      memoryEnabled: true,
-      lastTouchedAt: Date.now(),
+    const coordinator = new SessionCoordinator({
+      getAgent: () => ({ tools: [] }),
+      getAgentById: () => null,
+      emitEvent: (event, sp) => emitted.push({ event, sp }),
     });
-    coordinator._streamState.set(sessionPath, {
-      lastTurnProtocolMismatch: false,
-      lastTurnSawTodoWrite: false,
-      lastTurnTodoItems: null,
-    });
-    return { coordinator, emitted, sessionPath };
+    coordinator._bindRuntime(sessionPath, session, "agent-test", true);
+    return { coordinator, session, callback, emitted, sessionPath };
   }
 
-  it("emits an error when a TodoWrite turn ends with unfinished items", async () => {
-    const { coordinator, emitted, sessionPath } = createCoordinatorWithPromptHarness();
-    const state = coordinator._streamState.get(sessionPath);
-    state.lastTurnSawTodoWrite = true;
-    state.lastTurnTodoItems = [
-      { text: "do A", status: "completed", done: true },
-      { text: "do B", status: "in_progress", done: false },
-    ];
+  it("nudges agent when TodoWrite still has unfinished items", () => {
+    const { callback, session } = createNudgeHarness();
+    callback({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "todo-hook-1",
+          name: "TodoWrite",
+          input: { todos: [{ content: "A", status: "in_progress" }] },
+        }],
+      },
+    });
+    callback({
+      type: "user",
+      tool_use_result: {
+        oldTodos: [{ content: "A", status: "in_progress" }],
+        newTodos: [{ content: "A", status: "in_progress" }],
+        verificationNudgeNeeded: true,
+      },
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "todo-hook-1",
+          content: "Todos have been modified successfully.",
+        }],
+      },
+    });
 
-    await coordinator.prompt("run task");
-
-    expect(emitted).toContainEqual(expect.objectContaining({
-      sessionPath,
-      event: expect.objectContaining({
-        type: "error",
-      }),
-    }));
-    const errorEvent = emitted.find((item) => item.event?.type === "error");
-    expect(errorEvent.event.message).toContain("TodoWrite ended with 1/2 unfinished item(s).");
-    expect(errorEvent.event.message).toContain("- do B");
+    expect(session.steer).toHaveBeenCalledTimes(1);
+    expect(String(session.steer.mock.calls[0]?.[0] || "")).toContain("TodoWrite");
   });
 
-  it("does not emit TodoWrite guard error when all items are completed", async () => {
-    const { coordinator, emitted, sessionPath } = createCoordinatorWithPromptHarness();
-    const state = coordinator._streamState.get(sessionPath);
-    state.lastTurnSawTodoWrite = true;
-    state.lastTurnTodoItems = [
-      { text: "do A", status: "completed", done: true },
-      { text: "do B", status: "completed", done: true },
-    ];
+  it("only nudges once per turn", () => {
+    const { callback, session } = createNudgeHarness();
 
-    await coordinator.prompt("run task");
+    callback({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "todo-hook-1",
+          name: "TodoWrite",
+          input: { todos: [{ content: "A", status: "in_progress" }] },
+        }],
+      },
+    });
+    callback({
+      type: "user",
+      tool_use_result: {
+        oldTodos: [{ content: "A", status: "in_progress" }],
+        newTodos: [{ content: "A", status: "in_progress" }],
+        verificationNudgeNeeded: true,
+      },
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "todo-hook-1",
+          content: "ok",
+        }],
+      },
+    });
 
-    expect(emitted.some((item) => item.event?.type === "error")).toBe(false);
+    callback({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "todo-hook-2",
+          name: "TodoWrite",
+          input: { todos: [{ content: "B", status: "pending" }] },
+        }],
+      },
+    });
+    callback({
+      type: "user",
+      tool_use_result: {
+        oldTodos: [{ content: "B", status: "pending" }],
+        newTodos: [{ content: "B", status: "pending" }],
+        verificationNudgeNeeded: true,
+      },
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "todo-hook-2",
+          content: "ok",
+        }],
+      },
+    });
+
+    expect(session.steer).toHaveBeenCalledTimes(1);
+
+    callback({ type: "result", is_error: false, result: "done" });
+
+    callback({
+      type: "assistant",
+      message: {
+        content: [{
+          type: "tool_use",
+          id: "todo-hook-3",
+          name: "TodoWrite",
+          input: { todos: [{ content: "C", status: "pending" }] },
+        }],
+      },
+    });
+    callback({
+      type: "user",
+      tool_use_result: {
+        oldTodos: [{ content: "C", status: "pending" }],
+        newTodos: [{ content: "C", status: "pending" }],
+        verificationNudgeNeeded: true,
+      },
+      message: {
+        content: [{
+          type: "tool_result",
+          tool_use_id: "todo-hook-3",
+          content: "ok",
+        }],
+      },
+    });
+
+    expect(session.steer).toHaveBeenCalledTimes(2);
   });
 });

@@ -1252,6 +1252,7 @@
     "cwdSkillsDrop": "拖入文件夹或 .zip 安装到 Agent 技能库",
     "deleteSkill": "删除技能",
     "openInFinder": "在访达中打开",
+    "openInExplorer": "在资源管理器中打开",
     "jianLabel": "笺",
     "jianPlaceholder": "写点什么，告诉助手这个文件夹里面的文件该如何处理...",
     "emptyTitle": "书桌还空空的呢",
@@ -1263,6 +1264,7 @@
     "ctx": {
       "open": "打开",
       "openInFinder": "在访达中打开",
+      "openInExplorer": "在资源管理器中打开",
       "rename": "重命名",
       "copyPath": "复制路径",
       "delete": "删除",

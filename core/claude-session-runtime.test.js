@@ -142,6 +142,46 @@ describe("ClaudeSessionRuntime resume recovery", () => {
       .toBe("131072");
   });
 
+  it("restarts the SDK query when autoCompactWindow changes for the same model", async () => {
+    const queryMock = vi.mocked(query);
+    queryMock.mockReset();
+    queryMock.mockImplementation(() => {
+      async function* stream() {}
+      const iterator = stream();
+      iterator.close = vi.fn();
+      iterator.getContextUsage = vi.fn(async () => null);
+      return iterator;
+    });
+
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: "s1",
+      resumeSessionId: null,
+      cwd: process.cwd(),
+      sessionPath: "/tmp/hanako-runtime-test-auto-compact-window.json",
+      options: {
+        model: "deepseek-v4-pro",
+        settings: {
+          skipWebFetchPreflight: true,
+          autoCompactWindow: 200_000,
+        },
+      },
+    });
+
+    await runtime.setModel({
+      id: "deepseek-v4-pro",
+      name: "DeepSeek V4 Pro",
+      contextWindow: 128_000,
+    });
+    await runtime.close();
+
+    expect(runtime.options.settings).toMatchObject({
+      skipWebFetchPreflight: true,
+      autoCompactWindow: 128_000,
+    });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0]?.[0]?.options?.settings?.autoCompactWindow).toBe(128_000);
+  });
+
   it("does not re-apply configured mcpServers by default", async () => {
     const queryMock = vi.mocked(query);
     queryMock.mockReset();

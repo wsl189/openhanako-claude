@@ -389,6 +389,42 @@ function summarizeTodoCompletion(todos) {
   };
 }
 
+function buildTodoWriteNudgeText(summary) {
+  const unfinished = Array.isArray(summary?.unfinishedItems) ? summary.unfinishedItems : [];
+  const top = unfinished
+    .map((todo) => String(todo?.text || todo?.content || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  const isZh = getLocale().startsWith("zh");
+  const tail = top.length > 0
+    ? `\n${top.map((item) => `- ${item}`).join("\n")}`
+    : "";
+  if (isZh) {
+    return `TodoWrite 检测到仍有未完成待办（${summary.unfinishedCount}/${summary.total}）。请先判断是否需要继续执行这些待办。若需要继续执行，请继续处理并更新待办；若不再执行，请先清空这些待办，再在最终回复中明确告知用户哪些事项未完成。${tail}`;
+  }
+  return `TodoWrite still has unfinished items (${summary.unfinishedCount}/${summary.total}). First decide whether these items should continue. If yes, keep executing and update the list. If no, clear these todos first, then explicitly tell the user which items remain unfinished in your final response.${tail}`;
+}
+
+function appendTodoAutoClearToolEndIfNeeded(translated, state, reason = "turn_end_autoclear") {
+  if (!state?.turnSawTodoWrite) return;
+  const summary = summarizeTodoCompletion(state.turnTodoItems);
+  if (summary.unfinishedCount <= 0) return;
+  translated.push({
+    type: "tool_end",
+    name: "TodoWrite",
+    toolCallId: null,
+    success: true,
+    content: [],
+    details: {
+      oldTodos: Array.isArray(state.turnTodoItems) ? state.turnTodoItems : [],
+      newTodos: [],
+      todos: [],
+      autoCleared: true,
+      reason,
+    },
+  });
+}
+
 function isWriteLikeToolName(name = "") {
   const normalized = String(name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
   return (
@@ -428,13 +464,22 @@ function mergeToolUseResultDetails(toolName, existingDetails, toolUseResult) {
   const result = (toolUseResult && typeof toolUseResult === "object") ? toolUseResult : {};
 
   if (isTodoWriteToolName(toolName)) {
-    const todos = normalizeTodoWriteItems(
-      result.newTodos || result.todos || base.todos,
+    const oldTodos = normalizeTodoWriteItems(result.oldTodos || base.oldTodos);
+    const newTodos = normalizeTodoWriteItems(
+      result.newTodos || result.todos || base.newTodos || base.todos,
     );
-    if (!todos) return existingDetails;
+    const todos = newTodos || normalizeTodoWriteItems(base.todos);
+    if (!todos && !oldTodos && !newTodos && typeof result.verificationNudgeNeeded !== "boolean") {
+      return existingDetails;
+    }
     return {
       ...base,
-      todos,
+      ...(oldTodos ? { oldTodos } : {}),
+      ...(newTodos ? { newTodos } : {}),
+      ...(todos ? { todos } : {}),
+      ...(typeof result.verificationNudgeNeeded === "boolean"
+        ? { verificationNudgeNeeded: result.verificationNudgeNeeded }
+        : {}),
     };
   }
 
@@ -642,8 +687,7 @@ export class SessionCoordinator {
         lastTurnProtocolMismatch: false,
         turnSawTodoWrite: false,
         turnTodoItems: null,
-        lastTurnSawTodoWrite: false,
-        lastTurnTodoItems: null,
+        turnTodoNudgeSent: false,
         customToolNames: new Set(customToolNames),
         availableToolNames: new Set([...CLAUDE_BUILTIN_TOOL_NAMES, ...customToolNames]),
       });
@@ -963,14 +1007,13 @@ export class SessionCoordinator {
         state.turnSawTextToolMarkup = false;
         return translated;
       }
+      appendTodoAutoClearToolEndIfNeeded(translated, state, "result_turn_end");
       if (event.is_error) {
         const errorMessage = pickUserFacingResultErrorMessage(event);
         if (errorMessage) {
           translated.push({ type: "error", message: errorMessage });
         }
       }
-      state.lastTurnSawTodoWrite = state.turnSawTodoWrite;
-      state.lastTurnTodoItems = state.turnTodoItems;
       translated.push({ type: "turn_end" });
       state.blockTypes.clear();
       state.blockToolUseByIndex.clear();
@@ -981,6 +1024,7 @@ export class SessionCoordinator {
       state.turnSawTextToolMarkup = false;
       state.turnSawTodoWrite = false;
       state.turnTodoItems = null;
+      state.turnTodoNudgeSent = false;
     } else if (event?.type === "runtime_error") {
       const errorMessage = pickUserFacingRuntimeErrorMessage(
         event.error?.message,
@@ -989,6 +1033,7 @@ export class SessionCoordinator {
       if (errorMessage) {
         translated.push({ type: "error", message: errorMessage });
       }
+      appendTodoAutoClearToolEndIfNeeded(translated, state, "runtime_error_turn_end");
       translated.push({ type: "turn_end" });
       state.blockTypes.clear();
       state.blockToolUseByIndex.clear();
@@ -1000,8 +1045,7 @@ export class SessionCoordinator {
       state.lastTurnProtocolMismatch = false;
       state.turnSawTodoWrite = false;
       state.turnTodoItems = null;
-      state.lastTurnSawTodoWrite = false;
-      state.lastTurnTodoItems = null;
+      state.turnTodoNudgeSent = false;
     }
 
     return translated;
@@ -1193,6 +1237,30 @@ export class SessionCoordinator {
         suppressAssistantSdkMessage: session.options?.includePartialMessages === true,
       };
       for (const translatedEvent of this._translateClaudeEvent(event, sessionPath, customToolNames, translateOpts)) {
+        if (translatedEvent?.type === "tool_end" && isTodoWriteToolName(translatedEvent?.name || "")) {
+          const streamState = this._streamState.get(sessionPath);
+          if (streamState && !streamState.turnTodoNudgeSent) {
+            const details = translatedEvent?.details;
+            const todos = Array.isArray(details?.todos) ? details.todos : [];
+            const summary = summarizeTodoCompletion(todos);
+            const shouldNudge = (
+              summary.unfinishedCount > 0
+              && translatedEvent?.success !== false
+              && (details?.verificationNudgeNeeded === true || summary.unfinishedCount > 0)
+            );
+            if (shouldNudge) {
+              const nudgeText = buildTodoWriteNudgeText(summary);
+              const steered = session.steer?.(getSteerPrefix() + nudgeText) === true;
+              if (steered) {
+                streamState.turnTodoNudgeSent = true;
+                log.log(
+                  `[todo-nudge] session=${path.basename(sessionPath || "")} `
+                  + `unfinished=${summary.unfinishedCount}/${summary.total}`,
+                );
+              }
+            }
+          }
+        }
         this._emitRuntimeEvent(translatedEvent, sessionPath);
       }
     });
@@ -1376,25 +1444,6 @@ export class SessionCoordinator {
     this._refreshSessionPrompt(promptAgent);
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await this._session.prompt(text, promptOpts);
-    if (sp) {
-      const streamState = this._streamState.get(sp);
-      if (streamState?.lastTurnSawTodoWrite) {
-        const summary = summarizeTodoCompletion(streamState.lastTurnTodoItems);
-        if (summary.unfinishedCount > 0) {
-          const todoList = summary.unfinishedItems
-            .map((todo) => `- ${todo.text || todo.content || ""}`.trim())
-            .filter(Boolean)
-            .slice(0, 8)
-            .join("\n");
-          const base = `TodoWrite ended with ${summary.unfinishedCount}/${summary.total} unfinished item(s).`;
-          const detail = todoList ? `${base}\n${todoList}` : base;
-          this._emitRuntimeEvent({ type: "error", message: detail }, sp);
-          log.warn(`[todo-guard] session=${path.basename(sp)} ${base}`);
-        }
-        streamState.lastTurnSawTodoWrite = false;
-        streamState.lastTurnTodoItems = null;
-      }
-    }
     const streamState = sp ? this._streamState.get(sp) : null;
     if (streamState?.lastTurnProtocolMismatch) {
       streamState.lastTurnProtocolMismatch = false;
@@ -1435,25 +1484,6 @@ export class SessionCoordinator {
     this._refreshSessionPrompt(promptAgent);
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await entry.session.prompt(text, promptOpts);
-    {
-      const streamState = this._streamState.get(sessionPath);
-      if (streamState?.lastTurnSawTodoWrite) {
-        const summary = summarizeTodoCompletion(streamState.lastTurnTodoItems);
-        if (summary.unfinishedCount > 0) {
-          const todoList = summary.unfinishedItems
-            .map((todo) => `- ${todo.text || todo.content || ""}`.trim())
-            .filter(Boolean)
-            .slice(0, 8)
-            .join("\n");
-          const base = `TodoWrite ended with ${summary.unfinishedCount}/${summary.total} unfinished item(s).`;
-          const detail = todoList ? `${base}\n${todoList}` : base;
-          this._emitRuntimeEvent({ type: "error", message: detail }, sessionPath);
-          log.warn(`[todo-guard] session=${path.basename(sessionPath)} ${base}`);
-        }
-        streamState.lastTurnSawTodoWrite = false;
-        streamState.lastTurnTodoItems = null;
-      }
-    }
     const streamState = this._streamState.get(sessionPath);
     if (streamState?.lastTurnProtocolMismatch) {
       streamState.lastTurnProtocolMismatch = false;

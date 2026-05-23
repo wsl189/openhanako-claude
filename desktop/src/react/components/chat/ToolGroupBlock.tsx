@@ -854,7 +854,7 @@ const ToolIndicator = memo(function ToolIndicator({
   order: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const detail = extractToolDetail(tool.name, tool.args);
+  const detail = extractToolDetail(tool.name, tool.args, tool.details);
   const phase = (tool.done ? (tool.success ? 'done' : 'failed') : 'running') as 'running' | 'done' | 'failed';
   const label = getToolLabel(tool.name, phase, agentName, tool.args);
   const actionLine = buildToolActionLine(tool.name, phase, detail, tool.args);

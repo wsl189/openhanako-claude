@@ -157,6 +157,19 @@ describe("buildClaudeRuntimeConfig env", () => {
     expect(config.options.includePartialMessages).toBe(true);
   });
 
+  it("sets SDK autoCompactWindow from runtime model context window", () => {
+    const config = createConfig({
+      runtimeModel: {
+        id: "deepseek-v4-pro",
+        contextWindow: 128_000,
+      },
+    });
+    expect(config.options.settings).toEqual({
+      skipWebFetchPreflight: true,
+      autoCompactWindow: 128_000,
+    });
+  });
+
   it("disables sandbox even when legacy sandbox modes/path rules are provided", () => {
     const config = createConfig({
       workspace: "/tmp/workspace",

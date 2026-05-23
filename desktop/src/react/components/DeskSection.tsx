@@ -50,6 +50,18 @@ type SortMode = 'mtime-desc' | 'name-asc' | 'name-desc' | 'size-desc' | 'type-as
 
 const t = (window as any).t;
 
+function isWindowsPlatform(): boolean {
+  return document.documentElement.getAttribute('data-platform') === 'win32';
+}
+
+function getOpenInFileManagerKey(): string {
+  return isWindowsPlatform() ? 'desk.openInExplorer' : 'desk.openInFinder';
+}
+
+function getOpenInFileManagerCtxKey(): string {
+  return isWindowsPlatform() ? 'desk.ctx.openInExplorer' : 'desk.ctx.openInFinder';
+}
+
 function getSortOptions(): Array<{ key: SortMode; label: string }> {
   return [
     { key: 'mtime-desc', label: t('desk.sort.mtime') },
@@ -102,7 +114,7 @@ function DeskOpenButton() {
   return (
     <button className="jian-desk-open" onClick={handleClick}>
       <span dangerouslySetInnerHTML={{ __html: ICONS.finderOpen }} />
-      <span>{(window.t ?? ((p: string) => p))('desk.openInFinder')}</span>
+      <span>{(window.t ?? ((p: string) => p))(getOpenInFileManagerKey())}</span>
     </button>
   );
 }
@@ -325,7 +337,7 @@ function DeskFileItem({
     if (file.isDir) {
       const sub = s.deskCurrentPath ? s.deskCurrentPath + '/' + file.name : file.name;
       items.push({ label: tFn('desk.ctx.open'), action: () => loadDeskFiles(sub) });
-      items.push({ label: tFn('desk.ctx.openInFinder'), action: () => { const p = deskFullPath(file.name); if (p) window.platform?.showInFinder?.(p); } });
+      items.push({ label: tFn(getOpenInFileManagerCtxKey()), action: () => { const p = deskFullPath(file.name); if (p) window.platform?.showInFinder?.(p); } });
     } else {
       items.push({ label: tFn('desk.ctx.open'), action: () => { const p = deskFullPath(file.name); if (p) window.platform?.openFile?.(p); } });
     }
@@ -572,7 +584,7 @@ function DeskFileList({ sortMode, onShowMenu }: { sortMode: SortMode; onShowMenu
             setTimeout(() => handleRenameStart(name), 50);
           }
         } },
-        { label: tFn('desk.ctx.openInFinder'), action: () => { const p = deskCurrentDir(); if (p) window.platform?.showInFinder?.(p); } },
+        { label: tFn(getOpenInFileManagerCtxKey()), action: () => { const p = deskCurrentDir(); if (p) window.platform?.showInFinder?.(p); } },
       ],
     });
   }, [onShowMenu, handleRenameStart]);
@@ -710,7 +722,7 @@ function DeskDropZone({ children, onShowMenu }: { children: React.ReactNode; onS
       items: [
         { label: tFn('desk.ctx.newMdFile'), action: () => deskCreateFile('') },
         { label: tFn('desk.ctx.newFolder'), action: () => deskMkdir() },
-        { label: tFn('desk.ctx.openInFinder'), action: () => { const p = deskCurrentDir(); if (p) window.platform?.showInFinder?.(p); } },
+        { label: tFn(getOpenInFileManagerCtxKey()), action: () => { const p = deskCurrentDir(); if (p) window.platform?.showInFinder?.(p); } },
       ],
     });
   }, [onShowMenu]);
