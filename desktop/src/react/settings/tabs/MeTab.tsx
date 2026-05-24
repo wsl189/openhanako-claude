@@ -41,7 +41,7 @@ export function MeTab() {
         }));
       }
       if (profileChanged) {
-        requests.push(hanaFetch('/api/user-profile', {
+        requests.push(hanaFetch('/api/memory/profile', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: userProfile }),

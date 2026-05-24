@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import { loadConfig, saveConfig } from "../lib/memory/config-loader.js";
 import { FactStore } from "../lib/memory/fact-store.js";
+import { MemoryService } from "../lib/memory/memory-service.js";
 import { SessionSummaryManager } from "../lib/memory/session-summary.js";
 import { createMemoryTicker } from "../lib/memory/memory-ticker.js";
 import { createMemorySearchTool } from "../lib/memory/memory-search.js";
@@ -69,6 +70,7 @@ export class Agent {
     this._config = null;
     this._factStore = null;
     this._summaryManager = null;
+    this._memoryService = null;
     this._memoryTicker = null;
     this._memorySearchTool = null;
     this._pinnedMemoryTools = [];
@@ -139,7 +141,6 @@ export class Agent {
     // 4. 记忆 v2：FactStore + SessionSummaryManager + ticker
     log(`  [agent] 4. FactStore...`);
     fs.mkdirSync(path.join(this.agentDir, "memory", "summaries"), { recursive: true });
-    this._summaryManager = new SessionSummaryManager(this.summariesDir);
     try {
       this._factStore = new FactStore(this.factsDbPath);
     } catch (err) {
@@ -147,11 +148,32 @@ export class Agent {
       console.error(`[agent] FactStore 初始化失败，已禁用本次启动的记忆库: ${err.message}`);
       log(`  [agent] FactStore 初始化失败，记忆库已降级`);
     }
+    this._summaryManager = new SessionSummaryManager(this.summariesDir, {
+      db: this._factStore?.db || null,
+    });
+
+    if (this._factStore) {
+      try {
+        this._memoryService = new MemoryService({
+          agentId: path.basename(this.agentDir),
+          agentDir: this.agentDir,
+          userDir: this.userDir,
+          factStore: this._factStore,
+          onChanged: () => {
+            this._systemPrompt = this.buildSystemPrompt();
+          },
+        });
+        this._memoryService.projectAllCompatibilityFiles();
+      } catch (err) {
+        this._memoryService = null;
+        console.error(`[agent] MemoryService 初始化失败，已禁用本次启动的记忆服务: ${err.message}`);
+      }
+    }
 
     // v1 → v2 迁移：仅当迁移标记不存在且旧 memories.db 存在时执行一次
     const oldMemoriesPath = path.join(this.agentDir, "memory", "memories.db");
     const migrationDone = path.join(this.agentDir, "memory", ".v2-migrated");
-    if (this._factStore && !fs.existsSync(migrationDone) && fs.existsSync(oldMemoriesPath)) {
+    if (this._memoryService && !fs.existsSync(migrationDone) && fs.existsSync(oldMemoriesPath)) {
       try {
         log(`  [agent] 4. v1→v2 迁移: 发现旧 memories.db，开始迁移...`);
         const Database = (await import("better-sqlite3")).default;
@@ -164,17 +186,18 @@ export class Agent {
             fact: row.content,
             tags: (() => { try { return JSON.parse(row.tags); } catch { return []; } })(),
             time: row.date ? row.date + "T00:00" : null,
-            session_id: "v1-migration",
+            session_id: "legacy-v1-migration",
+            origin: "import",
+            scope: "agent",
+            truth_time: row.date ? row.date + "T00:00" : null,
           }));
-          this._factStore.addBatch(facts);
+          this._memoryService.importBundle({ facts });
           log(`  [agent] 4. v1→v2 迁移完成: ${facts.length} 条记忆已迁入 facts.db`);
         }
         // 写迁移标记，防止重复迁移
         fs.writeFileSync(migrationDone, new Date().toISOString());
       } catch (err) {
         console.error(`[agent] v1→v2 迁移失败（不影响启动）: ${err.message}`);
-        // 迁移失败也写标记，避免每次启动重试
-        try { fs.writeFileSync(migrationDone, `failed: ${err.message}`); } catch {}
       }
     }
 
@@ -203,6 +226,7 @@ export class Agent {
         getResolvedMemoryModel: () => this._resolvedMemoryModel,
         getMemoryMasterEnabled: () => this._memoryMasterEnabled,
         isSessionMemoryEnabled: (sessionPath) => this.isSessionMemoryEnabledFor(sessionPath),
+        memoryService: this._memoryService,
         onCompiled: () => {
           this._systemPrompt = this.buildSystemPrompt();
           console.log(`[${this.agentName}] 记忆编译完成，system prompt 已刷新`);
@@ -236,9 +260,9 @@ export class Agent {
 
     // 7. 创建工具（记忆 + 通用）
     log(`  [agent] 7. 创建工具...`);
-    this._memorySearchTool = this._factStore ? createMemorySearchTool(this._factStore) : null;
-    this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir);
-    this._experienceTools = createExperienceTools(this.agentDir);
+    this._memorySearchTool = this._memoryService ? createMemorySearchTool(this._memoryService) : null;
+    this._pinnedMemoryTools = this._memoryService ? createPinnedMemoryTools(this._memoryService) : [];
+    this._experienceTools = this._memoryService ? createExperienceTools(this._memoryService) : [];
 
     // 8. Desk 系统（与 memory 完全独立）
     log(`  [agent] 8. Desk 系统...`);
@@ -369,6 +393,7 @@ export class Agent {
    */
   async dispose() {
     await this._memoryTicker?.stop();
+    this._memoryService?.close?.();
     this._factStore?.close();
   }
 
@@ -380,11 +405,14 @@ export class Agent {
     this._disposing = true;
     const ticker = this._memoryTicker;
     const factStore = this._factStore;
+    const memoryService = this._memoryService;
 
     const cleanup = () => {
       this._memoryTicker = null;
+      this._memoryService = null;
       this._factStore = null;
       this._disposing = false;
+      memoryService?.close?.();
       factStore?.close();
     };
 
@@ -401,6 +429,7 @@ export class Agent {
 
   get config() { return this._config; }
   get factStore() { return this._factStore; }
+  get memoryService() { return this._memoryService; }
   get systemPrompt() { return this._systemPrompt; }
   /** 综合记忆状态：master && session 都开启才为 true */
   get memoryEnabled() { return this._memoryMasterEnabled && this._memorySessionEnabled; }
@@ -433,7 +462,7 @@ export class Agent {
     ].filter(Boolean);
   }
   get tools() {
-    const memTools = this.memoryEnabled ? [
+    const memTools = this._memoryService ? [
       this._memorySearchTool,
       ...this._pinnedMemoryTools,
       ...this._experienceTools,
@@ -677,9 +706,9 @@ export class Agent {
     const ishiki = this.personality;
 
     // 可选文件
-    const userMd = readFile(path.join(this.userDir, "user.md"));
-    const pinnedMd = readFile(path.join(this.agentDir, "pinned.md"));
-    const memory = readFile(this.memoryMdPath);
+    const userMd = this._memoryService?.renderProfilePrompt?.() || "";
+    const pinnedMd = this._memoryService?.renderPinnedPrompt?.() || "";
+    const memory = this._memoryService?.renderMemoryPrompt?.() || "";
 
     // 构建 section 分隔格式的 prompt
     const section = (title, content) => ["", "---", "", title, "", content];
@@ -699,7 +728,7 @@ export class Agent {
       ));
     }
     // 记忆整体开关：master && session 都开启才注入记忆相关 prompt
-    if (includeMemory && this.memoryEnabled) {
+    if (includeMemory && this._memoryService && this._memorySessionEnabled) {
       const memoryRule = isZh ? [
         "",
         "## 记忆使用规则",
@@ -780,12 +809,12 @@ export class Agent {
       parts.push(isZh
         ? (
           canSetupSettings
-            ? "\n## 设置修改\n\n凡是涉及创建/删除 agent、切换每个 agent 的工具开关、设置默认工作区、设置默认模型、安装/更新 skill、配置 MCP、更新身份/意识、清空指定 agent 记忆（包括 pinned/permanent memory）等设置操作，一律优先调用 setup_settings 工具执行。所有设置只允许落在 Hanako 自己的目录与配置里（如 ~/.hanako、当前 agent 目录）；严禁写入 ~/.claude、CLAUDE_CONFIG_DIR、claudecode 或其他外部产品配置。配置 MCP 时，文档要求的 API_KEY/HOST/TOKEN 等变量必须写入 `setup_settings.mcp.env`（或教程 JSON 的 mcpServers.*.env）并保存到 Hanako 设置，不要通过修改系统环境变量来代替。仅在 setup_settings 工具明确失败时，再给手动步骤。"
+            ? "\n## 设置修改\n\n凡是涉及创建/删除 agent、切换每个 agent 的工具开关、设置默认工作区、设置默认模型、安装/更新 skill、配置 MCP、更新身份/意识、归档指定 agent 记忆（包括 pinned/permanent memory）等设置操作，一律优先调用 setup_settings 工具执行。所有设置只允许落在 Hanako 自己的目录与配置里（如 ~/.hanako、当前 agent 目录）；严禁写入 ~/.claude、CLAUDE_CONFIG_DIR、claudecode 或其他外部产品配置。配置 MCP 时，文档要求的 API_KEY/HOST/TOKEN 等变量必须写入 `setup_settings.mcp.env`（或教程 JSON 的 mcpServers.*.env）并保存到 Hanako 设置，不要通过修改系统环境变量来代替。仅在 setup_settings 工具明确失败时，再给手动步骤。"
             : "\n## 设置修改\n\n当前会话无法直接改应用设置。你不能声称已修改设置；需要明确告知用户该限制，并给出手动操作步骤。"
         )
         : (
           canSetupSettings
-            ? "\n## Settings Changes\n\nFor any settings operation (create/delete agents, per-agent tool toggles, default workspace, default model, install/update skills, configure MCP, update identity/ishiki, clear memory for a target agent including pinned/permanent memory), always call setup_settings first. All settings must stay inside Hanako-owned directories/configs (for example ~/.hanako and the current agent directory). Never write ~/.claude, CLAUDE_CONFIG_DIR, claudecode, or any external-product config. When configuring MCP, variables required by docs (API_KEY/HOST/TOKEN, etc.) must be written into `setup_settings.mcp.env` (or `mcpServers.*.env` in tutorial JSON) and persisted in Hanako settings; do not substitute this by editing system environment variables. Provide manual steps only if setup_settings explicitly fails."
+            ? "\n## Settings Changes\n\nFor any settings operation (create/delete agents, per-agent tool toggles, default workspace, default model, install/update skills, configure MCP, update identity/ishiki, archive memory for a target agent including pinned/permanent memory), always call setup_settings first. All settings must stay inside Hanako-owned directories/configs (for example ~/.hanako and the current agent directory). Never write ~/.claude, CLAUDE_CONFIG_DIR, claudecode, or any external-product config. When configuring MCP, variables required by docs (API_KEY/HOST/TOKEN, etc.) must be written into `setup_settings.mcp.env` (or `mcpServers.*.env` in tutorial JSON) and persisted in Hanako settings; do not substitute this by editing system environment variables. Provide manual steps only if setup_settings explicitly fails."
             : "\n## Settings Changes\n\nThis session cannot directly change app settings. Do not claim settings were changed; clearly explain this limit and provide manual steps."
         )
       );

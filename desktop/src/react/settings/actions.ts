@@ -56,15 +56,27 @@ export async function loadSettingsConfig() {
   try {
     const agentId = store.getSettingsAgentId();
     const agentBase = `/api/agents/${agentId}`;
-    const [configRes, identityRes, ishikiRes, userProfileRes, pinnedRes, globalModelsRes, experienceRes] =
+    const [
+      configRes,
+      identityRes,
+      ishikiRes,
+      globalModelsRes,
+      memoryStatusRes,
+      memoryProfileRes,
+      memoryMarksRes,
+      memorySummaryRes,
+      memoryPlaybooksRes,
+    ] =
       await Promise.all([
         hanaFetch(`${agentBase}/config`),
         hanaFetch(`${agentBase}/identity`),
         hanaFetch(`${agentBase}/ishiki`),
-        hanaFetch('/api/user-profile'),
-        hanaFetch(`${agentBase}/pinned`),
         hanaFetch('/api/preferences/models'),
-        hanaFetch(`${agentBase}/experience`),
+        hanaFetch(`/api/memory/status?agentId=${encodeURIComponent(agentId || '')}`),
+        hanaFetch('/api/memory/profile'),
+        hanaFetch(`/api/memory/marks?agentId=${encodeURIComponent(agentId || '')}`),
+        hanaFetch(`/api/memory/summary?agentId=${encodeURIComponent(agentId || '')}`),
+        hanaFetch(`/api/memory/playbooks?agentId=${encodeURIComponent(agentId || '')}`),
       ]);
 
     const config = await configRes.json();
@@ -73,11 +85,8 @@ export async function loadSettingsConfig() {
     config._identity = identityData.content || '';
     const ishikiData = await ishikiRes.json();
     config._ishiki = ishikiData.content || '';
-    const userProfileData = await userProfileRes.json();
-    config._userProfile = userProfileData.content || '';
-    const pinnedData = await pinnedRes.json();
-    const experienceData = await experienceRes.json();
-    config._experience = experienceData.content || '';
+    const profileData = await memoryProfileRes.json();
+    config._userProfile = profileData.content || '';
 
     // favorites：兼容旧格式（如 { id, provider }）
     const fallbackFavorites = normalizeFavoriteRefs(config.models?.favorites);
@@ -89,11 +98,19 @@ export async function loadSettingsConfig() {
       store.set({ pendingFavorites: new Set(fallbackFavorites) });
     }
 
+    const memoryStatus = await memoryStatusRes.json();
+    const memoryMarks = await memoryMarksRes.json();
+    const memorySummary = await memorySummaryRes.json();
+    const memoryPlaybooks = await memoryPlaybooksRes.json();
+
     store.set({
       settingsConfig: config,
       globalModelsConfig: globalModels,
       homeFolder: config.desk?.home_folder || null,
-      currentPins: Array.isArray(pinnedData.pins) ? pinnedData.pins.map((x: any) => String(x ?? '')).filter(Boolean) : [],
+      currentPins: Array.isArray(memoryMarks.items) ? memoryMarks.items : [],
+      memoryStatus: memoryStatus || null,
+      memorySummary: memorySummary || null,
+      playbooks: Array.isArray(memoryPlaybooks.items) ? memoryPlaybooks.items : [],
       pendingDefaultModel: normalizeModelRef(config.models?.chat),
     });
   } catch (err) {

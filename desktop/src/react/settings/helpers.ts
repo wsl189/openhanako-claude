@@ -75,6 +75,16 @@ export function t(key: string, params?: Record<string, any>): any {
   return (window as any).t?.(key, params) ?? key;
 }
 
+async function parseApiResult(res: Response) {
+  const data = await res.json();
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+function dispatchMemoryEvent(name: 'hana-memory-updated' | 'hana-memory-archived') {
+  window.dispatchEvent(new Event(name));
+}
+
 export function escapeHtml(str: string): string {
   const div = document.createElement('div');
   div.textContent = str;
@@ -170,6 +180,18 @@ export async function autoSaveConfig(
       if (k in prev && !(k in newConfig)) newConfig[k] = (prev as any)[k];
     }
     useSettingsStore.setState({ settingsConfig: newConfig });
+
+    if (partial?.memory && Object.prototype.hasOwnProperty.call(partial.memory, 'enabled')) {
+      try {
+        const statusRes = await hanaFetch(`/api/memory/status?agentId=${encodeURIComponent(agentId || '')}`);
+        const status = await statusRes.json();
+        if (!status?.error) {
+          useSettingsStore.setState({ memoryStatus: status });
+        }
+      } catch {
+        // memory status refresh is best-effort; config snapshot is already updated
+      }
+    }
     if (opts.refreshModels) platform?.settingsChanged?.('models-changed');
   } catch (err: any) {
     store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
@@ -219,25 +241,104 @@ export function autoSaveModels() {
   }, 300);
 }
 
-let _savePinsTimer: ReturnType<typeof setTimeout> | null = null;
-export function savePins() {
-  if (_savePinsTimer) clearTimeout(_savePinsTimer);
-  _savePinsTimer = setTimeout(async () => {
-    const store = useSettingsStore.getState();
-    try {
-      const agentId = store.getSettingsAgentId();
-      const res = await hanaFetch(`/api/agents/${agentId}/pinned`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pins: store.currentPins }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      store.showToast(t('settings.autoSaved'), 'success');
-    } catch (err: any) {
-      store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
-    }
-  }, 300);
+export async function addPinnedMark(text: string) {
+  const store = useSettingsStore.getState();
+  const agentId = store.getSettingsAgentId();
+  const res = await hanaFetch('/api/memory/marks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId, text }),
+  });
+  const data = await parseApiResult(res);
+  if (data.item) {
+    const others = useSettingsStore.getState().currentPins.filter((item) => item.id !== data.item.id);
+    useSettingsStore.setState({ currentPins: [data.item, ...others] });
+  }
+  dispatchMemoryEvent('hana-memory-updated');
+  return data.item;
+}
+
+export async function updatePinnedMark(id: string, patch: Record<string, any>) {
+  const store = useSettingsStore.getState();
+  const agentId = store.getSettingsAgentId();
+  const res = await hanaFetch('/api/memory/marks', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId, id, ...patch }),
+  });
+  const data = await parseApiResult(res);
+  if (data.item) {
+    const others = useSettingsStore.getState().currentPins.filter((item) => item.id !== data.item.id);
+    const nextPins = data.item.active === false ? others : [data.item, ...others];
+    useSettingsStore.setState({ currentPins: nextPins });
+  }
+  dispatchMemoryEvent(data.item?.active === false ? 'hana-memory-archived' : 'hana-memory-updated');
+  return data.item;
+}
+
+export async function archivePinnedMark(id: string) {
+  const store = useSettingsStore.getState();
+  const agentId = store.getSettingsAgentId();
+  const res = await hanaFetch('/api/memory/archive', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId, ids: [`mark:${id}`] }),
+  });
+  await parseApiResult(res);
+  useSettingsStore.setState({
+    currentPins: useSettingsStore.getState().currentPins.filter((item) => item.id !== id),
+  });
+  dispatchMemoryEvent('hana-memory-archived');
+}
+
+export async function addMemoryPlaybook(playbook: Record<string, any>) {
+  const store = useSettingsStore.getState();
+  const agentId = store.getSettingsAgentId();
+  const res = await hanaFetch('/api/memory/playbooks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId, ...playbook }),
+  });
+  const data = await parseApiResult(res);
+  if (data.item) {
+    const others = useSettingsStore.getState().playbooks.filter((item) => item.id !== data.item.id);
+    useSettingsStore.setState({ playbooks: [data.item, ...others] });
+  }
+  dispatchMemoryEvent('hana-memory-updated');
+  return data.item;
+}
+
+export async function updateMemoryPlaybook(id: string, patch: Record<string, any>) {
+  const store = useSettingsStore.getState();
+  const agentId = store.getSettingsAgentId();
+  const res = await hanaFetch('/api/memory/playbooks', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId, id, ...patch }),
+  });
+  const data = await parseApiResult(res);
+  if (data.item) {
+    const others = useSettingsStore.getState().playbooks.filter((item) => item.id !== data.item.id);
+    const nextPlaybooks = data.item.active === false ? others : [data.item, ...others];
+    useSettingsStore.setState({ playbooks: nextPlaybooks });
+  }
+  dispatchMemoryEvent(data.item?.active === false ? 'hana-memory-archived' : 'hana-memory-updated');
+  return data.item;
+}
+
+export async function archiveMemoryPlaybook(id: string) {
+  const store = useSettingsStore.getState();
+  const agentId = store.getSettingsAgentId();
+  const res = await hanaFetch('/api/memory/archive', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId, ids: [`playbook:${id}`] }),
+  });
+  await parseApiResult(res);
+  useSettingsStore.setState({
+    playbooks: useSettingsStore.getState().playbooks.filter((item) => item.id !== id),
+  });
+  dispatchMemoryEvent('hana-memory-archived');
 }
 
 export const PROVIDER_PRESETS = [

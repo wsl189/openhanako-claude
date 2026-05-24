@@ -8101,6 +8101,24 @@ body.resizing .jian-sidebar-inner {
     margin-bottom: 0;
 }
 
+.memory-runtime-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+}
+
+.memory-runtime-header .settings-subsection-title {
+    margin-bottom: 0;
+    line-height: 1.2;
+}
+
+.memory-runtime-status {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.2;
+}
+
 .settings-icon-btn {
     background: none;
     border: none;
@@ -12263,15 +12281,10 @@ a.about-link:hover {
     flex: 1;
     font-size: 0.85rem;
     color: var(--text);
-    cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-}
-
-.pin-item-text:hover {
-    color: var(--accent);
 }
 
 .pin-item-actions {
@@ -12310,6 +12323,15 @@ a.about-link:hover {
 .pin-edit-input {
     flex: 1;
     min-width: 0;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    color: var(--text) !important;
+    font-size: 0.85rem !important;
 }
 
 /* 添加 Pin 行 */
@@ -12770,7 +12792,7 @@ a.about-link:hover {
     display: none;
     position: fixed;
     inset: 0;
-    z-index: 100;
+    z-index: 1200;
     background: rgba(0, 0, 0, 0.3);
     backdrop-filter: blur(4px);
     align-items: center;
@@ -12790,6 +12812,7 @@ a.about-link:hover {
     display: flex;
     flex-direction: column;
     box-shadow: 0 8px 32px var(--shadow);
+    -webkit-app-region: no-drag;
 }
 
 .memory-viewer-header {
@@ -12818,6 +12841,10 @@ a.about-link:hover {
     cursor: pointer;
     border-radius: var(--radius-sm);
     transition: all 0.15s;
+    pointer-events: auto;
+    -webkit-app-region: no-drag;
+    position: relative;
+    z-index: 4;
 }
 
 .memory-viewer-close:hover {
@@ -12830,34 +12857,260 @@ a.about-link:hover {
     padding: var(--space-md);
 }
 
+.memory-library-viewer {
+    width: min(1100px, calc(100vw - 48px));
+    max-width: none;
+    max-height: min(92vh, 760px);
+    overflow: hidden;
+    --memory-library-row-height: 56px;
+    --memory-library-row-gap: 8px;
+}
+
+.memory-layer-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: var(--space-xs);
+    padding: 0 var(--space-md) var(--space-sm);
+    scrollbar-width: none;
+}
+
+.memory-layer-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.memory-layer-tabs .memory-action-btn {
+    flex: 1 1 0;
+    min-width: 96px;
+    padding: 0.26rem 0.5rem;
+    font-size: 0.8rem;
+    line-height: 1.1;
+    white-space: nowrap;
+}
+
+.memory-layer-tabs .memory-action-btn.is-active {
+    border-color: #4da3ff;
+    color: #d8ebff;
+    background: rgba(77, 163, 255, 0.14);
+    box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.24) inset;
+}
+
+.memory-library-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--space-md);
+    overflow: hidden;
+    padding-top: 0;
+}
+
+.memory-library-body.single-col {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.memory-library-col {
+    min-width: 0;
+}
+
+.memory-library-list {
+    display: grid;
+    gap: var(--memory-library-row-gap);
+    align-content: start;
+    height: calc((var(--memory-library-row-height) * 8) + (var(--memory-library-row-gap) * 7));
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+}
+
+.memory-library-item {
+    width: 100%;
+    height: var(--memory-library-row-height);
+    border-radius: 8px;
+    border: 1px solid var(--hana-border, rgba(255,255,255,0.12));
+    background: var(--hana-panel, rgba(255,255,255,0.04));
+    color: inherit;
+    transition: border-color 0.2s var(--ease-out), background 0.2s var(--ease-out);
+    outline: none;
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+}
+
+.memory-library-item:hover {
+    border-color: var(--overlay-medium);
+}
+
+.memory-library-item.selected {
+    border-color: #4da3ff;
+}
+
+.memory-library-item-main {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.memory-library-item-main:focus {
+    outline: none;
+}
+
+.memory-library-item-restore {
+    flex: 0 0 auto;
+    min-width: 56px;
+    padding: 0 10px;
+    border: none;
+    border-left: 1px solid var(--overlay-light);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.78rem;
+    transition: color 0.2s var(--ease-out), background 0.2s var(--ease-out);
+}
+
+.memory-library-item-restore:hover {
+    color: var(--text);
+    background: var(--overlay-subtle);
+}
+
+.memory-library-item-preview {
+    font-size: 12.5px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.memory-library-item-meta {
+    margin-top: 4px;
+    font-size: 11.5px;
+    opacity: 0.65;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.memory-library-detail {
+    height: calc((var(--memory-library-row-height) * 8) + (var(--memory-library-row-gap) * 7));
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+}
+
+.memory-detail-content {
+    display: grid;
+    gap: 12px;
+}
+
+.memory-detail-meta {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.memory-detail-pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    line-height: 1.6;
+}
+
+.memory-detail-pre.subtle {
+    opacity: 0.8;
+}
+
+.memory-detail-subtitle {
+    font-size: 12px;
+    opacity: 0.7;
+    margin-bottom: 6px;
+}
+
+.memory-layer-fade {
+    animation: memory-layer-switch 0.34s ease both;
+}
+
+@keyframes memory-layer-switch {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 980px) {
+    .memory-library-body {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .memory-library-detail {
+        height: auto;
+        max-height: 280px;
+    }
+}
+
+.memory-library-empty {
+    height: calc((var(--memory-library-row-height) * 8) + (var(--memory-library-row-gap) * 7));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.memory-detail-modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.44);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+}
+
+.memory-detail-modal {
+    width: min(720px, calc(100% - 48px));
+    max-height: calc(100% - 72px);
+    background: var(--bg-card, var(--bg));
+    border: 1px solid var(--overlay-light);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 14px 40px var(--shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.memory-detail-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--overlay-light);
+}
+
+.memory-detail-modal-title {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.memory-detail-modal-body {
+    padding: 12px;
+    overflow-y: auto;
+}
+
 .memory-viewer-empty {
     text-align: center;
     color: var(--text-muted);
     font-size: 0.85rem;
     padding: var(--space-xl) 0;
-}
-
-/* 当下记忆（compiled memory.md） */
-.memory-viewer-header-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-}
-
-.compiled-clear-btn {
-    font-size: 0.72rem;
-    color: var(--danger, #c44);
-    background: none;
-    border: 1px solid var(--overlay-light);
-    border-radius: var(--radius-sm);
-    padding: 2px 8px;
-    cursor: pointer;
-    opacity: 0.7;
-    transition: opacity 0.15s;
-}
-
-.compiled-clear-btn:hover {
-    opacity: 1;
 }
 
 .compiled-memory-body {

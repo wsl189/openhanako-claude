@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch, hanaUrl, yuanFallbackAvatar } from '../api';
-import { t, autoSaveConfig, savePins, normalizeModelRef, resolveProviderForModel } from '../helpers';
+import {
+  t,
+  autoSaveConfig,
+  addPinnedMark,
+  updatePinnedMark,
+  archivePinnedMark,
+  normalizeModelRef,
+  resolveProviderForModel,
+} from '../helpers';
 import { SelectWidget } from '../widgets/SelectWidget';
 import { browseAgent, loadSettingsConfig, loadAgents } from '../actions';
 import { formatSessionDate } from '../../utils/format';
@@ -157,7 +165,6 @@ function normalizeBuiltinName(name: string): string {
   return BUILTIN_CLAUDE_DISPLAY_NAMES[raw] || raw;
 }
 
-interface ExpCategory { name: string; entries: string[]; }
 interface ArchivedSession {
   path: string;
   title: string | null;
@@ -166,29 +173,6 @@ interface ArchivedSession {
   messageCount: number;
   cwd: string | null;
   agentId: string;
-}
-function parseExperience(raw: string): ExpCategory[] {
-  if (!raw?.trim()) return [];
-  const cats: ExpCategory[] = [];
-  let cur: ExpCategory | null = null;
-  for (const line of raw.split('\n')) {
-    const m = line.match(/^#\s+(.+)/);
-    if (m) {
-      cur = { name: m[1].trim(), entries: [] };
-      cats.push(cur);
-    } else if (cur) {
-      const entry = line.replace(/^\d+\.\s*/, '').trim();
-      if (entry) cur.entries.push(entry);
-    }
-  }
-  return cats;
-}
-
-function serializeExperience(cats: ExpCategory[]): string {
-  return cats
-    .filter(c => c.entries.length > 0)
-    .map(c => `# ${c.name}\n${c.entries.map((e, i) => `${i + 1}. ${e}`).join('\n')}`)
-    .join('\n\n') + (cats.length ? '\n' : '');
 }
 
 function truncateAgentCardName(name: string, maxUnits = AGENT_CARD_NAME_MAX_UNITS): string {
@@ -214,7 +198,7 @@ export function AgentTab() {
   const {
     agents, currentAgentId, settingsConfig, currentPins,
     pendingFavorites, pendingDefaultModel, showToast,
-    globalModelsConfig,
+    globalModelsConfig, memoryStatus, memorySummary,
   } = store;
 
   // 记忆系统需要 utility 模型才能工作
@@ -231,7 +215,6 @@ export function AgentTab() {
   const [builtinExpanded, setBuiltinExpanded] = useState(false);
   const [externalMcpExpanded, setExternalMcpExpanded] = useState(false);
   const [pinInput, setPinInput] = useState('');
-  const [expCategories, setExpCategories] = useState<ExpCategory[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [archivedBusyPath, setArchivedBusyPath] = useState<string | null>(null);
@@ -281,7 +264,6 @@ export function AgentTab() {
         ? settingsConfig.tools.custom_enabled.map(String)
         : [...toolCatalog.custom];
       setCustomEnabled(cfgCustom.filter((n: string) => toolCatalog.custom.includes(n)));
-      setExpCategories(parseExperience(settingsConfig._experience || ''));
       setHbIntervalInput(String(settingsConfig.desk?.heartbeat_interval ?? 17));
     }
   }, [settingsConfig]);
@@ -353,13 +335,19 @@ export function AgentTab() {
     modelOptions.unshift({ value: currentModel, label: currentModel });
   }
 
-  const addPin = () => {
+  const memoryEnabled = settingsConfig?.memory?.enabled !== false;
+  const needsUtilityModel = memoryStatus?.needsUtilityModel ?? !hasUtilityModel;
+
+  const addPin = async () => {
     const val = pinInput.trim();
     if (!val) return;
-    const newPins = [...currentPins, val];
-    useSettingsStore.setState({ currentPins: newPins });
-    setPinInput('');
-    savePins();
+    try {
+      await addPinnedMark(val);
+      setPinInput('');
+      showToast(t('settings.autoSaved'), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+    }
   };
 
   const pickAgentWorkspace = async () => {
@@ -439,11 +427,24 @@ export function AgentTab() {
     }, { silent: true });
   };
 
-  const deletePin = (index: number) => {
-    const newPins = [...currentPins];
-    newPins.splice(index, 1);
-    useSettingsStore.setState({ currentPins: newPins });
-    savePins();
+  const savePin = async (id: string, patch: { text: string }) => {
+    try {
+      await updatePinnedMark(id, patch);
+      showToast(t('settings.autoSaved'), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+      throw err;
+    }
+  };
+
+  const deletePin = async (id: string) => {
+    try {
+      await archivePinnedMark(id);
+      showToast(t('settings.autoSaved'), 'success');
+    } catch (err: any) {
+      showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+      throw err;
+    }
   };
 
   const saveAgent = async () => {
@@ -957,38 +958,35 @@ export function AgentTab() {
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.memory.sectionTitle')}</h2>
 
-        {/* 记忆开关 */}
         <div className="settings-subsection">
           <div className="settings-section-header">
-            <h3 className="settings-subsection-title">{t('settings.memory.title')}</h3>
+            <div className="memory-runtime-header">
+              <h3 className="settings-subsection-title">{t('settings.memory.title')}</h3>
+              <span className="memory-runtime-status">
+                {memoryEnabled
+                  ? t('settings.memory.runtimeEnabledHint')
+                  : t('settings.memory.runtimeDisabledHint')}
+              </span>
+            </div>
             <button
-              className={`hana-toggle${hasUtilityModel && settingsConfig?.memory?.enabled !== false ? ' on' : ''}${!hasUtilityModel ? ' disabled' : ''}`}
-              onClick={() => hasUtilityModel && autoSaveConfig({ memory: { enabled: settingsConfig?.memory?.enabled === false } })}
-              disabled={!hasUtilityModel}
-              title={!hasUtilityModel ? t('settings.memory.needsUtilityModel') : undefined}
+              className={`hana-toggle${memoryEnabled ? ' on' : ''}`}
+              onClick={() => autoSaveConfig({ memory: { enabled: !memoryEnabled } })}
             />
           </div>
-          {!hasUtilityModel && (
+          {needsUtilityModel && (
             <p className="settings-hint" style={{ opacity: 0.6, marginTop: 4 }}>{t('settings.memory.needsUtilityModel')}</p>
           )}
         </div>
 
-        <div className={!hasUtilityModel || settingsConfig?.memory?.enabled === false ? 'settings-disabled' : ''}>
-
-        {/* 置顶记忆 */}
         <div className="settings-subsection">
           <div className="settings-subsection-header">
             <h3 className="settings-subsection-title">{t('settings.pins.title')}</h3>
             <span className="settings-subsection-hint">{t('settings.pins.hint')}</span>
           </div>
           <div className="pin-list">
-            {currentPins.length === 0 ? (
-              <div className="pin-empty">{t('settings.pins.empty')}</div>
-            ) : (
-              currentPins.map((pin, i) => (
-                <PinItem key={pin} text={pin} index={i} onDelete={deletePin} />
-              ))
-            )}
+            {currentPins.map((pin, index) => (
+              <PinItem key={pin.id} index={index + 1} pin={pin} onSave={savePin} onDelete={deletePin} />
+            ))}
           </div>
           <div className="pin-add-row">
             <input
@@ -996,14 +994,13 @@ export function AgentTab() {
               type="text"
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPin(); } }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addPin(); } }}
               placeholder={t('settings.pins.addPlaceholder')}
             />
-            <button className="pin-add-btn" onClick={addPin}>+</button>
+            <button className="pin-add-btn" onClick={() => { void addPin(); }}>+</button>
           </div>
         </div>
 
-        {/* 当下记忆 */}
         <div className="settings-subsection">
           <div className="settings-subsection-header">
             <h3 className="settings-subsection-title">{t('settings.memory.compiled')}</h3>
@@ -1017,9 +1014,11 @@ export function AgentTab() {
           </button>
         </div>
 
-        {/* 所有记忆 */}
         <div className="settings-subsection">
-          <h3 className="settings-subsection-title">{t('settings.memory.allMemories')}</h3>
+          <div className="settings-subsection-header">
+            <h3 className="settings-subsection-title">{t('settings.memory.library')}</h3>
+            <span className="settings-subsection-hint">{t('settings.memory.libraryHint')}</span>
+          </div>
           <div className="memory-actions-row memory-actions-spaced">
             <button
               className="memory-action-btn"
@@ -1036,36 +1035,6 @@ export function AgentTab() {
             <MemoryMoreDropdown isViewingOther={isViewingOther} />
           </div>
         </div>
-
-        </div>{/* settings-disabled wrapper */}
-      </section>
-
-      {/* 经验 */}
-      <section className="settings-section">
-        <h2 className="settings-section-title">{t('settings.experience.title')}</h2>
-        <p className="settings-hint">{t('settings.experience.hint')}</p>
-        {expCategories.length === 0 ? (
-          <div className="exp-empty">{t('settings.experience.empty')}</div>
-        ) : (
-          <div className="exp-list">
-            {expCategories.map((cat) => (
-              <ExperienceBlock
-                key={cat.name}
-                category={cat}
-                onSave={(updated) => {
-                  const next = expCategories.map(c => c.name === cat.name ? updated : c);
-                  setExpCategories(next);
-                  putExperience(store, next);
-                }}
-                onDelete={() => {
-                  const next = expCategories.filter(c => c.name !== cat.name);
-                  setExpCategories(next);
-                  putExperience(store, next);
-                }}
-              />
-            ))}
-          </div>
-        )}
       </section>
 
       <section className="settings-section">
@@ -1125,129 +1094,35 @@ export function AgentTab() {
   );
 }
 
-// ── Experience ──
-
-async function putExperience(store: any, cats: ExpCategory[]) {
-  try {
-    const agentId = store.getSettingsAgentId();
-    const content = serializeExperience(cats);
-    const res = await hanaFetch(`/api/agents/${agentId}/experience`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-  } catch (err: any) {
-    store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
-  }
-}
-
-function ExperienceBlock({ category, onSave, onDelete }: {
-  category: ExpCategory;
-  onSave: (updated: ExpCategory) => void;
-  onDelete: () => void;
+function PinItem({
+  index,
+  pin,
+  onSave,
+  onDelete,
+}: {
+  index: number;
+  pin: { id: string; text: string };
+  onSave: (id: string, patch: { text: string }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [editVal, setEditVal] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const startEdit = () => {
-    setEditVal(category.entries.map((e, i) => `${i + 1}. ${e}`).join('\n'));
-    setEditing(true);
-  };
-
-  useEffect(() => {
-    if (editing && textareaRef.current) {
-      textareaRef.current.focus();
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
-    }
-  }, [editing]);
-
-  const saveEdit = () => {
-    const entries = editVal
-      .split('\n')
-      .map(l => l.replace(/^\d+\.\s*/, '').trim())
-      .filter(Boolean);
-    onSave({ name: category.name, entries });
-    setEditing(false);
-  };
-
-  return (
-    <div className="exp-block">
-      <div className="exp-block-header">
-        <span className="exp-block-title">{category.name}</span>
-        <div className="exp-block-actions">
-          <button
-            className="exp-block-action"
-            title={t('settings.experience.edit')}
-            onClick={startEdit}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-            </svg>
-          </button>
-          <button
-            className="exp-block-action delete"
-            title={t('settings.experience.deleteCategory')}
-            onClick={onDelete}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      {editing ? (
-        <textarea
-          ref={textareaRef}
-          className="exp-block-editor"
-          value={editVal}
-          onChange={(e) => setEditVal(e.target.value)}
-          onBlur={saveEdit}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') { setEditing(false); }
-          }}
-          spellCheck={false}
-        />
-      ) : (
-        <div className="exp-block-body">
-          {category.entries.map((entry, i) => (
-            <div key={i} className="exp-entry">
-              <span className="exp-entry-num">{i + 1}.</span>
-              <span className="exp-entry-text">{entry}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Sub-components ──
-
-function PinItem({ text, index, onDelete }: { text: string; index: number; onDelete: (i: number) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [editVal, setEditVal] = useState(text);
+  const [editVal, setEditVal] = useState(pin.text);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
 
-  const save = () => {
+  useEffect(() => {
+    setEditVal(pin.text);
+  }, [pin.text]);
+
+  const save = async () => {
     const val = editVal.trim();
-    const pins = [...useSettingsStore.getState().currentPins];
-    if (val && val !== text) {
-      pins[index] = val;
-      useSettingsStore.setState({ currentPins: pins });
-      savePins();
+    if (val && val !== pin.text) {
+      await onSave(pin.id, { text: val });
     } else if (!val) {
-      pins.splice(index, 1);
-      useSettingsStore.setState({ currentPins: pins });
-      savePins();
+      await onDelete(pin.id);
     }
     setEditing(false);
   };
@@ -1260,19 +1135,32 @@ function PinItem({ text, index, onDelete }: { text: string; index: number; onDel
           className="settings-input pin-edit-input"
           value={editVal}
           onChange={(e) => setEditVal(e.target.value)}
-          onBlur={save}
+          onBlur={() => { void save(); }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') { e.preventDefault(); inputRef.current?.blur(); }
             if (e.key === 'Escape') setEditing(false);
           }}
         />
       ) : (
-        <span className="pin-item-text" title={text} onClick={() => { setEditVal(text); setEditing(true); }}>
-          {text}
+        <span className="pin-item-text" title={pin.text}>
+          {`${index}、${pin.text}`}
         </span>
       )}
       <div className="pin-item-actions">
-        <button className="pin-item-action delete" title={t('settings.pins.delete')} onClick={() => onDelete(index)}>
+        <button
+          className="pin-item-action"
+          title={t('settings.pins.edit')}
+          onClick={() => {
+            setEditVal(pin.text);
+            setEditing(true);
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+          </svg>
+        </button>
+        <button className="pin-item-action delete" title={t('settings.pins.delete')} onClick={() => { void onDelete(pin.id); }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -1532,7 +1420,7 @@ function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
     setOpen(false);
     try {
       const aid = store.getSettingsAgentId();
-      const res = await hanaFetch(`/api/memories/export?agentId=${aid}`);
+      const res = await hanaFetch(`/api/memory/export?agentId=${aid}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1561,22 +1449,27 @@ function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
       try {
         const text = await file.text();
         const json = JSON.parse(text);
-        const entries = json.facts || json.memories;
-        if (!Array.isArray(entries) || entries.length === 0) {
+        if (!json || typeof json !== 'object') {
           store.showToast(t('settings.memory.actions.invalidFile'), 'error');
           return;
         }
         store.showToast(t('settings.memory.actions.importing'), 'success');
         const aid = store.getSettingsAgentId();
-        const res = await hanaFetch(`/api/memories/import?agentId=${aid}`, {
+        const res = await hanaFetch(`/api/memory/import?agentId=${aid}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ facts: entries }),
+          body: JSON.stringify(json),
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        const msg = t('settings.memory.actions.importSuccess').replace('{count}', data.imported);
+        const importedCount = Number(data.importedFacts || 0)
+          + Number(data.importedEvidence || 0)
+          + Number(data.importedEpisodes || 0)
+          + Number(data.importedPlaybooks || 0);
+        const msg = t('settings.memory.actions.importSuccess').replace('{count}', String(importedCount));
         store.showToast(msg, 'success');
+        await loadSettingsConfig();
+        window.dispatchEvent(new Event('hana-memory-updated'));
       } catch (err: any) {
         store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
       }

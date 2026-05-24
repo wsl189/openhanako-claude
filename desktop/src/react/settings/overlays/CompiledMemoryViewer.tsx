@@ -1,16 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
 import { renderMarkdown } from '../../utils/markdown';
+import { formatSessionDate } from '../../utils/format';
 
 export function CompiledMemoryViewer() {
   const [visible, setVisible] = useState(false);
-  const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const memorySummary = useSettingsStore((state) => state.memorySummary);
+
   useEffect(() => {
-    const handler = () => { setVisible(true); load(); };
+    const handler = () => {
+      setVisible(true);
+      void load();
+    };
     window.addEventListener('hana-view-compiled-memory', handler);
     return () => window.removeEventListener('hana-view-compiled-memory', handler);
   }, []);
@@ -19,24 +24,14 @@ export function CompiledMemoryViewer() {
     setLoading(true);
     try {
       const aid = useSettingsStore.getState().getSettingsAgentId();
-      const res = await hanaFetch(`/api/memories/compiled?agentId=${aid}`);
+      const res = await hanaFetch(`/api/memory/summary?agentId=${encodeURIComponent(aid || '')}`);
       const data = await res.json();
-      setContent(data.content || '');
+      if (data.error) throw new Error(data.error);
+      useSettingsStore.setState({ memorySummary: data });
     } catch (err: any) {
-      setContent(`Error: ${err.message}`);
+      useSettingsStore.getState().showToast(err.message || String(err), 'error');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const clearCompiled = async () => {
-    try {
-      const aid = useSettingsStore.getState().getSettingsAgentId();
-      await hanaFetch(`/api/memories/compiled?agentId=${aid}`, { method: 'DELETE' });
-      setContent('');
-      useSettingsStore.getState().showToast(t('settings.memory.compiledCleared'), 'success');
-    } catch (err: any) {
-      useSettingsStore.getState().showToast(err.message, 'error');
     }
   };
 
@@ -49,18 +44,20 @@ export function CompiledMemoryViewer() {
       <div className="memory-viewer">
         <div className="memory-viewer-header">
           <h3 className="memory-viewer-title">{t('settings.memory.compiled')}</h3>
-          <div className="memory-viewer-header-actions">
-            <button className="compiled-clear-btn" onClick={clearCompiled}>
-              {t('settings.memory.compiledClear')}
-            </button>
-            <button className="memory-viewer-close" onClick={close}>✕</button>
-          </div>
+          <button className="memory-viewer-close" onClick={close}>✕</button>
         </div>
         <div className="memory-viewer-body compiled-memory-body">
           {loading ? (
-            <div className="memory-viewer-empty">Loading...</div>
-          ) : content.trim() ? (
-            <div className="compiled-memory-md md-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
+            <div className="memory-viewer-empty">{t('settings.archivedSessions.loading')}</div>
+          ) : memorySummary?.content?.trim() ? (
+            <div style={{ display: 'grid', gap: 12 }}>
+              <div className="settings-hint">
+                {memorySummary.generatedAt
+                  ? t('settings.memory.summaryGeneratedAt').replace('{time}', formatSessionDate(memorySummary.generatedAt))
+                  : t('settings.memory.compiledHint')}
+              </div>
+              <div className="compiled-memory-md md-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(memorySummary.content) }} />
+            </div>
           ) : (
             <div className="memory-viewer-empty">{t('settings.memory.compiledEmpty')}</div>
           )}

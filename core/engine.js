@@ -318,6 +318,7 @@ export class HanaEngine {
 
   get config() { return this.agent.config; }
   get factStore() { return this.agent.factStore; }
+  get memoryService() { return this.agent.memoryService; }
   get currentModel() { return this._sessionCoord.session?.model ?? this._models.currentModel; }
   get availableModels() { return this._models.availableModels; }
   get memoryEnabled() { return this.agent.memoryEnabled; }
@@ -774,9 +775,7 @@ export class HanaEngine {
       summaryManager: this.agent.summaryManager,
       resolvedModel,
       agentPersonality: this.agent.personality,
-      memory: (() => {
-        try { return fs.readFileSync(this.agent.memoryMdPath, "utf-8"); } catch { return ""; }
-      })(),
+      memory: this.agent.memoryService?.renderMemoryPrompt?.() || "",
       userName: this.agent.userName,
       agentName: this.agent.agentName,
       cwd: this.homeCwd || process.cwd(),

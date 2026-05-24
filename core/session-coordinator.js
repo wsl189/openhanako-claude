@@ -153,6 +153,37 @@ function extractAssistantTextFromSdkMessage(message) {
     .join("");
 }
 
+function contentBlocksToEvidenceText(content) {
+  const blocks = normalizeContentBlocks(content);
+  const text = blocks
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n\n")
+    .trim();
+  if (text) return text;
+  try {
+    return blocks.length > 0 ? JSON.stringify(blocks, null, 2) : "";
+  } catch {
+    return "";
+  }
+}
+
+function buildToolEvidenceText(event = {}) {
+  const header = [
+    `tool: ${String(event?.name || "").trim() || "(unknown)"}`,
+    `success: ${resolveToolEndSuccess(event) ? "true" : "false"}`,
+  ].join("\n");
+  const body = contentBlocksToEvidenceText(event.content);
+  const details = event.details && typeof event.details === "object"
+    ? JSON.stringify(event.details, null, 2)
+    : "";
+  return [header, body, details]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
 function mergeStreamTextChunk(acc, rawDelta) {
   const base = typeof acc === "string" ? acc : "";
   const delta = typeof rawDelta === "string" ? rawDelta : "";
@@ -645,6 +676,37 @@ export class SessionCoordinator {
   _refreshSessionPrompt(agent) {
     if (!agent) return;
     agent.refreshSystemPrompt?.();
+  }
+
+  _recordMemoryEvidence(agentId, sessionPath, payload = {}) {
+    const agent = this._d.getAgentById(agentId) || this._d.getAgent();
+    const memoryService = agent?.memoryService || null;
+    if (!memoryService || !sessionPath) return null;
+
+    const metadata = readSessionMetadata(sessionPath);
+    if (!metadata || metadata.memoryEnabled === false) return null;
+
+    const sessionId = String(metadata.sessionId || "").trim();
+    const content = String(payload.content || "").trim();
+    if (!sessionId || !content) return null;
+
+    try {
+      return memoryService.recordEvidence({
+        origin: String(payload.origin || "").trim() || "session",
+        scope: "agent",
+        sourceType: String(payload.sourceType || "").trim() || "session_message",
+        sourceId: String(payload.sourceId || "").trim() || null,
+        sessionId,
+        content,
+        sourceRefs: Array.isArray(payload.sourceRefs) ? payload.sourceRefs : [],
+      });
+    } catch (error) {
+      log.warn(
+        `[memory-evidence] session=${path.basename(sessionPath || "")} `
+        + `source=${String(payload.sourceType || "")} failed: ${error?.message || error}`,
+      );
+      return null;
+    }
   }
 
   _buildSessionEnv(models, agentConfig, modelRef) {
@@ -1182,6 +1244,19 @@ export class SessionCoordinator {
       || []
     ).map((tool) => tool?.name).filter(Boolean);
     const unsub = session.subscribe((event) => {
+      if (event?.type === "assistant") {
+        const assistantText = sanitizeAssistantVisibleText(
+          extractAssistantTextFromSdkMessage(event),
+        ).trim();
+        if (assistantText) {
+          this._recordMemoryEvidence(agentId, sessionPath, {
+            origin: "session",
+            sourceType: "assistant_message",
+            sourceId: String(event.message?.id || event.uuid || `assistant:${Date.now()}`).trim(),
+            content: assistantText,
+          });
+        }
+      }
       if (event?.type === "sdk_init") {
         const mcpServers = Array.isArray(event.mcpServers) ? event.mcpServers : [];
         const mcpStatuses = mcpServers.map((item) => ({
@@ -1237,6 +1312,21 @@ export class SessionCoordinator {
         suppressAssistantSdkMessage: session.options?.includePartialMessages === true,
       };
       for (const translatedEvent of this._translateClaudeEvent(event, sessionPath, customToolNames, translateOpts)) {
+        if (translatedEvent?.type === "tool_end") {
+          const toolEvidence = buildToolEvidenceText(translatedEvent);
+          if (toolEvidence) {
+            this._recordMemoryEvidence(agentId, sessionPath, {
+              origin: "tool",
+              sourceType: "tool_result",
+              sourceId: String(
+                translatedEvent.toolCallId
+                || translatedEvent.name
+                || `tool:${Date.now()}:${randomUUID()}`
+              ).trim(),
+              content: toolEvidence,
+            });
+          }
+        }
         if (translatedEvent?.type === "tool_end" && isTodoWriteToolName(translatedEvent?.name || "")) {
           const streamState = this._streamState.get(sessionPath);
           if (streamState && !streamState.turnTodoNudgeSent) {
@@ -1482,6 +1572,12 @@ export class SessionCoordinator {
     if (sessionPath === this.currentSessionPath) this._sessionStarted = true;
     const promptAgent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
     this._refreshSessionPrompt(promptAgent);
+    this._recordMemoryEvidence(entry.agentId, sessionPath, {
+      origin: "session",
+      sourceType: "user_message",
+      sourceId: `user:${Date.now()}:${randomUUID()}`,
+      content: String(text || ""),
+    });
     const promptOpts = opts?.images?.length ? { images: opts.images } : undefined;
     await entry.session.prompt(text, promptOpts);
     const streamState = this._streamState.get(sessionPath);

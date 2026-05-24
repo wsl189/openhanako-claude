@@ -124,6 +124,7 @@ function removeFinderMetadata(rootDir, stats) {
 }
 
 function isOlderThan(dirPath, now, minAgeMs, stats) {
+  if (minAgeMs <= 0) return true;
   try {
     const st = fs.statSync(dirPath);
     return now - st.mtimeMs >= minAgeMs;

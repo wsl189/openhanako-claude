@@ -402,8 +402,7 @@ function resolveClaudeCodeCliPath(env = {}) {
       || "",
   ).trim();
   if (explicitPath) {
-    const resolvedExplicitPath = path.resolve(explicitPath);
-    if (fs.existsSync(resolvedExplicitPath)) return resolvedExplicitPath;
+    return path.resolve(explicitPath);
   }
 
   const bundledExecutable = resolveBundledClaudeCodeExecutable(env);

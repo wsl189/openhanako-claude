@@ -402,8 +402,8 @@ function summarizeSetupSettingsDetail(args: Record<string, unknown>): string {
     if (!action || action === 'clear') {
       const target = asText(memory.agent_id);
       sections.push(isZh
-        ? `清空记忆${target ? `（${target}）` : ''}`
-        : `clear memory${target ? ` (${target})` : ''}`);
+        ? `归档记忆${target ? `（${target}）` : ''}`
+        : `archive memory${target ? ` (${target})` : ''}`);
     }
   }
 

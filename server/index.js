@@ -42,6 +42,7 @@ import authRoute from "./routes/auth.js";
 import diaryRoute from "./routes/diary.js";
 import confirmRoute from "./routes/confirm.js";
 import voiceRoute from "./routes/voice.js";
+import memoryRoute from "./routes/memory.js";
 import { ConfirmStore } from "../lib/confirm-store.js";
 import { BridgeManager } from "../lib/bridge/bridge-manager.js";
 import { Hub } from "../hub/index.js";
@@ -203,6 +204,7 @@ app.register(authRoute, { engine });
 app.register(diaryRoute, { engine, hub });
 app.register(confirmRoute, { confirmStore, engine });
 app.register(voiceRoute, { engine });
+app.register(memoryRoute, { engine });
 
 // 健康检查 + 身份信息
 app.get("/api/health", async () => {

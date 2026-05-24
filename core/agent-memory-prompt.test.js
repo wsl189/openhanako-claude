@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("Agent memory prompt", () => {
-  it("warns that time-sensitive memories must not be treated as current facts", () => {
+  it("renders DB memory projection and ignores direct compatibility file edits", () => {
     const root = mktemp("agent-memory-prompt-");
     const agentDir = path.join(root, "agents", "hana");
     const productDir = path.join(root, "product");
@@ -39,6 +39,9 @@ describe("Agent memory prompt", () => {
     agent._config = { locale: "zh", agent: { name: "Hanako" }, memory: { enabled: true } };
     agent.userName = "用户";
     agent.agentName = "Hanako";
+    agent._memoryService = {
+      renderMemoryPrompt: () => "## 重要事实\n\n- [2026-04-01 10:00] (stateful) 用户持有徐工机械\n",
+    };
 
     const prompt = agent.buildSystemAppendPrompt({
       includeUserProfile: false,
@@ -52,5 +55,21 @@ describe("Agent memory prompt", () => {
     expect(prompt).toContain("股票/基金/仓位/账户余额");
     expect(prompt).toContain("不要把它直接当成现在事实");
     expect(prompt).toContain("用户持有徐工机械");
+
+    fs.writeFileSync(
+      path.join(agentDir, "memory", "memory.md"),
+      "## 重要事实\n\n- [2026-04-02 09:00] (stateful) 用户已经清仓\n",
+    );
+
+    const nextPrompt = agent.buildSystemAppendPrompt({
+      includeUserProfile: false,
+      includeSettings: false,
+      includeToolAvailability: false,
+      includeWorkspace: false,
+      includeDateTime: false,
+    });
+
+    expect(nextPrompt).toContain("用户持有徐工机械");
+    expect(nextPrompt).not.toContain("用户已经清仓");
   });
 });

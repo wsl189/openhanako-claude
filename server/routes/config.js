@@ -11,7 +11,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { t } from "../i18n.js";
 import { debugLog } from "../../lib/debug-log.js";
 import { getRawConfig, getAllProviders, saveGlobalProviders, saveConfig, clearConfigCache } from "../../lib/memory/config-loader.js";
-import { FactStore } from "../../lib/memory/fact-store.js";
+import { MemoryService } from "../../lib/memory/memory-service.js";
 import { getBuiltinExternalMcpServers, getBuiltinExternalMcpServerNames } from "../../core/builtin-mcp-servers.js";
 const REMOVED_EXTERNAL_MCP_SERVER_NAMES = new Set(["claude_in_chrome"]);
 
@@ -332,6 +332,45 @@ async function checkSingleMcpServerHealth(serverName, server, timeoutMs) {
 }
 
 export default async function configRoute(app, { engine }) {
+  const resolveService = (agentId = null) => {
+    const service = MemoryService.fromEngine(engine, agentId);
+    return {
+      service,
+      close: () => {
+        if (service?._isDetached) service.close();
+      },
+    };
+  };
+
+  const scheduleDetachedMemoryJobs = (agentId) => {
+    const targetAgentId = String(agentId || "").trim() || null;
+    const timer = setTimeout(() => {
+      const runner = MemoryService.fromEngine(engine, targetAgentId);
+      Promise.resolve(runner.runJobs())
+        .catch(() => {})
+        .finally(() => {
+          if (runner?._isDetached) runner.close();
+        });
+    }, 0);
+    if (timer.unref) timer.unref();
+  };
+
+  const normalizeLegacyImportPayload = (body = {}) => {
+    const payload = (body && typeof body === "object") ? body : {};
+    if (
+      Array.isArray(payload.evidence)
+      || Array.isArray(payload.episodes)
+      || Array.isArray(payload.playbooks)
+      || Array.isArray(payload.marks)
+      || payload.profile
+      || payload.summary
+      || payload.version
+    ) {
+      return payload;
+    }
+    const entries = Array.isArray(payload.facts) ? payload.facts : payload.memories;
+    return Array.isArray(entries) ? { facts: entries } : payload;
+  };
 
   // 读取配置（脱敏：隐藏 API key，附带 _raw 原始结构 + providers）
   app.get("/api/config", async (req, reply) => {
@@ -740,91 +779,76 @@ export default async function configRoute(app, { engine }) {
     }
   });
 
-  // ── 用户档案（user.md）──
+  // ── 用户档案兼容接口（DB -> user.md 投影）──
 
-  // 读取 user.md 内容
+  // 读取用户档案内容
   app.get("/api/user-profile", async (req, reply) => {
+    const { service, close } = resolveService(engine.currentAgentId);
     try {
-      const userPath = engine.userDir + "/user.md";
-      const content = await fs.readFile(userPath, "utf-8");
-      return { content };
+      return { content: service.getProfile().content };
     } catch (err) {
-      // 文件不存在时返回空字符串（user.md 是可选的）
-      if (err.code === "ENOENT") return { content: "" };
       reply.code(500);
       return { error: err.message };
+    } finally {
+      close();
     }
   });
 
-  // 保存 user.md 内容，并触发 system prompt 重建
+  // 保存用户档案内容，并触发 system prompt 重建
   app.put("/api/user-profile", async (req, reply) => {
+    const { service, close } = resolveService(engine.currentAgentId);
     try {
       const { content } = req.body || {};
       if (typeof content !== "string") {
         reply.code(400);
         return { error: "content must be a string" };
       }
-      const userPath = engine.userDir + "/user.md";
-      await fs.writeFile(userPath, content, "utf-8");
+      service.upsertProfile(content);
       debugLog()?.log("api", `PUT /api/user-profile (saved, ${content.length} chars)`);
-      await engine.updateConfig({});
       return { ok: true };
     } catch (err) {
       debugLog()?.error("api", `PUT /api/user-profile failed: ${err.message}`);
       reply.code(500);
       return { error: err.message };
+    } finally {
+      close();
     }
   });
 
-  // ── 置顶记忆（pinned.md）──
+  // ── 置顶记忆兼容接口（DB -> pinned.md 投影）──
 
-  // 读取 pinned.md，解析为逐条数组
+  // 读取置顶记忆，兼容返回字符串数组
   app.get("/api/pinned", async (req, reply) => {
+    const { service, close } = resolveService(engine.currentAgentId);
     try {
-      const pinnedPath = engine.agentDir + "/pinned.md";
-      let content = "";
-      try {
-        content = await fs.readFile(pinnedPath, "utf-8");
-      } catch (err) {
-        if (err.code === "ENOENT") return { pins: [] };
-        throw err;
-      }
-      const pins = content
-        .split("\n")
-        .map(line => line.trim())
-        .filter(line => line.length > 0)
-        .map(line => line.replace(/^-\s*/, ""));
+      const pins = service.listMarks({ activeOnly: true }).map((item) => item.text);
       return { pins };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
+    } finally {
+      close();
     }
   });
 
-  // 保存 pinned.md（覆盖写入），触发 system prompt 重建
+  // 覆盖更新置顶记忆，触发投影与 prompt 重建
   app.put("/api/pinned", async (req, reply) => {
+    const { service, close } = resolveService(engine.currentAgentId);
     try {
       const { pins } = req.body || {};
       if (!Array.isArray(pins)) {
         reply.code(400);
         return { error: "pins must be an array" };
       }
-      const content = pins
-        .map(p => (typeof p === "string" ? p.trim() : ""))
-        .filter(p => p.length > 0)
-        .map(p => `- ${p}`)
-        .join("\n")
-        + "\n";
-      const pinnedPath = engine.agentDir + "/pinned.md";
-      await fs.writeFile(pinnedPath, content, "utf-8");
+      service.replaceMarks(pins);
       debugLog()?.log("api", `PUT /api/pinned (${pins.length} items)`);
-      // 触发 system prompt 重建（updateConfig 内部会重新读取 pinned.md）
-      await engine.updateConfig({});
       return { ok: true };
     } catch (err) {
       debugLog()?.error("api", `PUT /api/pinned failed: ${err.message}`);
       reply.code(500);
       return { error: err.message };
+    } finally {
+      close();
     }
   });
 
@@ -836,154 +860,105 @@ export default async function configRoute(app, { engine }) {
    * 否则临时打开那个 agent 的 facts.db。
    * 返回 { store, isTemp }，调用方用完 isTemp===true 的 store 需要 close。
    */
-  function getStoreForAgent(agentId) {
-    const activeId = path.basename(engine.agent.agentDir);
-    if (!agentId || agentId === activeId) {
-      return { store: engine.factStore, isTemp: false };
-    }
-    if (/[\/\\.]/.test(agentId)) {
-      throw new Error("Invalid agent ID");
-    }
-    const dbPath = path.join(engine.agentsDir, agentId, "memory", "facts.db");
-    try {
-      const store = new FactStore(dbPath);
-      return { store, isTemp: true };
-    } catch (err) {
-      throw new Error(`Cannot open fact DB for agent "${agentId}": ${err.message}`);
-    }
-  }
-
   // 获取所有元事实
   app.get("/api/memories", async (req, reply) => {
-    let tempStore = null;
+    const { service, close } = resolveService(req.query.agentId);
     try {
-      const { store, isTemp } = getStoreForAgent(req.query.agentId);
-      if (isTemp) tempStore = store;
-      return { memories: store.exportAll() };
+      return { memories: service.getCompatibilityFacts() };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
     } finally {
-      tempStore?.close();
+      close();
     }
   });
 
-  // 读取编译后的 memory.md
+  // 读取当前记忆摘要投影
   app.get("/api/memories/compiled", async (req, reply) => {
+    const { service, close } = resolveService(req.query.agentId);
     try {
-      const agentId = req.query.agentId;
-      const activeId = path.basename(engine.agent.agentDir);
-      const mdPath = (!agentId || agentId === activeId)
-        ? engine.memoryMdPath
-        : path.join(engine.agentsDir, agentId, "memory", "memory.md");
-      const content = await fs.readFile(mdPath, "utf-8").catch(() => "");
-      return { content };
-    } catch (err) {
-      reply.code(500);
-      return { error: err.message };
-    }
-  });
-
-  // 清除编译产物（today/week/longterm/facts/memory.md + fingerprints）
-  app.delete("/api/memories/compiled", async (req, reply) => {
-    try {
-      const agentId = req.query.agentId;
-      const activeId = path.basename(engine.agent.agentDir);
-      const memDir = (!agentId || agentId === activeId)
-        ? path.dirname(engine.memoryMdPath)
-        : path.join(engine.agentsDir, agentId, "memory");
-      const targets = ["memory.md", "today.md", "week.md", "longterm.md", "facts.md"];
-      for (const f of targets) {
-        const p = path.join(memDir, f);
-        await fs.writeFile(p, "", "utf-8").catch(() => {});
-        await fs.unlink(p + ".fingerprint").catch(() => {});
-      }
-      debugLog()?.log("api", `DELETE /api/memories/compiled agent=${agentId || activeId}`);
-      if (!agentId || agentId === activeId) await engine.updateConfig({});
-      return { ok: true };
-    } catch (err) {
-      reply.code(500);
-      return { error: err.message };
-    }
-  });
-
-  // 清除所有记忆（facts.db + memory.md）
-  app.delete("/api/memories", async (req, reply) => {
-    let tempStore = null;
-    try {
-      const agentId = req.query.agentId;
-      const { store, isTemp } = getStoreForAgent(agentId);
-      if (isTemp) tempStore = store;
-      store.clearAll();
-      const activeId = path.basename(engine.agent.agentDir);
-      const mdPath = (!agentId || agentId === activeId)
-        ? engine.memoryMdPath
-        : path.join(engine.agentsDir, agentId, "memory", "memory.md");
-      await fs.writeFile(mdPath, "", "utf-8");
-      debugLog()?.log("api", `DELETE /api/memories agent=${agentId || activeId}`);
-      if (!isTemp) await engine.updateConfig({});
-      return { ok: true };
+      return { content: service.getSummaryProjection().content || "" };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
     } finally {
-      tempStore?.close();
+      close();
+    }
+  });
+
+  // 当前记忆摘要是只读投影，不允许直接清空
+  app.delete("/api/memories/compiled", async (req, reply) => {
+    const { service, close } = resolveService(req.query.agentId);
+    try {
+      reply.code(410);
+      return { error: "current memory summary is read-only and cannot be cleared" };
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    } finally {
+      close();
+    }
+  });
+
+  // 兼容入口：归档默认视图中的事实 / 置顶标记 / 经验
+  app.delete("/api/memories", async (req, reply) => {
+    const { service, close } = resolveService(req.query.agentId);
+    try {
+      return service.archive(service.listArchiveCandidateIds({
+        includeFacts: true,
+        includeMarks: true,
+        includePlaybooks: true,
+      }));
+    } catch (err) {
+      reply.code(500);
+      return { error: err.message };
+    } finally {
+      close();
     }
   });
 
   // 导出记忆（JSON）
   app.get("/api/memories/export", async (req, reply) => {
-    let tempStore = null;
+    const { service, close } = resolveService(req.query.agentId);
     try {
-      const { store, isTemp } = getStoreForAgent(req.query.agentId);
-      if (isTemp) tempStore = store;
-      return {
-        version: 2,
-        exportedAt: new Date().toISOString(),
-        facts: store.exportAll(),
-      };
+      return service.exportBundle();
     } catch (err) {
       reply.code(500);
       return { error: err.message };
     } finally {
-      tempStore?.close();
+      close();
     }
   });
 
   // 导入记忆（直接写入，无需 embedding）
   app.post("/api/memories/import", async (req, reply) => {
-    let tempStore = null;
+    const targetAgentId = req.query.agentId || req.body?.agentId;
+    const { service, close } = resolveService(targetAgentId);
     try {
-      const { facts, memories } = req.body || {};
-      // 兼容 v1 导出格式（memories 字段）和 v2 格式（facts 字段）
-      const entries = facts || memories;
-      if (!Array.isArray(entries) || entries.length === 0) {
+      const payload = normalizeLegacyImportPayload(req.body || {});
+      if (
+        !Array.isArray(payload.facts)
+        && !Array.isArray(payload.evidence)
+        && !Array.isArray(payload.episodes)
+        && !Array.isArray(payload.playbooks)
+        && !Array.isArray(payload.marks)
+        && typeof payload.profile?.content !== "string"
+        && typeof payload.summary?.content !== "string"
+      ) {
         reply.code(400);
-        return { error: "facts must be a non-empty array" };
+        return { error: "memory import payload is empty" };
       }
-
-      const importEntries = entries.map((e) => ({
-        fact: e.fact || e.content || "",
-        tags: e.tags || [],
-        time: e.time || e.date || null,
-        timeliness: e.timeliness || "persistent",
-        state_key: e.state_key || null,
-        ttl_days: e.ttl_days ?? null,
-        valid_from: e.valid_from || null,
-        valid_to: e.valid_to || null,
-        session_id: e.session_id || "imported",
-      }));
-
-      const { store, isTemp } = getStoreForAgent(req.query.agentId);
-      if (isTemp) tempStore = store;
-      store.importAll(importEntries);
-      debugLog()?.log("api", `POST /api/memories/import: ${importEntries.length} entries`);
-      return { ok: true, imported: importEntries.length };
+      const result = service.importBundle(payload);
+      if (result.queuedProfileImport && service?._isDetached) {
+        scheduleDetachedMemoryJobs(targetAgentId);
+      }
+      debugLog()?.log("api", `POST /api/memories/import: ${result.importedFacts} facts`);
+      return { ok: true, imported: result.importedFacts, ...result };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
     } finally {
-      tempStore?.close();
+      close();
     }
   });
 

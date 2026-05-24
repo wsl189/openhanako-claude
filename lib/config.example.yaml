@@ -30,21 +30,11 @@ models:
   embedding_dimensions: 1024       # 向量维度
 
 # 记忆系统配置
-# 高斯衰减：score = score × e^(-λ × t²)，t = days since last access
-# 前几天慢、中间加速、尾部趋零，约两周自然归零。
-# decay_per_day 就是 λ，控制衰减陡度：
-#   λ = 0.01 → 约 19 天归零（慢，记忆广）
-#   λ = 0.02 → 约 14 天归零（默认）
-#   λ = 0.04 → 约 10 天归零（快，聚焦近期）
-# 被 hit 过的记忆会重置衰减起点，常提起的记忆不会消失。
-# token_budget 控制 memory.md 能装多少内容。
+# enabled 控制自动记忆维护总开关。
+# 即使关闭自动维护，设置页里的查看、编辑、导出、归档等管理能力仍然可用。
+# 自动维护依赖 utility 模型；未配置 utility 时，记忆仍可手动管理。
 memory:
-  token_budget: 2500               # memory.md 的目标 token 预算
-  decay_per_day: 0.02              # 高斯衰减系数 λ（越大遗忘越快）
-  hit_bonus: 5                     # 每次命中加多少分
-  base_importance: 10              # 新记忆的默认初始分
-  compile_threshold: 4.5           # 分数低于此值的记忆不进入 memory.md
-  forget_speed: 1.0                # 遗忘倍率（1.0 = 正常，2.0 = 忘得快一倍）
+  enabled: true
 
 # 网页搜索（可选）
 # 支持 tavily / serper / brave。启用后需要显式填写 provider 与 api_key。

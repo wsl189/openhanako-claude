@@ -38,6 +38,42 @@ export interface ProviderSummary {
   can_delete: boolean;
 }
 
+export interface MemoryStatus {
+  enabled: boolean;
+  canManageMemory: boolean;
+  canAutoMaintainMemory: boolean;
+  needsUtilityModel: boolean;
+  reason?: string;
+}
+
+export interface MemoryMark {
+  id: string;
+  text: string;
+  factId: number | null;
+  active: boolean;
+  updatedAt: string | null;
+}
+
+export interface MemorySummaryProjection {
+  title: string;
+  content: string;
+  kind: 'projection';
+  generatedAt: string | null;
+  sourceScope?: string | null;
+}
+
+export interface PlaybookItem {
+  id: string;
+  category: string;
+  trigger: string;
+  wrongPath: string;
+  rootCause: string;
+  fixSteps: string;
+  validation: string;
+  active: boolean;
+  updatedAt: string | null;
+}
+
 export interface SettingsState {
   // connection
   serverPort: number | null;
@@ -67,7 +103,10 @@ export interface SettingsState {
   pendingDefaultModel: string;
 
   // pins
-  currentPins: string[];
+  currentPins: MemoryMark[];
+  memoryStatus: MemoryStatus | null;
+  memorySummary: MemorySummaryProjection | null;
+  playbooks: PlaybookItem[];
 
   // providers (unified)
   providersSummary: Record<string, ProviderSummary>;
@@ -122,6 +161,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 
   // pins
   currentPins: [],
+  memoryStatus: null,
+  memorySummary: null,
+  playbooks: [],
 
   // providers (unified)
   providersSummary: {},

@@ -12,17 +12,17 @@
  * PUT    /api/agents/:id/identity — 写入 identity.md
  * GET    /api/agents/:id/ishiki   — 读取 ishiki.md
  * PUT    /api/agents/:id/ishiki   — 写入 ishiki.md
- * GET    /api/agents/:id/pinned   — 读取 pinned.md
- * PUT    /api/agents/:id/pinned   — 写入 pinned.md
- * GET    /api/agents/:id/experience — 读取经验（合并）
- * PUT    /api/agents/:id/experience — 写入经验（拆分）
+ * GET    /api/agents/:id/pinned   — 兼容读取置顶标记（字符串数组）
+ * PUT    /api/agents/:id/pinned   — 兼容覆盖置顶标记（字符串数组）
+ * GET    /api/agents/:id/experience — 兼容读取经验文本
+ * PUT    /api/agents/:id/experience — 兼容写入经验文本
  */
 import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
 import YAML from "js-yaml";
 import { saveConfig, getAllProviders, saveGlobalProviders, clearConfigCache } from "../../lib/memory/config-loader.js";
-import { rebuildIndex } from "../../lib/tools/experience.js";
+import { MemoryService } from "../../lib/memory/memory-service.js";
 import { getBuiltinExternalMcpServers, getBuiltinExternalMcpServerNames } from "../../core/builtin-mcp-servers.js";
 
 // ── 工具函数 ──
@@ -305,6 +305,15 @@ function isDefaultPersonaContent(content, productDir, kind, contexts) {
 }
 
 export default async function agentsRoute(app, { engine }) {
+  const resolveService = (agentId) => {
+    const service = MemoryService.fromEngine(engine, agentId);
+    return {
+      service,
+      close: () => {
+        if (service?._isDetached) service.close();
+      },
+    };
+  };
 
   // ════════════════════════════
   //  列表 / 创建 / 删除
@@ -840,7 +849,7 @@ export default async function agentsRoute(app, { engine }) {
   });
 
   // ════════════════════════════
-  //  Pinned（pinned.md）
+  //  Pinned（兼容包装：DB <-> 旧字符串数组）
   // ════════════════════════════
 
   app.get("/api/agents/:id/pinned", async (req, reply) => {
@@ -849,18 +858,15 @@ export default async function agentsRoute(app, { engine }) {
       reply.code(404);
       return { error: "agent not found" };
     }
+    const { service, close } = resolveService(id);
     try {
-      const content = await fs.readFile(path.join(agentDir(engine, id), "pinned.md"), "utf-8");
-      const pins = content
-        .split("\n")
-        .map(line => line.trim())
-        .filter(line => line.length > 0)
-        .map(line => line.replace(/^-\s*/, ""));
+      const pins = service.listMarks({ activeOnly: true }).map((item) => item.text);
       return { pins };
     } catch (err) {
-      if (err.code === "ENOENT") return { pins: [] };
       reply.code(500);
       return { error: err.message };
+    } finally {
+      close();
     }
   });
 
@@ -870,29 +876,25 @@ export default async function agentsRoute(app, { engine }) {
       reply.code(404);
       return { error: "agent not found" };
     }
+    const { service, close } = resolveService(id);
     try {
       const { pins } = req.body || {};
       if (!Array.isArray(pins)) {
         reply.code(400);
         return { error: "pins must be an array" };
       }
-      const content = pins
-        .map(p => (typeof p === "string" ? p.trim() : ""))
-        .filter(p => p.length > 0)
-        .map(p => `- ${p}`)
-        .join("\n")
-        + "\n";
-      await fs.writeFile(path.join(agentDir(engine, id), "pinned.md"), content, "utf-8");
-      if (isActiveAgent(engine, id)) await engine.updateConfig({});
+      service.replaceMarks(pins);
       return { ok: true };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
+    } finally {
+      close();
     }
   });
 
   // ════════════════════════════
-  //  Experience（experience/ 目录）
+  //  Experience（兼容包装：DB <-> 旧文本）
   // ════════════════════════════
 
   app.get("/api/agents/:id/experience", async (req, reply) => {
@@ -901,24 +903,14 @@ export default async function agentsRoute(app, { engine }) {
       reply.code(404);
       return { error: "agent not found" };
     }
+    const { service, close } = resolveService(id);
     try {
-      const expDir = path.join(agentDir(engine, id), "experience");
-      if (!fsSync.existsSync(expDir)) return { content: "" };
-
-      const files = (await fs.readdir(expDir)).filter((f) => f.endsWith(".md")).sort();
-      if (files.length === 0) return { content: "" };
-
-      const blocks = [];
-      for (const file of files) {
-        const category = file.replace(/\.md$/, "");
-        const body = await fs.readFile(path.join(expDir, file), "utf-8");
-        blocks.push(`# ${category}\n${body.trimEnd()}`);
-      }
-      return { content: blocks.join("\n\n") + "\n" };
+      return { content: service.getCompatibilityExperienceContent() };
     } catch (err) {
-      if (err.code === "ENOENT") return { content: "" };
       reply.code(500);
       return { error: err.message };
+    } finally {
+      close();
     }
   });
 
@@ -928,63 +920,20 @@ export default async function agentsRoute(app, { engine }) {
       reply.code(404);
       return { error: "agent not found" };
     }
+    const { service, close } = resolveService(id);
     try {
       const { content } = req.body || {};
       if (typeof content !== "string") {
         reply.code(400);
         return { error: "content must be a string" };
       }
-
-      const dir = agentDir(engine, id);
-      const expDir = path.join(dir, "experience");
-      const indexPath = path.join(dir, "experience.md");
-
-      // 解析合并 markdown → 按 ^# 分割成分类
-      const categories = new Map();
-      let currentCat = null;
-      const lines = content.split("\n");
-
-      for (const line of lines) {
-        const headingMatch = line.match(/^#\s+(.+)/);
-        if (headingMatch) {
-          currentCat = headingMatch[1].trim();
-          if (!categories.has(currentCat)) categories.set(currentCat, []);
-        } else if (currentCat !== null) {
-          categories.get(currentCat).push(line);
-        }
-      }
-
-      // 确保目录存在
-      await fs.mkdir(expDir, { recursive: true });
-
-      // 写入各分类文件
-      const newFiles = new Set();
-      for (const [cat, catLines] of categories) {
-        const body = catLines.join("\n").trim();
-        if (!body) continue;
-        const filename = `${cat}.md`;
-        newFiles.add(filename);
-        await fs.writeFile(path.join(expDir, filename), body + "\n", "utf-8");
-      }
-
-      // 清除不再存在的旧文件
-      try {
-        const existing = await fs.readdir(expDir);
-        for (const f of existing) {
-          if (f.endsWith(".md") && !newFiles.has(f)) {
-            await fs.unlink(path.join(expDir, f));
-          }
-        }
-      } catch {}
-
-      // 重建索引
-      rebuildIndex(expDir, indexPath);
-
-      if (isActiveAgent(engine, id)) await engine.updateConfig({});
+      service.replacePlaybooksFromLegacyMarkdown(content);
       return { ok: true };
     } catch (err) {
       reply.code(500);
       return { error: err.message };
+    } finally {
+      close();
     }
   });
 }

@@ -1,4 +1,4 @@
-import { createRequire } from "module";
+import * as claudeSdk from "@anthropic-ai/claude-agent-sdk";
 import {
   applyClaudeMaxOutputTokensEnv,
   resolveClaudeSdkModelId,
@@ -6,17 +6,15 @@ import {
 import { normalizeContentBlocks } from "./claude-transcript.js";
 import { patchSessionMetadata } from "./claude-session-store.js";
 
-const require = createRequire(import.meta.url);
 let _sdkQueryFn = null;
 
 function getClaudeSdkQuery() {
   if (typeof _sdkQueryFn === "function") return _sdkQueryFn;
-  const sdk = require("@anthropic-ai/claude-agent-sdk");
-  if (typeof sdk?.query !== "function") {
-    throw new Error("claude-agent-sdk query() is unavailable");
+  if (typeof claudeSdk?.query === "function") {
+    _sdkQueryFn = claudeSdk.query;
+    return _sdkQueryFn;
   }
-  _sdkQueryFn = sdk.query;
-  return _sdkQueryFn;
+  throw new Error("claude-agent-sdk query() is unavailable");
 }
 
 function deferred() {
