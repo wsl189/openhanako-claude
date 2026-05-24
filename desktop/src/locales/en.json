@@ -898,6 +898,7 @@
         "clearConfirm": "Archived items will be hidden from the default view. You can review them in the “Inactive” layer at the top of Memory Library.",
         "cancel": "Cancel",
         "confirmClear": "Confirm Archive",
+        "archiveItem": "Archive",
         "restore": "Restore",
         "viewTitle": "Memory Library",
         "clearSuccess": "Memory archived. Switched to the “Inactive” layer",

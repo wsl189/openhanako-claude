@@ -3,7 +3,6 @@ import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
 import { renderMarkdown } from '../../utils/markdown';
-import { formatSessionDate } from '../../utils/format';
 
 export function CompiledMemoryViewer() {
   const [visible, setVisible] = useState(false);
@@ -51,11 +50,7 @@ export function CompiledMemoryViewer() {
             <div className="memory-viewer-empty">{t('settings.archivedSessions.loading')}</div>
           ) : memorySummary?.content?.trim() ? (
             <div style={{ display: 'grid', gap: 12 }}>
-              <div className="settings-hint">
-                {memorySummary.generatedAt
-                  ? t('settings.memory.summaryGeneratedAt').replace('{time}', formatSessionDate(memorySummary.generatedAt))
-                  : t('settings.memory.compiledHint')}
-              </div>
+              <div className="settings-hint">{t('settings.memory.compiledHint')}</div>
               <div className="compiled-memory-md md-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(memorySummary.content) }} />
             </div>
           ) : (

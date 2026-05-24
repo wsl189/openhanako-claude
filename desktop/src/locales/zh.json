@@ -898,6 +898,7 @@
         "clearConfirm": "归档后你可以在记忆库顶部切到“已归档记忆”查看这些记录。",
         "cancel": "取消",
         "confirmClear": "确认归档",
+        "archiveItem": "归档",
         "restore": "恢复",
         "viewTitle": "记忆库",
         "clearSuccess": "记忆已归档，已为你切到“已归档记忆”层",

@@ -138,6 +138,29 @@ export function MemoryViewer() {
     }
   };
 
+  const deleteItem = async (item: MemoryListItem) => {
+    try {
+      const aid = useSettingsStore.getState().getSettingsAgentId();
+      const isInactiveLayer = item.layer === 'inactive';
+      const endpoint = isInactiveLayer ? '/api/memory/remove' : '/api/memory/archive';
+      const res = await hanaFetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: aid, ids: [item.id] }),
+      });
+      const data = await res.json();
+      if (data?.error) throw new Error(data.error);
+      window.dispatchEvent(new Event('hana-memory-updated'));
+      if (!isInactiveLayer) window.dispatchEvent(new Event('hana-memory-archived'));
+      setSelectedId((prev) => (prev === item.id ? null : prev));
+      if (detailModalData?.id === item.id) closeDetailModal();
+      void fetchPage(layer, true);
+      useSettingsStore.getState().showToast(t('settings.autoSaved'), 'success');
+    } catch (err: any) {
+      useSettingsStore.getState().showToast(`${t('settings.saveFailed')}: ${err.message || String(err)}`, 'error');
+    }
+  };
+
   useEffect(() => {
     const openViewer = () => {
       setVisible(true);
@@ -259,19 +282,32 @@ export function MemoryViewer() {
                       <div className="memory-library-item-preview">{item.preview || t('settings.memory.emptyPreview')}</div>
                       <div className="memory-library-item-meta">{formatMeta(item)}</div>
                     </button>
-                    {layer === 'inactive' ? (
+                    <div className="memory-library-item-actions">
+                      {layer === 'inactive' ? (
+                        <button
+                          type="button"
+                          className="memory-library-item-restore"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void restoreItem(item);
+                          }}
+                        >
+                          {t('settings.memory.actions.restore')}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
-                        className="memory-library-item-restore"
+                        className="memory-library-item-delete"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          void restoreItem(item);
+                          void deleteItem(item);
                         }}
                       >
-                        {t('settings.memory.actions.restore')}
+                        {layer === 'inactive' ? t('settings.pins.delete') : t('settings.memory.actions.archiveItem')}
                       </button>
-                    ) : null}
+                    </div>
                   </div>
                 ))}
                 {loading ? (

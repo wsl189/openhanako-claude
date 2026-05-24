@@ -12871,7 +12871,7 @@ a.about-link:hover {
     flex-wrap: nowrap;
     overflow-x: auto;
     gap: var(--space-xs);
-    padding: 0 var(--space-md) var(--space-sm);
+    padding: 6px var(--space-md) var(--space-sm);
     scrollbar-width: none;
 }
 
@@ -12959,6 +12959,12 @@ a.about-link:hover {
     outline: none;
 }
 
+.memory-library-item-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: stretch;
+}
+
 .memory-library-item-restore {
     flex: 0 0 auto;
     min-width: 56px;
@@ -12975,6 +12981,24 @@ a.about-link:hover {
 .memory-library-item-restore:hover {
     color: var(--text);
     background: var(--overlay-subtle);
+}
+
+.memory-library-item-delete {
+    flex: 0 0 auto;
+    min-width: 50px;
+    padding: 0 10px;
+    border: none;
+    border-left: 1px solid var(--overlay-light);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.78rem;
+    transition: color 0.2s var(--ease-out), background 0.2s var(--ease-out);
+}
+
+.memory-library-item-delete:hover {
+    color: var(--coral);
+    background: rgba(var(--coral-rgb), 0.1);
 }
 
 .memory-library-item-preview {

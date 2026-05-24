@@ -259,6 +259,23 @@ export default async function memoryRoute(app, { engine }) {
     }
   });
 
+  app.post("/api/memory/remove", async (req, reply) => {
+    const { service, close } = resolveService(engine, req.body?.agentId || engine.currentAgentId);
+    try {
+      const { ids } = req.body || {};
+      if (!Array.isArray(ids)) {
+        reply.code(400);
+        return { error: "ids must be an array" };
+      }
+      return service.remove(ids);
+    } catch (error) {
+      reply.code(400);
+      return { error: error.message };
+    } finally {
+      close();
+    }
+  });
+
   app.get("/api/memory/audit/:id", async (req, reply) => {
     const { service, close } = resolveService(engine, req.query.agentId);
     try {
