@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSettingsStore } from './store';
 import { hanaFetch } from './api';
 import { t } from './helpers';
-import { loadAgents, loadAvatars, loadSettingsConfig } from './actions';
+import { loadAgents, loadAvatars, loadMemorySettingsState, loadSettingsConfig } from './actions';
 import { WindowControls } from '../components/WindowControls';
 import { SettingsNav } from './SettingsNav';
 import { Toast } from './Toast';
@@ -64,6 +64,18 @@ export function SettingsApp() {
         void loadSettingsConfig();
       }
     });
+  }, []);
+
+  useEffect(() => {
+    const refreshMemoryState = () => {
+      void loadMemorySettingsState();
+    };
+    window.addEventListener('hana-memory-updated', refreshMemoryState);
+    window.addEventListener('hana-memory-archived', refreshMemoryState);
+    return () => {
+      window.removeEventListener('hana-memory-updated', refreshMemoryState);
+      window.removeEventListener('hana-memory-archived', refreshMemoryState);
+    };
   }, []);
 
   const ActiveTab = TAB_COMPONENTS[activeTab] || AgentTab;

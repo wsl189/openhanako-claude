@@ -4,7 +4,10 @@ import { hanaFetch } from '../api';
 import { t } from '../helpers';
 import { loadSettingsConfig } from '../actions';
 
-async function collectLibraryIds(agentId: string | null, layer: 'facts' | 'playbooks') {
+async function collectLibraryIds(
+  agentId: string | null,
+  layer: 'facts' | 'episodes' | 'evidence' | 'playbooks',
+) {
   const ids: string[] = [];
   let cursor: string | null = null;
   do {
@@ -43,8 +46,10 @@ export function ClearMemoryConfirm() {
     setSubmitting(true);
     try {
       const aid = useSettingsStore.getState().getSettingsAgentId();
-      const [factIds, playbookIds] = await Promise.all([
+      const [factIds, episodeIds, evidenceIds, playbookIds] = await Promise.all([
         collectLibraryIds(aid, 'facts'),
+        collectLibraryIds(aid, 'episodes'),
+        collectLibraryIds(aid, 'evidence'),
         collectLibraryIds(aid, 'playbooks'),
       ]);
       const marksRes = await hanaFetch(`/api/memory/marks?agentId=${encodeURIComponent(aid || '')}`);
@@ -53,7 +58,7 @@ export function ClearMemoryConfirm() {
       const markIds = Array.isArray(marksData.items)
         ? marksData.items.map((item: any) => `mark:${item.id}`).filter(Boolean)
         : [];
-      const ids = [...factIds, ...playbookIds, ...markIds];
+      const ids = [...factIds, ...episodeIds, ...evidenceIds, ...playbookIds, ...markIds];
       if (ids.length === 0) {
         showToast(t('settings.memory.actions.empty'), 'success');
         close();

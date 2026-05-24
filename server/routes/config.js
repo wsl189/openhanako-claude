@@ -900,7 +900,7 @@ export default async function configRoute(app, { engine }) {
     }
   });
 
-  // 兼容入口：归档默认视图中的事实 / 置顶标记 / 经验
+  // 兼容入口：归档默认视图中的活动记忆（facts / episodes / evidence / pins / playbooks）
   app.delete("/api/memories", async (req, reply) => {
     const { service, close } = resolveService(req.query.agentId);
     try {

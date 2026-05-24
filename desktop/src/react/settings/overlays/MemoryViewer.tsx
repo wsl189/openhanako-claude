@@ -131,7 +131,6 @@ export function MemoryViewer() {
       setSelectedId((prev) => (prev === item.id ? null : prev));
       setDetailModalOpen(false);
       setDetailModalData(null);
-      void fetchPage(layer, true);
       useSettingsStore.getState().showToast(t('settings.autoSaved'), 'success');
     } catch (err: any) {
       useSettingsStore.getState().showToast(`${t('settings.saveFailed')}: ${err.message || String(err)}`, 'error');
@@ -150,11 +149,9 @@ export function MemoryViewer() {
       });
       const data = await res.json();
       if (data?.error) throw new Error(data.error);
-      window.dispatchEvent(new Event('hana-memory-updated'));
-      if (!isInactiveLayer) window.dispatchEvent(new Event('hana-memory-archived'));
+      window.dispatchEvent(new Event(isInactiveLayer ? 'hana-memory-updated' : 'hana-memory-archived'));
       setSelectedId((prev) => (prev === item.id ? null : prev));
       if (detailModalData?.id === item.id) closeDetailModal();
-      void fetchPage(layer, true);
       useSettingsStore.getState().showToast(t('settings.autoSaved'), 'success');
     } catch (err: any) {
       useSettingsStore.getState().showToast(`${t('settings.saveFailed')}: ${err.message || String(err)}`, 'error');

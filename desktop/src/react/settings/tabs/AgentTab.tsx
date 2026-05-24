@@ -322,7 +322,6 @@ export function AgentTab() {
   };
 
   // 仅在“明确选中了其他助手”时，才显示删除等仅针对非当前助手的操作。
-  const isViewingOther = !!selectedAgentId && selectedAgentId !== currentAgentId;
   const currentYuan = settingsConfig?.agent?.yuan || 'hanako';
 
   // Agent 对话模型
@@ -1032,7 +1031,7 @@ export function AgentTab() {
             >
               {t('settings.memory.actions.clear')}
             </button>
-            <MemoryMoreDropdown isViewingOther={isViewingOther} />
+            <MemoryMoreDropdown />
           </div>
         </div>
       </section>
@@ -1160,7 +1159,12 @@ function PinItem({
             <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
           </svg>
         </button>
-        <button className="pin-item-action delete" title={t('settings.pins.delete')} onClick={() => { void onDelete(pin.id); }}>
+        <button
+          className="pin-item-action delete"
+          title={t('toolDef.pinnedMemory.unpinLabel')}
+          aria-label={t('toolDef.pinnedMemory.unpinLabel')}
+          onClick={() => { void onDelete(pin.id); }}
+        >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -1402,7 +1406,7 @@ function AgentCardStack({ agents, selectedId, currentAgentId, onSelect, onAvatar
   );
 }
 
-function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
+function MemoryMoreDropdown() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const store = useSettingsStore();
@@ -1465,7 +1469,9 @@ function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
         const importedCount = Number(data.importedFacts || 0)
           + Number(data.importedEvidence || 0)
           + Number(data.importedEpisodes || 0)
-          + Number(data.importedPlaybooks || 0);
+          + Number(data.importedPlaybooks || 0)
+          + Number(data.importedMarks || 0)
+          + (data.queuedProfileImport ? 1 : 0);
         const msg = t('settings.memory.actions.importSuccess').replace('{count}', String(importedCount));
         store.showToast(msg, 'success');
         await loadSettingsConfig();
@@ -1492,8 +1498,6 @@ function MemoryMoreDropdown({ isViewingOther }: { isViewingOther: boolean }) {
         <button
           className="memory-more-option"
           onClick={importMemories}
-          disabled={isViewingOther}
-          title={isViewingOther ? t('settings.memory.activeOnly') : ''}
         >
           {t('settings.memory.actions.import')}
         </button>

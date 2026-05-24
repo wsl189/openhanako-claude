@@ -118,6 +118,33 @@ export async function loadSettingsConfig() {
   }
 }
 
+export async function loadMemorySettingsState() {
+  const store = useSettingsStore.getState();
+  try {
+    const agentId = store.getSettingsAgentId();
+    const [memoryStatusRes, memoryMarksRes, memorySummaryRes, memoryPlaybooksRes] = await Promise.all([
+      hanaFetch(`/api/memory/status?agentId=${encodeURIComponent(agentId || '')}`),
+      hanaFetch(`/api/memory/marks?agentId=${encodeURIComponent(agentId || '')}`),
+      hanaFetch(`/api/memory/summary?agentId=${encodeURIComponent(agentId || '')}`),
+      hanaFetch(`/api/memory/playbooks?agentId=${encodeURIComponent(agentId || '')}`),
+    ]);
+
+    const memoryStatus = await memoryStatusRes.json();
+    const memoryMarks = await memoryMarksRes.json();
+    const memorySummary = await memorySummaryRes.json();
+    const memoryPlaybooks = await memoryPlaybooksRes.json();
+
+    store.set({
+      currentPins: Array.isArray(memoryMarks.items) ? memoryMarks.items : [],
+      memoryStatus: memoryStatus || null,
+      memorySummary: memorySummary || null,
+      playbooks: Array.isArray(memoryPlaybooks.items) ? memoryPlaybooks.items : [],
+    });
+  } catch (err) {
+    console.error('[settings] memory state refresh failed:', err);
+  }
+}
+
 export async function browseAgent(agentId: string) {
   useSettingsStore.setState({ settingsAgentId: agentId });
   await loadSettingsConfig();
