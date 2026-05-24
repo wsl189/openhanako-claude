@@ -1190,6 +1190,8 @@ export class SessionCoordinator {
       executionMode: "chat",
       createToolContext: () => ({
         sessionManager: runtime?.sessionManager,
+        executionMode: "chat",
+        memoryScope: "agent",
       }),
       emitToolEvent: (event) => {
         logToolEvent(event);

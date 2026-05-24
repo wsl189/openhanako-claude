@@ -232,6 +232,33 @@ beforeEach(() => {
 });
 
 describe("channel backend integration scenarios", () => {
+  it("uses channel-scoped memory projection when preparing a channel reply", async () => {
+    const fx = setupBackend([
+      { id: "ideator", name: "Ideator" },
+    ], "memory_scope");
+
+    const agent = fx.engine.getAgent("ideator");
+    const renderMemoryPrompt = vi.fn(() => "频道记忆");
+    const renderProfilePrompt = vi.fn(() => "");
+    agent.memoryService = {
+      renderMemoryPrompt,
+      renderProfilePrompt,
+    };
+
+    installScriptedRuntime(fx.engine, async () => "收到。");
+
+    await fx.hub.channelRouter._executeCheck(
+      "ideator",
+      fx.channelId,
+      [{ sender: "用户", body: "请直接回复这条消息", timestamp: "2026-05-24T10:00:00.000Z" }],
+      [],
+      { forceReply: true },
+    );
+
+    expect(renderMemoryPrompt).toHaveBeenCalledWith({ sourceScope: "channel" });
+    expect(renderProfilePrompt).not.toHaveBeenCalled();
+  });
+
   it("runs a brainstorm with nested asks and serializes a busy teammate revision queue", async () => {
     const fx = setupBackend([
       { id: "ideator", name: "Ideator" },

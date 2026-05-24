@@ -345,6 +345,9 @@ async function runAgentSessionNow(agentId, rounds, {
     executionMode: sessionSuffix === "channel" ? "channel" : "chat",
     createToolContext: () => ({
       sessionManager: runtime?.sessionManager,
+      executionMode: sessionSuffix === "channel" ? "channel" : "chat",
+      memoryScope: sessionSuffix === "channel" ? "channel" : "agent",
+      channelName: sessionSuffix === "channel" ? persistentSessionName || null : null,
     }),
     emitToolEvent: (event) => {
       runtime?._recordToolEvent?.(event);
