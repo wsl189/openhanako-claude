@@ -1501,7 +1501,7 @@
     "pinnedRemoved": "已移除 {count} 条：{items}",
     "expEmpty": "经验库为空。",
     "expCategoryNotFound": "没有找到分类「{category}」的经验。",
-    "expEmptyInput": "分类名和经验内容不能为空。",
+    "expEmptyInput": "经验 playbook 必须包含触发场景、错误路径、根因、修复步骤和验证方式。",
     "expDuplicate": "这条经验已经记录过了。",
     "expRecorded": "已记录经验 [{category}]：{content}",
     "outputFileNeedPaths": "需要提供 filepaths 数组或 filePath。",
@@ -1623,13 +1623,14 @@
     "defaultChannelName": "工作群",
     "defaultChannelDesc": "工作协调频道，所有成员在这里沟通日常事务。",
     "memorySearchLabel": "搜索记忆",
-    "memorySearchDesc": "搜索记忆库。当你对某件事拿不准、觉得之前聊过但想不起细节、或者需要更多上下文时使用。输入自然语言查询和可选的标签过滤。结果包含匹配的元事实和对应时间。",
+    "memorySearchDesc": "搜索记忆库。当你对某件事拿不准、觉得之前聊过但想不起细节、或者需要更多上下文时使用。输入自然语言查询和可选的标签过滤，可按意图检索事实、事件和经验 playbook。结果包含匹配内容、类型和对应时间。",
     "memorySearchQueryDesc": "搜索查询，用自然语言描述你想找的内容",
     "memorySearchTagsDesc": "标签过滤，输入 2~5 个关键词标签来精确匹配。例如 [\"巧克力\", \"食物偏好\"]",
     "memorySearchDateFromDesc": "起始日期，格式 YYYY-MM-DD",
     "memorySearchDateToDesc": "结束日期，格式 YYYY-MM-DD",
     "memorySearchEmpty": "记忆库里没有找到相关内容。",
     "memorySearchError": "记忆搜索出错: {msg}",
+    "pinnedEmptyInput": "要置顶的记忆内容为空。",
     "fallbackUserName": "用户"
   },
   "main": {
@@ -1882,12 +1883,17 @@
     },
     "experience": {
       "recallLabel": "查看经验",
-      "recallDescription": "查看经验库。不传参数返回所有分类概览，传分类名返回该分类的具体经验。当用户要求你完成一项具体工作（写代码、搜索资料、创建文档、分析问题等）时，开始前应先调用此工具检查是否有相关经验可参考。普通闲聊、问答、日常对话不需要调用。",
+      "recallDescription": "查看经验库。不传参数返回当前作用域的分类概览，传分类名返回该分类的具体经验。私聊默认读取 agent 经验；频道执行时自动读取 channel 经验。当用户要求你完成一项具体工作（写代码、搜索资料、创建文档、分析问题等）时，开始前应先调用此工具检查是否有相关经验可参考。普通闲聊、问答、日常对话不需要调用。",
       "recallCategoryDesc": "分类名。不传则返回所有分类概览",
       "recordLabel": "记录经验",
-      "recordDescription": "将一条经验教训记录到经验库。在以下情况使用：用户指出你犯了错误并说明正确做法、你尝试多种方法后发现了有效做法、用户明确说「以后要/不要这样做」。每条经验应简洁直接，一句话概括。",
+      "recordDescription": "将一条经验教训记录成结构化 playbook。私聊默认写入 agent 经验；频道执行时自动写入 channel 经验。在以下情况使用：用户指出你犯了错误并说明正确做法、你尝试多种方法后发现了有效做法、用户明确说「以后要/不要这样做」。必须写清触发场景、错误路径、根因、修复步骤和验证方式。",
       "recordCategoryDesc": "经验所属分类，2-4 字短语，如「工具使用」「搜索技巧」「回答风格」",
-      "recordContentDesc": "具体的经验内容，简洁直接，一句话"
+      "scopeDesc": "经验作用域：agent、channel 或 auto。通常无需填写；频道执行时会自动锁定 channel。",
+      "recordTriggerDesc": "什么情况下应该使用这条经验",
+      "recordWrongPathDesc": "下次应避免的错误做法",
+      "recordRootCauseDesc": "导致问题的根因或判断依据",
+      "recordFixStepsDesc": "下次应执行的具体修复步骤",
+      "recordValidationDesc": "如何验证修复或做法确实有效"
     },
     "setupSettings": {
       "label": "设置助手",

@@ -1501,7 +1501,7 @@
     "pinnedRemoved": "Removed {count} items: {items}",
     "expEmpty": "Experience library is empty.",
     "expCategoryNotFound": "No experience found for category \"{category}\".",
-    "expEmptyInput": "Category name and experience content cannot be empty.",
+    "expEmptyInput": "Experience playbooks must include trigger, wrong path, root cause, fix steps, and validation.",
     "expDuplicate": "This experience has already been recorded.",
     "expRecorded": "Experience recorded [{category}]: {content}",
     "outputFileNeedPaths": "filepaths array or filePath is required.",
@@ -1623,13 +1623,14 @@
     "defaultChannelName": "Crew",
     "defaultChannelDesc": "Work coordination channel for daily tasks.",
     "memorySearchLabel": "Search Memory",
-    "memorySearchDesc": "Search the memory bank. Use when you are unsure about something, think you discussed it before but cannot recall details, or need more context. Input natural language queries and optional tag filters. Results include matching meta-facts and timestamps.",
+    "memorySearchDesc": "Search the memory bank. Use when you are unsure about something, think you discussed it before but cannot recall details, or need more context. Input natural language queries and optional tag filters, and optionally route by intent across facts, episodes, and experience playbooks. Results include matching content, item type, and timestamps.",
     "memorySearchQueryDesc": "Search query in natural language",
     "memorySearchTagsDesc": "Tag filter, 2-5 keyword tags for precise matching, e.g. [\"chocolate\", \"food preference\"]",
     "memorySearchDateFromDesc": "Start date, format YYYY-MM-DD",
     "memorySearchDateToDesc": "End date, format YYYY-MM-DD",
     "memorySearchEmpty": "No relevant content found in memory.",
     "memorySearchError": "Memory search error: {msg}",
+    "pinnedEmptyInput": "Pinned memory content is empty.",
     "fallbackUserName": "User"
   },
   "main": {
@@ -1882,12 +1883,17 @@
     },
     "experience": {
       "recallLabel": "Recall Experience",
-      "recallDescription": "Browse the experience library. Without parameters, returns an overview of all categories. With a category name, returns specific experiences in that category. When the user asks you to do a concrete task (write code, research, create documents, analyze problems, etc.), check this tool first for relevant experience before starting. Not needed for casual chat, Q&A, or everyday conversation.",
+      "recallDescription": "Browse the experience library. Without parameters, returns an overview for the current scope. With a category name, returns specific experiences in that category. Private chat reads agent experience by default; channel execution automatically reads channel experience. When the user asks you to do a concrete task (write code, research, create documents, analyze problems, etc.), check this tool first for relevant experience before starting. Not needed for casual chat, Q&A, or everyday conversation.",
       "recallCategoryDesc": "Category name. Omit to get an overview of all categories",
       "recordLabel": "Record Experience",
-      "recordDescription": "Record a lesson learned to the experience library. Use when: the user points out a mistake and explains the correct approach, you discover an effective method after trying multiple approaches, or the user explicitly says 'from now on do/don't do this'. Each entry should be concise and direct, one sentence.",
+      "recordDescription": "Record a lesson learned as a structured playbook. Private chat writes agent experience by default; channel execution automatically writes channel experience. Use when: the user points out a mistake and explains the correct approach, you discover an effective method after trying multiple approaches, or the user explicitly says 'from now on do/don't do this'. Include the trigger, wrong path, root cause, fix steps, and validation.",
       "recordCategoryDesc": "Category for the experience, a 2-4 word phrase, e.g. 'tool usage', 'search tips', 'response style'",
-      "recordContentDesc": "The specific experience content, concise and direct, one sentence"
+      "scopeDesc": "Experience scope: agent, channel, or auto. Usually omit this; channel execution is automatically locked to channel.",
+      "recordTriggerDesc": "When this playbook should be used",
+      "recordWrongPathDesc": "The wrong approach to avoid next time",
+      "recordRootCauseDesc": "The root cause or rationale behind the issue",
+      "recordFixStepsDesc": "Concrete fix steps to apply next time",
+      "recordValidationDesc": "How to verify the fix or approach worked"
     },
     "setupSettings": {
       "label": "Setup Settings",
