@@ -20,6 +20,7 @@ import { AgentCreateOverlay } from './overlays/AgentCreateOverlay';
 import { AgentDeleteOverlay } from './overlays/AgentDeleteOverlay';
 import { MemoryViewer } from './overlays/MemoryViewer';
 import { CompiledMemoryViewer } from './overlays/CompiledMemoryViewer';
+import { MemoryInsightsViewer } from './overlays/MemoryInsightsViewer';
 import { ClearMemoryConfirm } from './overlays/ClearMemoryConfirm';
 import { BridgeTutorial } from './overlays/BridgeTutorial';
 import { WechatQrcodeOverlay } from './overlays/WechatQrcodeOverlay';
@@ -100,6 +101,7 @@ export function SettingsApp() {
       <AgentDeleteOverlay />
       <MemoryViewer />
       <CompiledMemoryViewer />
+      <MemoryInsightsViewer />
       <ClearMemoryConfirm />
       <BridgeTutorial />
       <WechatQrcodeOverlay />

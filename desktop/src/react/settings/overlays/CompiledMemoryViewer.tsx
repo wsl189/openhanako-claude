@@ -49,10 +49,7 @@ export function CompiledMemoryViewer() {
           {loading ? (
             <div className="memory-viewer-empty">{t('settings.archivedSessions.loading')}</div>
           ) : memorySummary?.content?.trim() ? (
-            <div style={{ display: 'grid', gap: 12 }}>
-              <div className="settings-hint">{t('settings.memory.compiledHint')}</div>
-              <div className="compiled-memory-md md-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(memorySummary.content) }} />
-            </div>
+            <div className="compiled-memory-md md-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(memorySummary.content) }} />
           ) : (
             <div className="memory-viewer-empty">{t('settings.memory.compiledEmpty')}</div>
           )}

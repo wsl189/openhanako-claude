@@ -877,8 +877,38 @@
       "summaryGeneratedAt": "Generated at: {time}",
       "detailPlaceholder": "Select an item to load details, sources, and audit data",
       "detailSourceRefs": "Source references",
+      "detailEntityLinks": "Structured entity links",
       "detailAudit": "Audit trail",
+      "detailRelated": "Related memory",
       "emptyPreview": "No preview available",
+      "entityKinds": {
+        "subject": "Subject",
+        "state": "State key",
+        "decision": "Decision key"
+      },
+      "insights": {
+        "title": "Memory Insights",
+        "emptyReflections": "No reflection blocks yet",
+        "emptyProfile": "No profile blocks yet",
+        "emptyRetrievals": "No retrieval logs yet",
+        "retrievalResults": "Retrieved results",
+        "entityMatches": "Matched structured entities",
+        "tabs": {
+          "reflections": "Reflections",
+          "profile": "Profile Blocks",
+          "retrievals": "Retrieval Audit"
+        }
+      },
+      "relatedReasons": {
+        "sourceEvidence": "Direct source evidence",
+        "sourceEpisode": "Direct source episode",
+        "sharedEvidence": "Shared evidence",
+        "sharedEpisode": "Shared episode",
+        "sameStateKey": "Same state key",
+        "sameDecisionKey": "Same decision key",
+        "sameSubject": "Same subject",
+        "sharedSourceRefs": "Shared source refs"
+      },
       "layers": {
         "facts": "Facts",
         "episodes": "Episodes",
@@ -893,6 +923,7 @@
         "view": "View Library",
         "clear": "Archive Memory",
         "more": "More",
+        "insights": "Insights",
         "export": "Export",
         "import": "Import",
         "clearConfirm": "Archived items will be hidden from the default view. You can review them in the “Inactive” layer at the top of Memory Library.",

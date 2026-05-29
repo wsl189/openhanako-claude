@@ -10707,7 +10707,7 @@ body.resizing .jian-sidebar-inner {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.4s ease-out;
-    z-index: 1200;
+    z-index: 1600;
 }
 
 .settings-toast.show {
@@ -12999,6 +12999,12 @@ a.about-link:hover {
 .memory-library-item-delete:hover {
     color: var(--coral);
     background: rgba(var(--coral-rgb), 0.1);
+}
+
+.memory-library-item-restore:disabled,
+.memory-library-item-delete:disabled {
+    opacity: 0.55;
+    cursor: wait;
 }
 
 .memory-library-item-preview {

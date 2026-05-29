@@ -336,7 +336,6 @@ export function AgentTab() {
 
   const memoryEnabled = settingsConfig?.memory?.enabled !== false;
   const needsUtilityModel = memoryStatus?.needsUtilityModel ?? !hasUtilityModel;
-
   const addPin = async () => {
     const val = pinInput.trim();
     if (!val) return;
@@ -1034,6 +1033,7 @@ export function AgentTab() {
             <MemoryMoreDropdown />
           </div>
         </div>
+
       </section>
 
       <section className="settings-section">
@@ -1483,6 +1483,11 @@ function MemoryMoreDropdown() {
     input.click();
   };
 
+  const openInsights = () => {
+    setOpen(false);
+    window.dispatchEvent(new Event('hana-view-memory-insights'));
+  };
+
   return (
     <div className={`memory-action-dropdown${open ? ' open' : ''}`} ref={ref}>
       <button className="memory-action-btn secondary" onClick={() => setOpen(!open)}>
@@ -1492,6 +1497,9 @@ function MemoryMoreDropdown() {
         </svg>
       </button>
       <div className="memory-more-popup">
+        <button className="memory-more-option" onClick={openInsights}>
+          {t('settings.memory.actions.insights')}
+        </button>
         <button className="memory-more-option" onClick={exportMemories}>
           {t('settings.memory.actions.export')}
         </button>

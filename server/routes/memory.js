@@ -70,6 +70,26 @@ export default async function memoryRoute(app, { engine }) {
     }
   });
 
+  app.get("/api/memory/profile/blocks", async (req, reply) => {
+    const { service, close } = resolveService(engine, req.query.agentId || engine.currentAgentId);
+    try {
+      const blocks = service.getProfileBlocks({
+        includePinned: req.query.includePinned !== "false",
+        includeManualSupplement: true,
+      });
+      return {
+        title: "Current Profile Blocks",
+        content: service.renderProfilePrompt({ includePinned: req.query.includePinned !== "false" }),
+        blocks,
+      };
+    } catch (error) {
+      reply.code(500);
+      return { error: error.message };
+    } finally {
+      close();
+    }
+  });
+
   app.put("/api/memory/profile", async (req, reply) => {
     const { service, close } = resolveService(engine, engine.currentAgentId);
     try {
@@ -146,6 +166,30 @@ export default async function memoryRoute(app, { engine }) {
     }
   });
 
+  app.get("/api/memory/reflection", async (req, reply) => {
+    const { service, close } = resolveService(engine, req.query.agentId);
+    try {
+      return service.getReflectionProjection();
+    } catch (error) {
+      reply.code(500);
+      return { error: error.message };
+    } finally {
+      close();
+    }
+  });
+
+  app.post("/api/memory/evidence-cleanup/run", async (req, reply) => {
+    const { service, close } = resolveService(engine, req.body?.agentId || engine.currentAgentId);
+    try {
+      return service.runEvidenceCleanup({ trigger: "manual" });
+    } catch (error) {
+      reply.code(400);
+      return { error: error.message };
+    } finally {
+      close();
+    }
+  });
+
   app.get("/api/memory/library", async (req, reply) => {
     const { service, close } = resolveService(engine, req.query.agentId);
     try {
@@ -154,6 +198,24 @@ export default async function memoryRoute(app, { engine }) {
         cursor: req.query.cursor,
         limit: req.query.limit,
       });
+    } catch (error) {
+      reply.code(500);
+      return { error: error.message };
+    } finally {
+      close();
+    }
+  });
+
+  app.get("/api/memory/retrievals", async (req, reply) => {
+    const { service, close } = resolveService(engine, req.query.agentId);
+    try {
+      return {
+        items: service.listRetrievalLogs({
+          limit: req.query.limit,
+          layer: req.query.layer,
+          query: req.query.query,
+        }),
+      };
     } catch (error) {
       reply.code(500);
       return { error: error.message };

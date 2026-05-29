@@ -146,4 +146,120 @@ describe("/api/memory", () => {
       affectedIds: ["inactive:fact:1"],
     });
   });
+
+  it("lists retrieval logs through the semantic endpoint", async () => {
+    const listRetrievalLogs = vi.fn(() => ([
+      {
+        id: "retrieval:7",
+        query: "现在还持有徐工机械吗",
+        layer: "facts",
+        results: [{ id: "fact:1", preview: "当前持有徐工机械" }],
+      },
+    ]));
+    MemoryService.fromEngine = vi.fn(() => ({ listRetrievalLogs }));
+
+    const app = Fastify();
+    apps.push(app);
+    await app.register(memoryRoute, { engine: createEngine() });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/memory/retrievals?agentId=agent-b&limit=5&layer=facts&query=%E5%BE%90%E5%B7%A5",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(listRetrievalLogs).toHaveBeenCalledWith({
+      limit: "5",
+      layer: "facts",
+      query: "徐工",
+    });
+    expect(res.json()).toMatchObject({
+      items: [{
+        id: "retrieval:7",
+        query: "现在还持有徐工机械吗",
+        layer: "facts",
+      }],
+    });
+  });
+
+  it("lists reflection projections through the semantic endpoint", async () => {
+    const getReflectionProjection = vi.fn(() => ({
+      title: "Current Reflections",
+      blocks: [{ id: "reflection_state_watch", title: "近期状态关注点" }],
+      content: "## 近期状态关注点",
+    }));
+    MemoryService.fromEngine = vi.fn(() => ({ getReflectionProjection }));
+
+    const app = Fastify();
+    apps.push(app);
+    await app.register(memoryRoute, { engine: createEngine() });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/memory/reflection?agentId=agent-b",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(getReflectionProjection).toHaveBeenCalled();
+    expect(res.json()).toMatchObject({
+      title: "Current Reflections",
+      blocks: [{ id: "reflection_state_watch" }],
+    });
+  });
+
+  it("lists profile blocks through the semantic endpoint", async () => {
+    const getProfileBlocks = vi.fn(() => ([
+      { id: "profile_identity", title: "长期身份" },
+      { id: "profile_pinned", title: "置顶记忆" },
+    ]));
+    const renderProfilePrompt = vi.fn(() => "## 长期身份");
+    MemoryService.fromEngine = vi.fn(() => ({ getProfileBlocks, renderProfilePrompt }));
+
+    const app = Fastify();
+    apps.push(app);
+    await app.register(memoryRoute, { engine: createEngine() });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/memory/profile/blocks?agentId=agent-b&includePinned=true",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(getProfileBlocks).toHaveBeenCalledWith({
+      includePinned: true,
+      includeManualSupplement: true,
+    });
+    expect(renderProfilePrompt).toHaveBeenCalledWith({ includePinned: true });
+    expect(res.json()).toMatchObject({
+      title: "Current Profile Blocks",
+      blocks: [{ id: "profile_identity" }, { id: "profile_pinned" }],
+    });
+  });
+
+  it("runs evidence cleanup through the semantic endpoint", async () => {
+    const runEvidenceCleanup = vi.fn(() => ({
+      archivedEvidence: 3,
+      purgedEvidence: 2,
+      skippedProtectedCount: 1,
+    }));
+    MemoryService.fromEngine = vi.fn(() => ({ runEvidenceCleanup }));
+
+    const app = Fastify();
+    apps.push(app);
+    await app.register(memoryRoute, { engine: createEngine() });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/memory/evidence-cleanup/run",
+      payload: { agentId: "agent-b" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(runEvidenceCleanup).toHaveBeenCalledWith({ trigger: "manual" });
+    expect(res.json()).toMatchObject({
+      archivedEvidence: 3,
+      purgedEvidence: 2,
+      skippedProtectedCount: 1,
+    });
+  });
 });

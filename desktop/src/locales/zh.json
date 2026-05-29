@@ -877,8 +877,38 @@
       "summaryGeneratedAt": "生成时间：{time}",
       "detailPlaceholder": "选择一项后查看详情、来源和审计信息",
       "detailSourceRefs": "来源引用",
+      "detailEntityLinks": "结构化实体链接",
       "detailAudit": "审计信息",
+      "detailRelated": "关联记忆",
       "emptyPreview": "无摘要内容",
+      "entityKinds": {
+        "subject": "主体",
+        "state": "状态键",
+        "decision": "决策键"
+      },
+      "insights": {
+        "title": "记忆洞察",
+        "emptyReflections": "暂无反思结果",
+        "emptyProfile": "暂无 profile blocks",
+        "emptyRetrievals": "暂无检索轨迹",
+        "retrievalResults": "检索结果",
+        "entityMatches": "命中的结构化实体",
+        "tabs": {
+          "reflections": "反思",
+          "profile": "Profile Blocks",
+          "retrievals": "检索审计"
+        }
+      },
+      "relatedReasons": {
+        "sourceEvidence": "直接来源证据",
+        "sourceEpisode": "直接来源事件锚点",
+        "sharedEvidence": "共享证据",
+        "sharedEpisode": "共享事件锚点",
+        "sameStateKey": "同一状态键",
+        "sameDecisionKey": "同一决策键",
+        "sameSubject": "同一主体",
+        "sharedSourceRefs": "共享来源引用"
+      },
       "layers": {
         "facts": "事实",
         "episodes": "事件锚点",
@@ -893,6 +923,7 @@
         "view": "查看记忆库",
         "clear": "归档记忆",
         "more": "更多",
+        "insights": "记忆洞察",
         "export": "导出记忆",
         "import": "导入记忆",
         "clearConfirm": "归档后你可以在记忆库顶部切到“已归档记忆”查看这些记录。",

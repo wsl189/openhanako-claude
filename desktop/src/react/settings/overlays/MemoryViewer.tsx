@@ -19,14 +19,25 @@ interface MemoryListItem {
   validation?: string;
 }
 
+interface RelatedMemoryItem {
+  id: string;
+  layer: MemoryLayer;
+  itemType?: string;
+  preview: string;
+  truthTime?: string | null;
+  reason?: string;
+}
+
 interface MemoryDetail {
   id: string;
   layer: MemoryLayer;
   content: string;
   preview?: string;
   sourceRefs?: Array<{ layer?: string; id?: string }>;
+  entityLinks?: Array<{ key?: string; kind?: string; value?: string }>;
   truthTime?: string | null;
   auditTrail?: Record<string, any>;
+  relatedItems?: RelatedMemoryItem[];
 }
 
 const LAYERS: MemoryLayer[] = ['facts', 'episodes', 'evidence', 'playbooks', 'inactive'];
@@ -41,12 +52,46 @@ function formatMeta(item: MemoryListItem) {
   return parts.join(' · ');
 }
 
+function getAffectedIdAliases(itemId: string) {
+  const aliases = new Set([itemId]);
+  if (!itemId.startsWith('inactive:')) return aliases;
+
+  const nestedId = itemId.slice('inactive:'.length);
+  aliases.add(nestedId);
+
+  const sep = nestedId.indexOf(':');
+  if (sep === -1) return aliases;
+
+  const nestedLayer = nestedId.slice(0, sep);
+  const rawId = nestedId.slice(sep + 1);
+  const singularLayer = {
+    facts: 'fact',
+    episodes: 'episode',
+    playbooks: 'playbook',
+    marks: 'mark',
+  }[nestedLayer];
+
+  if (singularLayer && rawId) {
+    aliases.add(`${singularLayer}:${rawId}`);
+    aliases.add(`inactive:${singularLayer}:${rawId}`);
+  }
+
+  return aliases;
+}
+
+function hasAffectedItem(itemId: string, affectedIds: unknown) {
+  if (!Array.isArray(affectedIds)) return false;
+  const aliases = getAffectedIdAliases(itemId);
+  return affectedIds.some((id) => aliases.has(String(id || '').trim()));
+}
+
 export function MemoryViewer() {
   const [visible, setVisible] = useState(false);
   const [layer, setLayer] = useState<MemoryLayer>('facts');
   const [items, setItems] = useState<MemoryListItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailModalLoading, setDetailModalLoading] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
@@ -61,6 +106,21 @@ export function MemoryViewer() {
     evidence: t('settings.memory.layers.evidence'),
     playbooks: t('settings.memory.layers.playbooks'),
     inactive: t('settings.memory.layers.inactive'),
+  };
+  const relatedReasonLabels: Record<string, string> = {
+    source_evidence: t('settings.memory.relatedReasons.sourceEvidence'),
+    source_episode: t('settings.memory.relatedReasons.sourceEpisode'),
+    shared_evidence: t('settings.memory.relatedReasons.sharedEvidence'),
+    shared_episode: t('settings.memory.relatedReasons.sharedEpisode'),
+    same_state_key: t('settings.memory.relatedReasons.sameStateKey'),
+    same_decision_key: t('settings.memory.relatedReasons.sameDecisionKey'),
+    same_subject: t('settings.memory.relatedReasons.sameSubject'),
+    shared_source_refs: t('settings.memory.relatedReasons.sharedSourceRefs'),
+  };
+  const entityKindLabels: Record<string, string> = {
+    subject: t('settings.memory.entityKinds.subject'),
+    state: t('settings.memory.entityKinds.state'),
+    decision: t('settings.memory.entityKinds.decision'),
   };
 
   const fetchPage = async (targetLayer: MemoryLayer, reset = false, cursor: string | null = null) => {
@@ -118,6 +178,8 @@ export function MemoryViewer() {
   };
 
   const restoreItem = async (item: MemoryListItem) => {
+    const busyKey = `restore:${item.id}`;
+    setActionBusyId(busyKey);
     try {
       const aid = useSettingsStore.getState().getSettingsAgentId();
       const res = await hanaFetch('/api/memory/restore', {
@@ -127,6 +189,8 @@ export function MemoryViewer() {
       });
       const data = await res.json();
       if (data?.error) throw new Error(data.error);
+      if (!hasAffectedItem(item.id, data?.affectedIds)) throw new Error(t('settings.noChanges'));
+      setItems((prev) => prev.filter((entry) => entry.id !== item.id));
       window.dispatchEvent(new Event('hana-memory-updated'));
       setSelectedId((prev) => (prev === item.id ? null : prev));
       setDetailModalOpen(false);
@@ -134,10 +198,14 @@ export function MemoryViewer() {
       useSettingsStore.getState().showToast(t('settings.autoSaved'), 'success');
     } catch (err: any) {
       useSettingsStore.getState().showToast(`${t('settings.saveFailed')}: ${err.message || String(err)}`, 'error');
+    } finally {
+      setActionBusyId((prev) => (prev === busyKey ? null : prev));
     }
   };
 
   const deleteItem = async (item: MemoryListItem) => {
+    const busyKey = `delete:${item.id}`;
+    setActionBusyId(busyKey);
     try {
       const aid = useSettingsStore.getState().getSettingsAgentId();
       const isInactiveLayer = item.layer === 'inactive';
@@ -149,12 +217,16 @@ export function MemoryViewer() {
       });
       const data = await res.json();
       if (data?.error) throw new Error(data.error);
+      if (!hasAffectedItem(item.id, data?.affectedIds)) throw new Error(t('settings.noChanges'));
+      setItems((prev) => prev.filter((entry) => entry.id !== item.id));
       window.dispatchEvent(new Event(isInactiveLayer ? 'hana-memory-updated' : 'hana-memory-archived'));
       setSelectedId((prev) => (prev === item.id ? null : prev));
       if (detailModalData?.id === item.id) closeDetailModal();
       useSettingsStore.getState().showToast(t('settings.autoSaved'), 'success');
     } catch (err: any) {
       useSettingsStore.getState().showToast(`${t('settings.saveFailed')}: ${err.message || String(err)}`, 'error');
+    } finally {
+      setActionBusyId((prev) => (prev === busyKey ? null : prev));
     }
   };
 
@@ -215,6 +287,56 @@ export function MemoryViewer() {
     setDetailModalLoading(false);
   };
 
+  const renderMemoryItem = (item: MemoryListItem) => {
+    const restoreBusy = actionBusyId === `restore:${item.id}`;
+    const deleteBusy = actionBusyId === `delete:${item.id}`;
+    const actionBusy = actionBusyId !== null;
+
+    return (
+      <div
+        key={item.id}
+        className={`memory-library-item${selectedId === item.id ? ' selected' : ''}`}
+      >
+        <button
+          type="button"
+          className="memory-library-item-main"
+          onClick={() => loadDetails(item)}
+        >
+          <div className="memory-library-item-preview">{item.preview || t('settings.memory.emptyPreview')}</div>
+          <div className="memory-library-item-meta">{formatMeta(item)}</div>
+        </button>
+        <div className="memory-library-item-actions">
+          {layer === 'inactive' ? (
+            <button
+              type="button"
+              className="memory-library-item-restore"
+              disabled={actionBusy}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void restoreItem(item);
+              }}
+            >
+              {restoreBusy ? t('settings.archivedSessions.loading') : t('settings.memory.actions.restore')}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="memory-library-item-delete"
+            disabled={actionBusy}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              void deleteItem(item);
+            }}
+          >
+            {deleteBusy ? t('settings.archivedSessions.loading') : (layer === 'inactive' ? t('settings.pins.delete') : t('settings.memory.actions.archiveItem'))}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   if (!visible) return null;
 
   return (
@@ -266,47 +388,7 @@ export function MemoryViewer() {
                   }
                 }}
               >
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`memory-library-item${selectedId === item.id ? ' selected' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className="memory-library-item-main"
-                      onClick={() => loadDetails(item)}
-                    >
-                      <div className="memory-library-item-preview">{item.preview || t('settings.memory.emptyPreview')}</div>
-                      <div className="memory-library-item-meta">{formatMeta(item)}</div>
-                    </button>
-                    <div className="memory-library-item-actions">
-                      {layer === 'inactive' ? (
-                        <button
-                          type="button"
-                          className="memory-library-item-restore"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            void restoreItem(item);
-                          }}
-                        >
-                          {t('settings.memory.actions.restore')}
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="memory-library-item-delete"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void deleteItem(item);
-                        }}
-                      >
-                        {layer === 'inactive' ? t('settings.pins.delete') : t('settings.memory.actions.archiveItem')}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                {items.map(renderMemoryItem)}
                 {loading ? (
                   <div className="memory-viewer-empty">{t('settings.archivedSessions.loading')}</div>
                 ) : null}
@@ -369,12 +451,70 @@ export function MemoryViewer() {
                         </pre>
                       </div>
                     ) : null}
+                    {Array.isArray(detailModalData.entityLinks) && detailModalData.entityLinks.length > 0 ? (
+                      <div>
+                        <div className="memory-detail-subtitle">{t('settings.memory.detailEntityLinks')}</div>
+                        <div className="memory-library-list" style={{ maxHeight: 180 }}>
+                          {detailModalData.entityLinks.map((item) => (
+                            <div
+                              key={item.key || `${item.kind}:${item.value || ''}`}
+                              className="memory-library-item-main"
+                              style={{
+                                width: '100%',
+                                textAlign: 'left',
+                                padding: '10px 12px',
+                                borderRadius: 12,
+                                marginBottom: 8,
+                                cursor: 'default',
+                              }}
+                            >
+                              <div className="memory-library-item-preview">{item.value || t('settings.memory.emptyPreview')}</div>
+                              <div className="memory-library-item-meta">{entityKindLabels[item.kind || ''] || item.kind || t('settings.memory.detailEntityLinks')}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                     {detailModalData.auditTrail ? (
                       <div>
                         <div className="memory-detail-subtitle">{t('settings.memory.detailAudit')}</div>
                         <pre className="memory-detail-pre subtle">
                           {JSON.stringify(detailModalData.auditTrail, null, 2)}
                         </pre>
+                      </div>
+                    ) : null}
+                    {Array.isArray(detailModalData.relatedItems) && detailModalData.relatedItems.length > 0 ? (
+                      <div>
+                        <div className="memory-detail-subtitle">{t('settings.memory.detailRelated')}</div>
+                        <div className="memory-library-list" style={{ maxHeight: 240 }}>
+                          {detailModalData.relatedItems.map((item) => (
+                            <button
+                              key={`${item.id}:${item.reason || ''}`}
+                              type="button"
+                              className="memory-library-item-main"
+                              style={{
+                                width: '100%',
+                                textAlign: 'left',
+                                padding: '10px 12px',
+                                borderRadius: 12,
+                                marginBottom: 8,
+                              }}
+                              onClick={() => loadDetails({
+                                id: item.id,
+                                layer: item.layer,
+                                preview: item.preview,
+                                itemType: item.itemType,
+                                truthTime: item.truthTime,
+                              } as MemoryListItem)}
+                            >
+                              <div className="memory-library-item-preview">{item.preview || t('settings.memory.emptyPreview')}</div>
+                              <div className="memory-library-item-meta">
+                                {item.reason ? (relatedReasonLabels[item.reason] || item.reason) : t('settings.memory.detailRelated')}
+                                {item.truthTime ? ` · ${formatSessionDate(item.truthTime)}` : ''}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     ) : null}
                   </div>

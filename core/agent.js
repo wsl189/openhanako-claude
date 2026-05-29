@@ -706,9 +706,10 @@ export class Agent {
     const ishiki = this.personality;
 
     // 可选文件
-    const userMd = this._memoryService?.renderProfilePrompt?.() || "";
+    const userMd = this._memoryService?.renderProfilePrompt?.({ includePinned: false }) || "";
     const pinnedMd = this._memoryService?.renderPinnedPrompt?.() || "";
     const memory = this._memoryService?.renderMemoryPrompt?.() || "";
+    const reflections = this._memoryService?.renderReflectionPrompt?.() || "";
 
     // 构建 section 分隔格式的 prompt
     const section = (title, content) => ["", "---", "", title, "", content];
@@ -728,7 +729,7 @@ export class Agent {
       ));
     }
     // 记忆整体开关：master && session 都开启才注入记忆相关 prompt
-    if (includeMemory && this._memoryService && this._memorySessionEnabled) {
+    if (includeMemory && this._memoryService && this._memoryMasterEnabled && this._memorySessionEnabled) {
       const memoryRule = isZh ? [
         "",
         "## 记忆使用规则",
@@ -774,14 +775,16 @@ export class Agent {
 
       const hasPinnedMemory = pinnedMd.trim().length > 0;
       const trimmedMemory = memory.trim();
+      const trimmedReflections = reflections.trim();
       const hasConversationMemory = !!(
         trimmedMemory
         && trimmedMemory !== "（暂无记忆）"
         && trimmedMemory !== "(No memory yet)"
       );
+      const hasReflections = !!trimmedReflections;
 
       // 注入一次记忆规则，避免在 pinned + memory 两个区块重复灌入相同规则文本。
-      if (hasPinnedMemory || hasConversationMemory) {
+      if (hasPinnedMemory || hasConversationMemory || hasReflections) {
         parts.push(memoryRule.trimStart());
         parts.push(memoryTimelinessLegend);
       }
@@ -800,6 +803,14 @@ export class Agent {
           isZh
             ? referenceData("过往对话记忆", memory)
             : referenceData("Conversation Memory", memory)
+        ));
+      }
+      if (hasReflections) {
+        parts.push(...section(
+          isZh ? "# 反思" : "# Reflections",
+          isZh
+            ? referenceData("反思结果", reflections)
+            : referenceData("Reflections", reflections)
         ));
       }
     }
